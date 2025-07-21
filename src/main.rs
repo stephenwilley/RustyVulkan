@@ -1,16 +1,21 @@
 //! --------------------------------------------------------------------------------------
-//! 30 - Lambert Lighting
+//! 31 - Added a moveable camera
 //!
 //! Created: July 2025
 //! Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
 //!
-//! Passes through vertex normals and modified the vertex and fragment shaders to implement
-//! Lambert lighting on the cube.
+//! We're gonna create a camera struct that will allow us to move around the scene. We'll
+//! use this to set up the view matrix and start tidying up the code that creates the MVP
+//! matrix.
 //! 
 //! --------------------------------------------------------------------------------------
 
 use winit::application::ApplicationHandler;
-use winit::event::{WindowEvent};
+use winit::event::{WindowEvent, DeviceEvent};
+use winit::event::ElementState::{Pressed, Released};
+use winit::keyboard::PhysicalKey::Code;
+use winit::keyboard::KeyCode;
+use winit::keyboard::ModifiersState;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowAttributes};
 use std::error::Error;
@@ -18,11 +23,13 @@ use ash::vk;
 
 mod vulkan;
 mod graphics;
-mod assets;
+mod assets; 
+mod camera;
 use crate::vulkan::base::VulkanBase;
 use crate::assets::{ProjectAssets, LoadedShaders, LoadedMeshes};
+use crate::camera::Camera;
 use cgmath::prelude::*;
-use cgmath::{Deg, Matrix4, Point3, Vector3, perspective};
+use cgmath::{Deg, Matrix4};
 
 /// Holds the window and Vulkan backend, orchestrating rendering and events.
 #[derive(Default)]
@@ -32,6 +39,14 @@ struct App {
     meshes: Option<LoadedMeshes>,
     shaders: Option<LoadedShaders>,
     angle: f32,
+    camera: Camera,
+    step: f32,
+    modifiers: ModifiersState,
+    moving_forward:  bool,  // W held
+    moving_backward: bool,  // S held
+    moving_left:     bool,  // A held
+    moving_right:    bool,  // D held
+    w_toggle_locked: bool,  // prevent rapid Ctrl+W repeats
 }
 
 impl App {
@@ -60,6 +75,10 @@ impl ApplicationHandler for App {
             .expect("Failed to create window");
         println!("🪟 Window created");
         self.window = Some(window);
+
+        let win = self.window.as_ref().unwrap();
+        win.set_cursor_grab(winit::window::CursorGrabMode::None).ok();
+        win.set_cursor_visible(false);
 
         match VulkanBase::new(self.window.as_ref().unwrap(), event_loop) {
             Ok(vulkan_base) => self.vulkan_base = Some(vulkan_base),
@@ -104,6 +123,26 @@ impl ApplicationHandler for App {
                 return;
             }
         };
+        self.camera = Camera::new();
+        self.step = 0.1;
+    }
+
+    /// Called for *all* raw device events (mouse, keyboard, etc).
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: DeviceEvent,
+    ) {
+        if let DeviceEvent::MouseMotion { delta } = event {
+            let (dx, dy) = (delta.0 as f32, delta.1 as f32);
+            let sensitivity = 0.1;
+            // convert to yaw/pitch deltas and feed into camera:
+            self.camera.rotate(
+                dx * sensitivity,
+                -dy * sensitivity,
+            );
+        }
     }
 
     /// Handles window events like closing, resizing, input, and redraw.
@@ -142,38 +181,78 @@ impl ApplicationHandler for App {
                                 eprintln!("Failed to recreate swapchain: {}", e);
                             }
                         }
+                        // Update camera’s projection
+                        if let Some(window) = &self.window {
+                            let size   = window.inner_size();
+                            let aspect = size.width as f32 / size.height as f32;
+                            self.camera.set_perspective_projection(45.0, aspect, 0.1, 100.0);
+                        }
+                    }
+                    WindowEvent::ModifiersChanged(mods) => {
+                        self.modifiers = mods.state();
                     }
                     WindowEvent::KeyboardInput { event, .. } => {
-                        match event.physical_key {
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Escape) => {
+                        let key = event.physical_key;
+                        match (key, event.state) {
+                            // — Exit —
+                            (Code(KeyCode::Escape), Pressed) => {
                                 println!("🛑 Escape pressed, exiting");
                                 event_loop.exit();
                             }
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyF) => {
-                                if event.state.is_pressed() {
-                                    let fullscreen = if win.fullscreen().is_some() {
-                                        None
-                                    } else {
-                                        Some(winit::window::Fullscreen::Borderless(None))
-                                    };
-                                    win.set_fullscreen(fullscreen);
-                                    println!("🖥️ Toggled fullscreen");
-                                }
+
+                            // — Fullscreen toggle on F —
+                            (Code(KeyCode::KeyF), Pressed) => {
+                                let fullscreen = if win.fullscreen().is_some() {
+                                    None
+                                } else {
+                                    Some(winit::window::Fullscreen::Borderless(None))
+                                };
+                                win.set_fullscreen(fullscreen);
+                                println!("🖥️ Toggled fullscreen");
                             }
-                            winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::KeyW) => {
-                                if event.state.is_pressed() {
-                                    if let Some(vulkan_base) = &mut self.vulkan_base {
-                                        if let Some(shaders) = &self.shaders {
-                                            vulkan_base.toggle_wireframe();
-                                            println!("🔲 Wireframe mode toggled");
-                                            if let Err(e) = vulkan_base.recreate_pipeline_and_record(&[ 
-                                                &shaders.vertex, &shaders.fragment ]) {
-                                                eprintln!("Failed to recreate pipeline in wireframe mode: {}", e);
-                                            }
+
+                            // — Movement keys —
+                            (Code(KeyCode::KeyW), Pressed) if !self.modifiers.control_key() => {
+                                self.moving_forward = true;
+                            }
+                            (Code(KeyCode::KeyW), Released) => {
+                                self.moving_forward = false;
+                                // also unlock Ctrl+W toggle when released
+                                self.w_toggle_locked = false;
+                            }
+                            (Code(KeyCode::KeyS), Pressed) => {
+                                self.moving_backward = true;
+                            }
+                            (Code(KeyCode::KeyS), Released) => {
+                                self.moving_backward = false;
+                            }
+                            (Code(KeyCode::KeyA), Pressed) => {
+                                self.moving_left = true;
+                            }
+                            (Code(KeyCode::KeyA), Released) => {
+                                self.moving_left = false;
+                            }
+                            (Code(KeyCode::KeyD), Pressed) => {
+                                self.moving_right = true;
+                            }
+                            (Code(KeyCode::KeyD), Released) => {
+                                self.moving_right = false;
+                            }
+                            // — Wireframe toggle on Ctrl+W, one shot —
+                            (Code(KeyCode::KeyW), Pressed) if self.modifiers.control_key() && !self.w_toggle_locked => {
+                                self.w_toggle_locked = true;
+                                if let Some(vb) = &mut self.vulkan_base {
+                                    if let Some(shaders) = &self.shaders {
+                                        vb.toggle_wireframe();
+                                        println!("🔲 Wireframe mode toggled");
+                                        let stages = [&shaders.vertex, &shaders.fragment];
+                                        if let Err(e) = vb.recreate_pipeline_and_record(&stages) {
+                                            eprintln!("Failed to recreate pipeline: {}", e);
                                         }
                                     }
                                 }
                             }
+
                             _ => {}
                         }
                     }
@@ -187,7 +266,14 @@ impl ApplicationHandler for App {
                         if let (Some(vb), Some(meshes)) = (self.vulkan_base.as_mut(), self.meshes.as_ref()) {
                             // Calculate these outside the closure to avoid borrowing
                             let layout = vb.pipeline.layout;
-                            let push_bytes = compute_push_constant(self.angle, vb.swapchain.extent);
+
+                            let s = self.step;
+                            if self.moving_forward  { self.camera.translate( s,  0.0) }
+                            if self.moving_backward { self.camera.translate(-s,  0.0) }
+                            if self.moving_left     { self.camera.translate( 0.0, -s) }
+                            if self.moving_right    { self.camera.translate( 0.0,  s) }
+
+                            let push_bytes = compute_push_constant(&self.camera,self.angle);
 
                             // Draw the frame with the updated MVP matrix
                             if let Err(e) = vb.draw_frame(move |cmd_buf, device| {
@@ -253,25 +339,16 @@ fn main() {
 /// Builds the push‐constant block (MVP, MV, lightDir),
 /// flattened as column‐major bytes:
 /// 16 floats for MVP, then 16 floats for MV, then 3 floats for lightDir.
-fn compute_push_constant(angle_deg: f32, extent: vk::Extent2D) -> Vec<u8> {
-    // 1) Projection: 45° FOV, aspect, near=0.1, far=100
-    let aspect = extent.width as f32 / extent.height as f32;
-    let mut proj: Matrix4<f32> = perspective(Deg(45.0), aspect, 0.1, 100.0);
-    // Vulkan’s NDC has Y flipped, so invert Y
-    proj.y.y *= -1.0;
+fn compute_push_constant(camera: &Camera, angle_deg: f32) -> Vec<u8> {
 
-    // 2) View: camera at (0,0,5) looking at origin
-    let view = Matrix4::look_at_rh(
-        Point3::new(0.0, 0.0, 5.0),
-        Point3::new(0.0, 0.0, 0.0),
-        Vector3::unit_y(),
-    );
+    let proj: Matrix4<f32> = *camera.get_projection();
+    let view: Matrix4<f32> = *camera.get_view();
 
     // 3) Model: your rolling‐cube rotations
     let rot_z = Matrix4::from_angle_z(Deg(angle_deg));
     let rot_x = Matrix4::from_angle_x(Deg(angle_deg * 0.5));
     let rot_y = Matrix4::from_angle_y(Deg(angle_deg * -0.25));
-    let model = rot_y * (rot_z * (rot_x * rot_y));
+    let model = rot_y * (rot_z * rot_x);
 
     // 4) Compute both MV and full MVP
     let mv  = view * model;    // Model‐View matrix for normals
@@ -297,7 +374,7 @@ fn compute_push_constant(angle_deg: f32, extent: vk::Extent2D) -> Vec<u8> {
 
     // 6) Append your light direction (e.g. from above‐right)
     let light_dir = [1.0f32, 1.0, 1.0];
-    for &v in &light_dir {
+    for v in light_dir {
         bytes.extend_from_slice(&v.to_ne_bytes());
     }
 

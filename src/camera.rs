@@ -91,10 +91,11 @@ impl Camera {
     /// `right`   >0 strafes you right,  `<0` strafes you left.
     pub fn translate(&mut self, forward_amt: f32, right_amt: f32) {
         let yaw_rad: Rad<f32> = Deg(self.yaw).into();
+        let pitch_rad: Rad<f32> = Deg(self.pitch).into();
         // Forward vector in XZ plane
         let forward_dir = Vector3 {
             x: yaw_rad.sin(),
-            y: 0.0,
+            y: pitch_rad.sin(),
             z: -yaw_rad.cos(),
         }
         .normalize();

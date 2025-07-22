@@ -1,12 +1,14 @@
 //! --------------------------------------------------------------------------------------
-//! 31 - Added a moveable camera
+//! 32 - Start setting up for multiple objects
 //!
 //! Created: July 2025
 //! Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
 //!
-//! We're gonna create a camera struct that will allow us to move around the scene. We'll
-//! use this to set up the view matrix and start tidying up the code that creates the MVP
-//! matrix.
+//! At the moment things are pretty hard coded for a single cube.  We're going to add
+//! Scene and SceneObject structs to hold multiple objects, and then we'll update the
+//! rendering code to draw all objects in the scene.  For now, the SceneObject will only
+//! hold the transform data.  The code here creates two cubes, one at the origin
+//! and one at (3,0,0), and renders them both.  We do sadly lose the spinning...
 //! 
 //! --------------------------------------------------------------------------------------
 
@@ -25,20 +27,22 @@ mod vulkan;
 mod graphics;
 mod assets; 
 mod camera;
+mod scene;
 use crate::vulkan::base::VulkanBase;
 use crate::assets::{ProjectAssets, LoadedShaders, LoadedMeshes};
 use crate::camera::Camera;
+use crate::scene::{Scene, SceneObject, Transform};
 use cgmath::prelude::*;
-use cgmath::{Deg, Matrix4};
+use cgmath::Matrix4;
 
 /// Holds the window and Vulkan backend, orchestrating rendering and events.
 #[derive(Default)]
 struct App {
     window: Option<Window>,
     vulkan_base: Option<VulkanBase>,
+    scene: Scene,
     meshes: Option<LoadedMeshes>,
     shaders: Option<LoadedShaders>,
-    angle: f32,
     camera: Camera,
     step: f32,
     modifiers: ModifiersState,
@@ -58,6 +62,7 @@ impl App {
         event_loop.set_control_flow(ControlFlow::Poll);
         Ok(event_loop.run_app(&mut self)?)
     }
+
 }
 
 impl ApplicationHandler for App {
@@ -69,7 +74,7 @@ impl ApplicationHandler for App {
     /// * Creates a new `VulkanBase` instance, handling errors gracefully.
     /// * If Vulkan initialization fails, the event loop exits to prevent further errors.
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window_attributes = WindowAttributes::default().with_title("Rust Vulkan 30 - Lambert Lighting");
+        let window_attributes = WindowAttributes::default().with_title("Rust Vulkan 32 - Scene");
         let window = event_loop
             .create_window(window_attributes)
             .expect("Failed to create window");
@@ -123,6 +128,20 @@ impl ApplicationHandler for App {
                 return;
             }
         };
+        let cube = SceneObject {
+            transform: Transform::identity(), 
+        };
+        let cube2 = SceneObject {
+            transform: Transform {
+                translation: cgmath::Vector3::new(3.0, 0.0, 0.0),
+                rotation: cgmath::Quaternion::new(0.0, 0.0, 0.0, 1.0),
+                scale: 1.0,
+            },
+        };
+
+        self.scene = Scene::new();
+        self.scene.add(cube);
+        self.scene.add(cube2);
         self.camera = Camera::new();
         self.step = 0.1;
     }
@@ -257,13 +276,7 @@ impl ApplicationHandler for App {
                         }
                     }
                     WindowEvent::RedrawRequested => {
-                        // Update rotation angle
-                        // I only reset the angle every 10 full rotations because some of the matrix ops below are angle * some value
-                        // less than 1 which means that they'll reset and jump if that value is too small
-                        // I then also add a light angle to the byte array that will be pushed to the vertex and fragment shaders
-                        self.angle = (self.angle + 1.0) % 3600.0;
-
-                        if let (Some(vb), Some(meshes)) = (self.vulkan_base.as_mut(), self.meshes.as_ref()) {
+                        if let (Some(vb), Some(meshes), Some(scene)) = (self.vulkan_base.as_mut(), self.meshes.as_ref(), Some(&self.scene)) {
                             // Calculate these outside the closure to avoid borrowing
                             let layout = vb.pipeline.layout;
 
@@ -273,20 +286,26 @@ impl ApplicationHandler for App {
                             if self.moving_left     { self.camera.translate( 0.0, -s) }
                             if self.moving_right    { self.camera.translate( 0.0,  s) }
 
-                            let push_bytes = compute_push_constant(&self.camera,self.angle);
+                            let camera = &self.camera;
 
                             // Draw the frame with the updated MVP matrix
                             if let Err(e) = vb.draw_frame(move |cmd_buf, device| {
-                                unsafe {
-                                    device.cmd_push_constants(
-                                        cmd_buf,
-                                        layout,
-                                        vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                                        0,
-                                        &push_bytes,
-                                    );
+                                for obj in &scene.objects {
+                                    // Update the transform for each object
+                                    let model_matrix = obj.transform.model_matrix();
+                                    // Push the model matrix as a push constant
+                                    let push_bytes = compute_push_constant_per_obj(&camera, &model_matrix);
+                                    unsafe {
+                                        device.cmd_push_constants(
+                                            cmd_buf,
+                                            layout,
+                                            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                                            0,
+                                            &push_bytes,
+                                        );
+                                    }
+                                    meshes.record(device, cmd_buf);
                                 }
-                                meshes.record(device, cmd_buf);
                             }) {
                                 eprintln!("Failed to draw frame: {}", e);
                             }
@@ -336,22 +355,19 @@ fn main() {
     }
 }
 
-/// Builds the push‐constant block (MVP, MV, lightDir),
-/// flattened as column‐major bytes:
-/// 16 floats for MVP, then 16 floats for MV, then 3 floats for lightDir.
-fn compute_push_constant(camera: &Camera, angle_deg: f32) -> Vec<u8> {
+/// Computes the push constant data for each object in the scene.
+/// # Arguments
+/// * `camera` - The camera used for the scene, providing view and projection matrices.
+/// * `model_matrix` - The model matrix of the object being drawn.
+/// # Returns
+/// * `Vec<u8>` - The serialized push constant data containing the MVP matrix and light direction.
+fn compute_push_constant_per_obj(camera: &Camera, model_matrix: &Matrix4<f32>) -> Vec<u8> {
 
     let proj: Matrix4<f32> = *camera.get_projection();
     let view: Matrix4<f32> = *camera.get_view();
 
-    // 3) Model: your rolling‐cube rotations
-    let rot_z = Matrix4::from_angle_z(Deg(angle_deg));
-    let rot_x = Matrix4::from_angle_x(Deg(angle_deg * 0.5));
-    let rot_y = Matrix4::from_angle_y(Deg(angle_deg * -0.25));
-    let model = rot_y * (rot_z * rot_x);
-
     // 4) Compute both MV and full MVP
-    let mv  = view * model;    // Model‐View matrix for normals
+    let mv  = view * model_matrix;    // Model‐View matrix for normals
     let mvp = proj * mv;       // Projection × View × Model
 
     // 5) Flatten MVP (4×4) and MV (4×4) into column‐major bytes,

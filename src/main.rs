@@ -135,11 +135,11 @@ impl App {
             .size([300.0, 180.0], Condition::FirstUseEver)
             .build(|| {
                 ui.text("Light Position");
-                ui.slider("X", -100.0, 100.0, &mut light_pos[0]);
-                ui.slider("Y", -100.0, 100.0, &mut light_pos[1]);
-                ui.slider("Z", -100.0, 100.0, &mut light_pos[2]);
+                imgui::Slider::new("X", -100.0..=100.0).build(&ui, &mut light_pos[0]);
+                imgui::Slider::new("Y", -100.0..=100.0).build(&ui, &mut light_pos[1]);
+                imgui::Slider::new("Z", -100.0..=100.0).build(&ui, &mut light_pos[2]);
                 ui.text("Light Intensity");
-                ui.slider("LI", 0.0, 20.0, &mut light_intensity[0]);
+                imgui::Slider::new("LI", 0.0..=20.0).build(&ui, &mut light_intensity[0]);
             });
         // Prepare the Vulkan render pass for ImGui
         platform.prepare_render(&ui, window);

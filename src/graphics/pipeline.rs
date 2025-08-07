@@ -14,8 +14,7 @@
 //!
 //! Usage:
 //!   1. `Pipeline::new`            - initializes the pipeline layout  
-//!   2. `create_graphics_pipeline` - stitches together all shader and fixed-function 
-//!                                   state into a usable pipeline  
+//!   2. `create_graphics_pipeline` - stitches together all shader and fixed-function state into a usable pipeline  
 //!   3. `cleanup`                  - tears down the pipeline layout  
 //!
 //! This keeps all graphics-pipeline logic centralized and reusable by `VulkanBase`.
@@ -243,7 +242,7 @@ impl Pipeline {
     /// * `device` - The Vulkan logical device to use for destroying the resources.
     /// # Notes
     /// * This method should be called when the pipeline is no longer needed, such as during
-    /// application shutdown or when the pipeline is being recreated.
+    ///   application shutdown or when the pipeline is being recreated.
     pub fn cleanup(&self, device: &ash::Device) {
         unsafe {
             device.destroy_pipeline_layout(self.vk_layout, None);

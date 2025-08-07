@@ -18,6 +18,15 @@ pub struct MaterialManager {
     pub materials: Vec<Material>,
 }
 
+pub struct MaterialProperties {
+    pub name: String,
+    pub vs_path: String,
+    pub fs_path: String,
+    pub diffuse_texture_path: Option<String>,
+    pub normalmap_texture_path: Option<String>,
+    pub depth_write: bool,
+}
+
 impl MaterialManager {
     pub fn new() -> MaterialManager {
         MaterialManager {
@@ -39,25 +48,20 @@ impl MaterialManager {
 
     pub fn request_material(
         &mut self,
-        name: String,
         vb: &VulkanBase,
-        vs_path: String,
-        fs_path: String,
-        diffuse_texture_path: Option<String>,
-        normalmap_texture_path: Option<String>,
-        depth_write: bool
+        props: MaterialProperties,
     ) -> usize {
-        if let Some(idx) = self.materials.iter().position(|m| m.name == name) {
+        if let Some(idx) = self.materials.iter().position(|m| m.name == props.name) {
             idx
         } else {
             let mat = Material::new(
-                name,
+                props.name,
                 vb,
-                vs_path,
-                fs_path,
-                diffuse_texture_path,
-                normalmap_texture_path,
-                depth_write
+                props.vs_path,
+                props.fs_path,
+                props.diffuse_texture_path,
+                props.normalmap_texture_path,
+                props.depth_write
             ).unwrap();
             self.materials.push(mat);
             self.materials.len() - 1

@@ -117,7 +117,7 @@ impl VulkanBase {
         };
 
         let ext_names = enumerate_required_extensions(event_loop.display_handle().unwrap().as_raw())?;
-        let mut extension_ptrs: Vec<*const i8> = ext_names.iter().copied().collect();
+        let mut extension_ptrs: Vec<*const i8> = ext_names.to_vec();
 
         #[cfg(debug_assertions)]
         extension_ptrs.push(ash::ext::debug_utils::NAME.as_ptr());
@@ -515,7 +515,7 @@ impl VulkanBase {
         let entry = Entry::linked();
 
         #[cfg(debug_assertions)]
-        let layer_names = [CStr::from_bytes_with_nul(b"VK_LAYER_KHRONOS_validation\0").unwrap()];
+        let layer_names = [c"VK_LAYER_KHRONOS_validation"];
         #[cfg(debug_assertions)]
         let layer_name_ptrs: Vec<*const i8> = layer_names.iter().map(|s| s.as_ptr()).collect();
 
@@ -526,7 +526,7 @@ impl VulkanBase {
         {
             unsafe {
                 let available_layers = entry.enumerate_instance_layer_properties()?;
-                let validation_layer_name = CStr::from_bytes_with_nul(b"VK_LAYER_KHRONOS_validation\0").unwrap();
+                let validation_layer_name = c"VK_LAYER_KHRONOS_validation";
                 let is_layer_available = available_layers.iter().any(|layer| {
                     let name = CStr::from_ptr(layer.layer_name.as_ptr());
                     name == validation_layer_name

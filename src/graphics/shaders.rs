@@ -43,7 +43,7 @@ impl ShaderModule {
     /// * `path` - The path to the SPIR-V file.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the created `ShaderModule` on
-    /// success, or an error on failure.
+    ///   success, or an error on failure.
     pub fn from_spv_file(device: &Device, path: impl AsRef<Path>) 
         -> Result<Self, Box<dyn Error>>
     {
@@ -77,8 +77,8 @@ impl ShaderStageInfo {
     /// Converts this shader stage info into a Vulkan pipeline shader stage create info.
     /// # Returns
     /// * `vk::PipelineShaderStageCreateInfo` - The Vulkan structure ready to be
-    /// used in pipeline creation.
-    pub fn to_create_info(&self) -> vk::PipelineShaderStageCreateInfo {
+    ///   used in pipeline creation.
+    pub fn to_create_info(&self) -> vk::PipelineShaderStageCreateInfo<'_> {
         vk::PipelineShaderStageCreateInfo {
             stage: self.stage,
             module: self.shader_module.vk_shader_module,

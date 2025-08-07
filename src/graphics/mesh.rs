@@ -95,7 +95,7 @@ impl VertexBuffer {
         physical_device: vk::PhysicalDevice,
         data: &[Vertex],
     ) -> Result<Self, Box<dyn Error>> {
-        let size = (std::mem::size_of::<Vertex>() * data.len()) as vk::DeviceSize;
+        let size = std::mem::size_of_val(data) as vk::DeviceSize;
 
         // 1) Create the buffer
         let buffer_info = vk::BufferCreateInfo {
@@ -166,7 +166,7 @@ impl IndexBuffer {
         physical_device: vk::PhysicalDevice,
         data: &[u32],
     ) -> Result<Self, vk::Result> {
-        let size = (std::mem::size_of::<u32>() * data.len()) as vk::DeviceSize;
+        let size = std::mem::size_of_val(data) as vk::DeviceSize;
 
         // 1) create buffer with usage INDEX_BUFFER
         let buffer_info = vk::BufferCreateInfo {

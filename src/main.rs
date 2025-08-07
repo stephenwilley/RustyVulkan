@@ -32,7 +32,7 @@ use crate::vulkan::imgui_renderer::ImGuiRenderer;
 use crate::camera::Camera;
 use crate::scene::{Scene, SceneObject, Transform as SceneTransform};
 use crate::graphics::gltf_loader::import_gltf;
-use crate::graphics::materialmanager::MaterialManager;
+use crate::graphics::materialmanager::{MaterialManager, MaterialProperties};
 use crate::graphics::meshmanager::MeshManager;
 use cgmath::{prelude::*};
 use cgmath::{Vector1,Vector3,Matrix4};
@@ -135,14 +135,14 @@ impl App {
             .size([300.0, 180.0], Condition::FirstUseEver)
             .build(|| {
                 ui.text("Light Position");
-                imgui::Slider::new("X", -100.0..=100.0).build(&ui, &mut light_pos[0]);
-                imgui::Slider::new("Y", -100.0..=100.0).build(&ui, &mut light_pos[1]);
-                imgui::Slider::new("Z", -100.0..=100.0).build(&ui, &mut light_pos[2]);
+                ui.slider("X", -100.0, 100.0, &mut light_pos[0]);
+                ui.slider("Y", -100.0, 100.0, &mut light_pos[1]);
+                ui.slider("Z", -100.0, 100.0, &mut light_pos[2]);
                 ui.text("Light Intensity");
-                imgui::Slider::new("LI", 0.0..=20.0).build(&ui, &mut light_intensity[0]);
+                ui.slider("LI", 0.0, 20.0, &mut light_intensity[0]);
             });
         // Prepare the Vulkan render pass for ImGui
-        platform.prepare_render(&ui, window);
+        platform.prepare_render(ui, window);
         // Return the collected draw lists
         imgui.render()
     }
@@ -219,13 +219,14 @@ impl App {
         let infinite_plane = SceneObject {
             transform: SceneTransform::identity(),
             material_id: self.material_manager.request_material(
-                "InfinitePlaneMaterial".into(),
                 vulkan_base,
-                "assets/shaders/spv/infinite_plane.vert.spv".into(),
-                "assets/shaders/spv/infinite_plane.frag.spv".into(),
-                None,
-                None,
-                false,
+                MaterialProperties {
+                    name: "InfinitePlaneMaterial".into(),
+                    vs_path: "assets/shaders/spv/infinite_plane.vert.spv".into(),
+                    fs_path: "assets/shaders/spv/infinite_plane.frag.spv".into(),
+                    diffuse_texture_path: None,
+                    normalmap_texture_path: None,
+                    depth_write: false }
             ),
             mesh_id: self.mesh_manager.request_unit_plane(
                 vulkan_base,
@@ -239,13 +240,15 @@ impl App {
                 1.0,
             ),
             material_id: self.material_manager.request_material(
-                "Cube1Material".into(),
                 vulkan_base,
-                "assets/shaders/spv/point_light.vert.spv".into(),
-                "assets/shaders/spv/point_light.frag.spv".into(),
-                Some("assets/textures/cube1/diffuse.png".into()),
-                Some("assets/textures/cube1/normal.png".into()),
-                true,
+                MaterialProperties {
+                    name: "Cube1Material".into(),
+                    vs_path: "assets/shaders/spv/point_light.vert.spv".into(),
+                    fs_path: "assets/shaders/spv/point_light.frag.spv".into(),
+                    diffuse_texture_path: Some("assets/textures/cube1/diffuse.png".into()),
+                    normalmap_texture_path: Some("assets/textures/cube1/normal.png".into()),
+                    depth_write: true,
+                }
             ),
             mesh_id: self.mesh_manager.request_cube(
                 vulkan_base,
@@ -574,7 +577,7 @@ impl ApplicationHandler for App {
                                             vk::PipelineBindPoint::GRAPHICS,
                                             imgui_renderer.vk_pipeline);
                                     }
-                                    imgui_renderer.render(device, cmd_buf, &draw_data);
+                                    imgui_renderer.render(device, cmd_buf, draw_data);
                                 }
                             }) {
                                 eprintln!("Failed to draw frame: {}", e);

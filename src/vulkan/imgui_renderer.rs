@@ -1,9 +1,9 @@
 //! --------------------------------------------------------------------------------------
 //! ImGui Renderer Module (imgui_renderer.rs)
-//!
+//_!
 //! Created: July 2025
 //! Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
-//!
+//_!
 //! This module defines `ImGuiRenderer`, which encapsulates the Vulkan setup and rendering
 //! logic for Dear ImGui. It handles:
 //!   • Uploading the font atlas and creating associated Vulkan resources (image, view, sampler)
@@ -11,7 +11,7 @@
 //!   • Building the ImGui-specific graphics pipeline and pipeline layout
 //!   • Recording draw commands for ImGui draw data into command buffers
 //!   • Cleaning up all ImGui-related Vulkan resources on teardown
-//!
+//_!
 //! Usage:
 //!   1. `ImGuiRenderer::new(base: &mut VulkanBase, atlas: &FontAtlasTexture) -> Self`  
 //!   2. `renderer.render(base: &VulkanBase, cmd_buf: vk::CommandBuffer, draw_data: &imgui::DrawData)`  
@@ -20,7 +20,6 @@
 //! --------------------------------------------------------------------------------------
 
 use ash::vk;
-use std::ffi::CStr;
 use std::error::Error;
 use crate::graphics::shaders::{ShaderModule, ShaderStageInfo};
 use crate::vulkan::base::VulkanBase;
@@ -112,8 +111,6 @@ impl ImGuiRenderer {
         -> (vk::Image, vk::DeviceMemory)
     {
         let device = &base.device;
-        let width = width;
-        let height = height;
         let image_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::TYPE_2D,
             format: vk::Format::R8G8B8A8_UNORM,
@@ -356,7 +353,7 @@ impl ImGuiRenderer {
     }
 
     /// Helper: allocate a descriptor set for ImGui
-    fn allocate_imgui_descriptor_set(self: &Self, base: &VulkanBase) -> vk::DescriptorSet {
+    fn allocate_imgui_descriptor_set(&self, base: &VulkanBase) -> vk::DescriptorSet {
         let layouts = [self.descriptor_set_layout];
         let alloc_info = vk::DescriptorSetAllocateInfo {
             descriptor_pool: self.descriptor_pool,
@@ -368,13 +365,12 @@ impl ImGuiRenderer {
     }
     
     /// Updates the previously-allocated descriptor set so binding 0 points at our atlas view+sampler.
-    fn write_descriptor_set(self: &Self, base: &VulkanBase) {
+    fn write_descriptor_set(&self, base: &VulkanBase) {
         let device = &base.device;
         let image_info = vk::DescriptorImageInfo {
             sampler:      self.font_sampler.unwrap(),
             image_view:   self.font_image_view.unwrap(),
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            ..Default::default()
         };
         let descriptor_write = vk::WriteDescriptorSet {
             dst_set:           self.descriptor_set,
@@ -408,10 +404,10 @@ impl ImGuiRenderer {
     // find_memory_type
     // create_buffer
     // update_buffers
-    // -----------------------------------------------------------
+    // ----------------------------------------------------------
     /// Load the ImGui shaders
     fn load_shaders(&mut self, base: &mut VulkanBase) -> (ShaderStageInfo, ShaderStageInfo) {
-        let entry_name = CStr::from_bytes_with_nul(b"main\0").unwrap();
+        let entry_name = c"main";
         // Load vertex shader
         let vert_module = ShaderModule::from_spv_file(&base.device, "assets/shaders/spv/imgui.vert.spv")
             .expect("Failed to load imgui.vert.spv");
@@ -446,7 +442,6 @@ impl ImGuiRenderer {
             binding: 0,
             stride: std::mem::size_of::<DrawVert>() as u32,
             input_rate: vk::VertexInputRate::VERTEX,
-            ..Default::default()
         };
         let attribute_descs = [
             vk::VertexInputAttributeDescription {
@@ -454,21 +449,18 @@ impl ImGuiRenderer {
                 binding: 0,
                 format: vk::Format::R32G32_SFLOAT,
                 offset: offset_of!(DrawVert, pos) as u32,
-                ..Default::default()
             },
             vk::VertexInputAttributeDescription {
                 location: 1,
                 binding: 0,
                 format: vk::Format::R32G32_SFLOAT,
                 offset: offset_of!(DrawVert, uv) as u32,
-                ..Default::default()
             },
             vk::VertexInputAttributeDescription {
                 location: 2,
                 binding: 0,
                 format: vk::Format::R8G8B8A8_UNORM,
                 offset: offset_of!(DrawVert, col) as u32,
-                ..Default::default()
             },
         ];
         let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
@@ -550,7 +542,6 @@ impl ImGuiRenderer {
                 | vk::ColorComponentFlags::G
                 | vk::ColorComponentFlags::B
                 | vk::ColorComponentFlags::A,
-            ..Default::default()
         };
         let color_blending = vk::PipelineColorBlendStateCreateInfo {
             logic_op_enable: vk::FALSE,
@@ -702,7 +693,7 @@ impl ImGuiRenderer {
             let mut offset = 0;
             for draw_list in draw_data.draw_lists() {
                 let src = draw_list.vtx_buffer();
-                let byte_len = src.len() * std::mem::size_of::<DrawVert>();
+                let byte_len = std::mem::size_of_val(src);
                 std::ptr::copy_nonoverlapping(
                     src.as_ptr() as *const u8,
                     (vtx_ptr as *mut u8).add(offset),
@@ -717,7 +708,7 @@ impl ImGuiRenderer {
             let mut idx_offset = 0;
             for draw_list in draw_data.draw_lists() {
                 let src = draw_list.idx_buffer();
-                let byte_len = src.len() * std::mem::size_of::<DrawIdx>();
+                let byte_len = std::mem::size_of_val(src);
                 std::ptr::copy_nonoverlapping(
                     src.as_ptr() as *const u8,
                     (idx_ptr as *mut u8).add(idx_offset),
@@ -832,9 +823,9 @@ impl ImGuiRenderer {
     /// Cleans up ImGui Vulkan resources created by this renderer.
     /// # Arguments
     /// * `base` - The VulkanBase instance to use for resource cleanup.
-    /// This function destroys all Vulkan resources associated with the ImGui renderer,
-    /// including the font image, sampler, descriptor set layout, descriptor pool, and pipeline.
-    /// It should be called when the ImGui renderer is no longer needed.
+    ///   This function destroys all Vulkan resources associated with the ImGui renderer,
+    ///   including the font image, sampler, descriptor set layout, descriptor pool, and pipeline.
+    ///   It should be called when the ImGui renderer is no longer needed.
     pub fn cleanup(&self, base: VulkanBase) {
         unsafe {
             // Destroy dynamic ImGui vertex/index buffers
@@ -883,16 +874,17 @@ impl ImGuiRenderer {
     /// * `device` - The Vulkan device to use for command recording.
     /// * `cmd_buf` - The command buffer to record the ImGui draw commands into.
     /// * `draw_data` - The ImGui draw data containing vertex and index information.
-    /// This function performs the following steps:
-    /// 1. Updates the vertex and index buffers with the latest ImGui draw data.
-    /// 2. Binds the vertex and index buffers to the command buffer.
-    /// 3. Binds the ImGui graphics pipeline and descriptor set.
-    /// 4. Sets the dynamic viewport based on the ImGui display size.
-    /// 5. Computes the orthographic projection matrix for ImGui.
-    /// 6. Iterates through the ImGui draw lists and issues draw calls for each command.
-    /// It handles scissor rectangles and indexed drawing based on ImGui's clip rects.
-    /// If there is no ImGui draw data (total vertex or index count is zero),
-    /// it simply returns without rendering anything.
+    ///   This function performs the following steps:
+    ///   1. Updates the vertex and index buffers with the latest ImGui draw data.
+    ///   2. Binds the vertex and index buffers to the command buffer.
+    ///   3. Binds the ImGui graphics pipeline and descriptor set.
+    ///   4. Sets the dynamic viewport based on the ImGui display size.
+    ///   5. Computes the orthographic projection matrix for ImGui.
+    ///   6. Iterates through the ImGui draw lists and issues draw calls for each command.
+    ///
+    ///   It handles scissor rectangles and indexed drawing based on ImGui's clip rects.
+    ///   If there is no ImGui draw data (total vertex or index count is zero),
+    ///   it simply returns without rendering anything.
     pub fn render(
         &mut self,
         device: &ash::Device,

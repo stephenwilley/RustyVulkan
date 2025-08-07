@@ -131,7 +131,7 @@ impl Swapchain {
     /// * `window` - The winit `Window` to determine swapchain extent
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or
-    /// an error if the swapchain could not be recreated.
+    ///   an error if the swapchain could not be recreated.
     pub fn recreate(
         &mut self,
         instance: &Instance,
@@ -274,7 +274,7 @@ impl Swapchain {
                         .property_flags
                         .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
                 })
-                .expect("No suitable memory type!") as u32;
+                .expect("No suitable memory type!");
 
             let allocate_info = vk::MemoryAllocateInfo {
                 allocation_size: memory_requirements.size,
@@ -458,7 +458,7 @@ impl SwapchainSupportDetails {
     /// * `surface_loader` - The surface loader to manage the surface.
     /// # Returns
     /// * `Result<Self, vk::Result>` - Returns a `SwapchainSupportDetails` instance on success,
-    /// or an error if the query fails.
+    ///   or an error if the query fails.
     pub fn query(
         physical_device: vk::PhysicalDevice,
         surface: vk::SurfaceKHR,

@@ -3,7 +3,7 @@ use gltf::import;
 use gltf::image::Source;
 use crate::vulkan::base::VulkanBase;
 use crate::graphics::meshmanager::MeshManager;
-use crate::graphics::materialmanager::MaterialManager;
+use crate::graphics::materialmanager::{MaterialManager, MaterialProperties};
 use crate::graphics::mesh::Mesh;
 use crate::graphics::mesh::Vertex as MeshVertex;
 use cgmath::Vector3;
@@ -96,26 +96,30 @@ pub fn import_gltf(
         println!("GLTF Material: {:?}, {:?}", base_color, normal_map);
 
         let mat_id = mats.request_material(
-            name,
             vb,
-            "assets/shaders/spv/point_light.vert.spv".into(),
-            "assets/shaders/spv/point_light.frag.spv".into(),
-            base_color,
-            normal_map,
-            true,
+            MaterialProperties {
+                name,
+                vs_path: "assets/shaders/spv/point_light.vert.spv".into(),
+                fs_path: "assets/shaders/spv/point_light.frag.spv".into(),
+                diffuse_texture_path: base_color,
+                normalmap_texture_path: normal_map,
+                depth_write: true
+            }
         );
         material_ids.push(mat_id);
     }
     // If no materials were defined, create a single default material
     if material_ids.is_empty() {
         let default_id = mats.request_material(
-            "default_mat".into(),
             vb,
-            "assets/shaders/spv/passthrough.vert.spv".into(),
-            "assets/shaders/spv/lambert_no_tex.frag.spv".into(),
-            None,
-            None,
-            true,
+            MaterialProperties {
+                name: "default_mat".into(),
+                vs_path: "assets/shaders/spv/passthrough.vert.spv".into(),
+                fs_path: "assets/shaders/spv/lambert_no_tex.frag.spv".into(),
+                diffuse_texture_path: None,
+                normalmap_texture_path: None,
+                depth_write: true
+            }
         );
         material_ids.push(default_id);
     }
@@ -150,7 +154,7 @@ pub fn import_gltf(
             let mut cpu_mesh = Mesh::new();
             cpu_mesh.vertices.reserve(positions.len());
             for i in 0..positions.len() {
-                let (tan, bitan) = if let Some(ref ts) = maybe_tangents.as_ref() {
+                let (tan, bitan) = if let Some(ts) = maybe_tangents.as_ref() {
                     let t4 = ts[i];
                     let t = [t4[0], t4[1], t4[2]];
                     let bsign = t4[3];

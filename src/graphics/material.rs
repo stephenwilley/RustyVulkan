@@ -85,7 +85,6 @@ impl Material {
         let pool_size = vk::DescriptorPoolSize {
             ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
             descriptor_count: 2,
-            ..Default::default()
         };
         let pool_info = vk::DescriptorPoolCreateInfo {
             flags: vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
@@ -143,7 +142,7 @@ impl Material {
             texture_descriptor_set,
             texture_descriptor_pool
             ) = if texturing_enabled {
-                Self::setup_texture_descriptors(&vb)?
+                Self::setup_texture_descriptors(vb)?
             } else {
                 (vk::DescriptorSetLayout::null(), vk::DescriptorSet::null(), vk::DescriptorPool::null())
             };
@@ -180,13 +179,13 @@ impl Material {
         }
 
         let mut material = Self {
-            name: name,
-            pipeline: pipeline,
-            texture_descriptor_set_layout: texture_descriptor_set_layout,
-            texture_descriptor_pool: texture_descriptor_pool,
-            texture_descriptor_set: texture_descriptor_set,
-            shaders: shaders,
-            textures: textures,
+            name,
+            pipeline,
+            texture_descriptor_set_layout,
+            texture_descriptor_pool,
+            texture_descriptor_set,
+            shaders,
+            textures,
         };
 
         if texturing_enabled {
@@ -283,7 +282,7 @@ impl LoadedShaders {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let vs = ShaderModule::from_spv_file(device, vs_path)?;
         let fs = ShaderModule::from_spv_file(device, fs_path)?;
-        let entry = std::ffi::CStr::from_bytes_with_nul(b"main\0").unwrap();
+        let entry = c"main";
 
         Ok(LoadedShaders {
             vertex:   ShaderStageInfo { stage: vk::ShaderStageFlags::VERTEX,   shader_module: vs, entry_name: entry },

@@ -9,15 +9,10 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-#![allow(warnings)]
-
 use ash::vk;
 use ash::{Instance, Device};
 use std::error::Error;
-use std::fs;
 use bytemuck::{Pod, Zeroable, offset_of};
-use gltf::Gltf;
-use crate::graphics::gltf_loader::import_gltf;
 
 
 /// A single vertex: 3D position + normal, color, uv, tangent, bitangent.

@@ -5,37 +5,37 @@
 //! Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
 //!
 //! Add Blinn-Phong spec to the shaders
-//! 
+//!
 //! --------------------------------------------------------------------------------------
 
-use winit::application::ApplicationHandler;
-use winit::event::{WindowEvent, DeviceEvent};
-use winit::event::Event;
-use winit::event::ElementState::{Pressed, Released};
-use winit::keyboard::PhysicalKey::Code;
-use winit::keyboard::KeyCode;
-use winit::keyboard::ModifiersState;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowAttributes};
+use ash::vk;
+use imgui::{Condition, Context as ImGuiContext, WindowFlags};
+use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use std::error::Error;
 use std::time::Instant;
-use ash::vk;
-use imgui::{Context as ImGuiContext, Condition, WindowFlags};
-use imgui_winit_support::{WinitPlatform, HiDpiMode};
+use winit::application::ApplicationHandler;
+use winit::event::ElementState::{Pressed, Released};
+use winit::event::Event;
+use winit::event::{DeviceEvent, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::KeyCode;
+use winit::keyboard::ModifiersState;
+use winit::keyboard::PhysicalKey::Code;
+use winit::window::{Window, WindowAttributes};
 
-mod vulkan;
-mod graphics;
 mod camera;
+mod graphics;
 mod scene;
-use crate::vulkan::base::VulkanBase;
-use crate::vulkan::imgui_renderer::ImGuiRenderer;
+mod vulkan;
 use crate::camera::Camera;
-use crate::scene::{Scene, SceneObject, Transform as SceneTransform};
 use crate::graphics::gltf_loader::import_gltf;
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::meshmanager::MeshManager;
-use cgmath::{prelude::*};
-use cgmath::{Vector1,Vector3,Matrix4};
+use crate::scene::{Scene, SceneObject, Transform as SceneTransform};
+use crate::vulkan::base::VulkanBase;
+use crate::vulkan::imgui_renderer::ImGuiRenderer;
+use cgmath::prelude::*;
+use cgmath::{Matrix4, Vector1, Vector3};
 
 /// Holds the window and Vulkan backend, orchestrating rendering and events.
 struct App {
@@ -45,11 +45,11 @@ struct App {
     camera: Camera,
     step: f32,
     modifiers: ModifiersState,
-    moving_forward:  bool,  // W held
-    moving_backward: bool,  // S held
-    moving_left:     bool,  // A held
-    moving_right:    bool,  // D held
-    toggle_locked:   bool,  // prevent rapid toggle repeats
+    moving_forward: bool,  // W held
+    moving_backward: bool, // S held
+    moving_left: bool,     // A held
+    moving_right: bool,    // D held
+    toggle_locked: bool,   // prevent rapid toggle repeats
     mouselook_enabled: bool,
     imgui: Option<ImGuiContext>,
     platform: Option<WinitPlatform>,
@@ -107,7 +107,7 @@ impl App {
         window: &Window,
         show_ms_per_frame: bool,
         light_pos: &mut Vector3<f32>,
-        light_intensity: &mut Vector1<f32>
+        light_intensity: &mut Vector1<f32>,
     ) -> &'a imgui::DrawData {
         // Let winit-platform prepare ImGui for a new frame
         platform
@@ -117,19 +117,19 @@ impl App {
         // Build ImGui UI and collect draw data
         let ui = imgui.frame();
         if show_ms_per_frame {
-        ui.window("##ms_per_redraw")
-            .position([10.0, 10.0], Condition::Always)
-            .size([200.0, 30.0], Condition::Always)
-            .flags(
-                WindowFlags::NO_TITLE_BAR
-            | WindowFlags::NO_RESIZE
-            | WindowFlags::NO_MOVE
-            | WindowFlags::NO_SCROLLBAR
-            | WindowFlags::NO_BACKGROUND
-            )
-            .build(|| {
-                ui.text(format!("Redraw ms: {:.2}", ms_per_frame));
-            });
+            ui.window("##ms_per_redraw")
+                .position([10.0, 10.0], Condition::Always)
+                .size([200.0, 30.0], Condition::Always)
+                .flags(
+                    WindowFlags::NO_TITLE_BAR
+                        | WindowFlags::NO_RESIZE
+                        | WindowFlags::NO_MOVE
+                        | WindowFlags::NO_SCROLLBAR
+                        | WindowFlags::NO_BACKGROUND,
+                )
+                .build(|| {
+                    ui.text(format!("Redraw ms: {:.2}", ms_per_frame));
+                });
         }
         ui.window("Controls")
             .size([300.0, 180.0], Condition::FirstUseEver)
@@ -153,13 +153,18 @@ impl App {
     /// * `model_matrix` - The model matrix of the object being drawn.
     /// # Returns
     /// * `Vec<u8>` - The serialized push constant data containing the MVP matrix and light direction.
-    fn compute_push_constant_per_obj(camera: &Camera, model_matrix: &Matrix4<f32>, light_pos: Vector3<f32>, light_intensity: Vector1<f32>) -> Vec<u8> {
+    fn compute_push_constant_per_obj(
+        camera: &Camera,
+        model_matrix: &Matrix4<f32>,
+        light_pos: Vector3<f32>,
+        light_intensity: Vector1<f32>,
+    ) -> Vec<u8> {
         let proj: Matrix4<f32> = *camera.get_projection();
         let view: Matrix4<f32> = *camera.get_view();
 
         // 4) Compute both MV and full MVP
-        let mv  = view * model_matrix;    // Model‐View matrix for normals
-        let mvp = proj * mv;       // Projection × View × Model
+        let mv = view * model_matrix; // Model‐View matrix for normals
+        let mvp = proj * mv; // Projection × View × Model
 
         // 5) Flatten MVP (4×4) and MV (4×4) into column‐major bytes,
         //    then append lightDir (3 floats).
@@ -177,7 +182,7 @@ impl App {
         // MVP first
         flatten_mat4(mvp, &mut bytes);
         // then MV
-        flatten_mat4(mv,  &mut bytes);
+        flatten_mat4(mv, &mut bytes);
 
         // 6) Transform world-space light position into view-space
         // This saves doing that multiplication in every run of the vertex shader
@@ -199,13 +204,16 @@ impl App {
     /// # Returns
     /// * A new window instance.
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Window {
-        let window_attributes = WindowAttributes::default().with_title("Rust Vulkan 47 - Specular Highlights Blinn Phong");
+        let window_attributes = WindowAttributes::default()
+            .with_title("Rust Vulkan 47 - Specular Highlights Blinn Phong");
         let window = event_loop
             .create_window(window_attributes)
             .expect("Failed to create window");
         println!("🪟 Window created");
 
-        window.set_cursor_grab(winit::window::CursorGrabMode::None).ok();
+        window
+            .set_cursor_grab(winit::window::CursorGrabMode::None)
+            .ok();
         window.set_cursor_visible(false);
         window
     }
@@ -213,7 +221,7 @@ impl App {
     /// Sets up the initial assets and scene for the application
     /// # Arguments
     /// * `event_loop` - The active event loop to manage window and Vulkan events.
-    fn set_up_scene(&mut self) {
+    fn set_up_scene(&mut self) -> Result<(), Box<dyn Error>> {
         let vulkan_base = self.vulkan_base.as_mut().unwrap();
 
         let infinite_plane = SceneObject {
@@ -226,10 +234,8 @@ impl App {
                 None,
                 None,
                 false,
-            ),
-            mesh_id: self.mesh_manager.request_unit_plane(
-                vulkan_base,
-            )
+            )?,
+            mesh_id: self.mesh_manager.request_unit_plane(vulkan_base),
         };
 
         let cube = SceneObject {
@@ -246,10 +252,8 @@ impl App {
                 Some("assets/textures/cube1/diffuse.png".into()),
                 Some("assets/textures/cube1/normal.png".into()),
                 true,
-            ),
-            mesh_id: self.mesh_manager.request_cube(
-                vulkan_base,
-            )
+            )?,
+            mesh_id: self.mesh_manager.request_cube(vulkan_base),
         };
 
         // Import duck mesh + material via glTF loader
@@ -258,7 +262,8 @@ impl App {
             vulkan_base,
             &mut self.mesh_manager,
             &mut self.material_manager,
-        ).expect("Failed to import glTF mesh");
+        )
+        .expect("Failed to import glTF mesh");
         let duck_prim = &prims[0];
 
         let duck = SceneObject {
@@ -268,7 +273,7 @@ impl App {
                 0.015,
             ),
             material_id: duck_prim.mat_id,
-            mesh_id:     duck_prim.mesh_id,
+            mesh_id: duck_prim.mesh_id,
         };
 
         // Import duck mesh + material via glTF loader
@@ -277,7 +282,8 @@ impl App {
             vulkan_base,
             &mut self.mesh_manager,
             &mut self.material_manager,
-        ).expect("Failed to import glTF mesh");
+        )
+        .expect("Failed to import glTF mesh");
         let sphere_prim = &prims2[0];
 
         let sphere = SceneObject {
@@ -287,7 +293,7 @@ impl App {
                 1.0,
             ),
             material_id: sphere_prim.mat_id,
-            mesh_id:     sphere_prim.mesh_id,
+            mesh_id: sphere_prim.mesh_id,
         };
 
         self.scene = Scene::new();
@@ -298,6 +304,7 @@ impl App {
 
         self.camera = Camera::new();
         self.step = 0.1;
+        Ok(())
     }
 }
 
@@ -315,7 +322,11 @@ impl ApplicationHandler for App {
         // — ImGui Platformn setup —
         let mut imgui = ImGuiContext::create();
         let mut platform = WinitPlatform::new(&mut imgui);
-        platform.attach_window(imgui.io_mut(), self.window.as_ref().unwrap(), HiDpiMode::Rounded);
+        platform.attach_window(
+            imgui.io_mut(),
+            self.window.as_ref().unwrap(),
+            HiDpiMode::Rounded,
+        );
         self.imgui = Some(imgui);
         self.platform = Some(platform);
 
@@ -334,11 +345,17 @@ impl ApplicationHandler for App {
         self.material_manager = material_manager;
 
         // Create the imgui renderer
-        let renderer = ImGuiRenderer::new(self.vulkan_base.as_mut().unwrap(), self.imgui.as_mut().unwrap());
+        let renderer = ImGuiRenderer::new(
+            self.vulkan_base.as_mut().unwrap(),
+            self.imgui.as_mut().unwrap(),
+        );
         self.imgui_renderer = Some(renderer);
 
         // Now set up the scene
-        self.set_up_scene();
+        if let Err(e) = self.set_up_scene() {
+            eprintln!("Failed to set up scene: {}", e);
+            event_loop.exit();
+        }
     }
 
     /// Called for *all* raw device events (mouse, keyboard, etc).
@@ -353,10 +370,7 @@ impl ApplicationHandler for App {
                 let (dx, dy) = (delta.0 as f32, delta.1 as f32);
                 let sensitivity = 0.1;
                 // convert to yaw/pitch deltas and feed into camera:
-                self.camera.rotate(
-                    dx * sensitivity,
-                    -dy * sensitivity,
-                );
+                self.camera.rotate(dx * sensitivity, -dy * sensitivity);
             }
         }
     }
@@ -394,11 +408,12 @@ impl ApplicationHandler for App {
                         println!("Close requested!");
                         event_loop.exit();
                     }
-                    WindowEvent::Resized(_)
-                    | WindowEvent::ScaleFactorChanged { .. } => {
+                    WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                         println!("📐 Window resized");
                         if let Some(vulkan_base) = &mut self.vulkan_base {
-                            if let Err(e) = vulkan_base.recreate_swapchain(self.window.as_ref().unwrap()) {
+                            if let Err(e) =
+                                vulkan_base.recreate_swapchain(self.window.as_ref().unwrap())
+                            {
                                 eprintln!("Failed to recreate swapchain: {}", e);
                             }
                             if let Err(e) = self.material_manager.recreate_pipelines(vulkan_base) {
@@ -407,15 +422,21 @@ impl ApplicationHandler for App {
                             if let Err(e) = vulkan_base.record_command_buffers() {
                                 eprintln!("Failed to record command buffers: {}", e);
                             }
-                            if let Err(e) = self.imgui_renderer.as_mut().unwrap().rebuild_pipeline(vulkan_base) {
+                            if let Err(e) = self
+                                .imgui_renderer
+                                .as_mut()
+                                .unwrap()
+                                .rebuild_pipeline(vulkan_base)
+                            {
                                 eprintln!("Failed to rebuild imgui pipeline: {}", e);
                             }
                         }
                         // Update camera’s projection
                         if let Some(window) = &self.window {
-                            let size   = window.inner_size();
+                            let size = window.inner_size();
                             let aspect = size.width as f32 / size.height as f32;
-                            self.camera.set_perspective_projection(45.0, aspect, 0.1, 100.0);
+                            self.camera
+                                .set_perspective_projection(45.0, aspect, 0.1, 100.0);
                         }
                     }
                     WindowEvent::ModifiersChanged(mods) => {
@@ -478,7 +499,9 @@ impl ApplicationHandler for App {
                                 self.toggle_locked = false;
                             }
                             // — Wireframe toggle on Ctrl+W, one shot —
-                            (Code(KeyCode::KeyW), Pressed) if self.modifiers.control_key() && !self.toggle_locked => {
+                            (Code(KeyCode::KeyW), Pressed)
+                                if self.modifiers.control_key() && !self.toggle_locked =>
+                            {
                                 self.toggle_locked = true;
                                 if let Some(vb) = &mut self.vulkan_base {
                                     vb.toggle_wireframe();
@@ -492,7 +515,9 @@ impl ApplicationHandler for App {
                                 }
                             }
                             // — ms per frame toggle on Ctrl+F, one shot —
-                            (Code(KeyCode::KeyF), Pressed) if self.modifiers.control_key() && !self.toggle_locked => {
+                            (Code(KeyCode::KeyF), Pressed)
+                                if self.modifiers.control_key() && !self.toggle_locked =>
+                            {
                                 self.toggle_locked = true;
                                 if let Some(vb) = &mut self.vulkan_base {
                                     vb.toggle_ms_per_frame();
@@ -512,10 +537,18 @@ impl ApplicationHandler for App {
 
                             // Now do movement
                             let s = self.step;
-                            if self.moving_forward  { self.camera.translate( s,  0.0) }
-                            if self.moving_backward { self.camera.translate(-s,  0.0) }
-                            if self.moving_left     { self.camera.translate( 0.0, -s) }
-                            if self.moving_right    { self.camera.translate( 0.0,  s) }
+                            if self.moving_forward {
+                                self.camera.translate(s, 0.0)
+                            }
+                            if self.moving_backward {
+                                self.camera.translate(-s, 0.0)
+                            }
+                            if self.moving_left {
+                                self.camera.translate(0.0, -s)
+                            }
+                            if self.moving_right {
+                                self.camera.translate(0.0, s)
+                            }
 
                             // Prepare ImGui UI and get draw data
                             let window = self.window.as_ref().unwrap();
@@ -526,7 +559,7 @@ impl ApplicationHandler for App {
                                 window,
                                 vb.debug_settings.show_ms_per_frame,
                                 &mut self.light_pos,
-                                &mut self.light_intensity
+                                &mut self.light_intensity,
                             );
 
                             if let Err(e) = vb.draw_frame({
@@ -537,21 +570,37 @@ impl ApplicationHandler for App {
                                         // Update the transform for each object
                                         let model_matrix = obj.transform.model_matrix();
                                         // Push the model matrix as a push constant
-                                        let push_bytes = Self::compute_push_constant_per_obj(&self.camera, &model_matrix, self.light_pos, self.light_intensity);
+                                        let push_bytes = Self::compute_push_constant_per_obj(
+                                            &self.camera,
+                                            &model_matrix,
+                                            self.light_pos,
+                                            self.light_intensity,
+                                        );
                                         unsafe {
                                             if current_pipeline_id != obj.material_id {
                                                 device.cmd_bind_pipeline(
                                                     cmd_buf,
                                                     vk::PipelineBindPoint::GRAPHICS,
-                                                    self.material_manager.materials[obj.material_id].pipeline.vk_pipeline
+                                                    self.material_manager.materials
+                                                        [obj.material_id]
+                                                        .pipeline
+                                                        .vk_pipeline,
                                                 );
-                                                if self.material_manager.materials[obj.material_id].textures.is_some() {
+                                                if self.material_manager.materials[obj.material_id]
+                                                    .textures
+                                                    .is_some()
+                                                {
                                                     device.cmd_bind_descriptor_sets(
                                                         cmd_buf,
                                                         vk::PipelineBindPoint::GRAPHICS,
-                                                        self.material_manager.materials[obj.material_id].pipeline.vk_layout,
+                                                        self.material_manager.materials
+                                                            [obj.material_id]
+                                                            .pipeline
+                                                            .vk_layout,
                                                         0, // set index
-                                                        &[self.material_manager.materials[obj.material_id].texture_descriptor_set],
+                                                        &[self.material_manager.materials
+                                                            [obj.material_id]
+                                                            .texture_descriptor_set],
                                                         &[],
                                                     );
                                                 }
@@ -559,20 +608,25 @@ impl ApplicationHandler for App {
                                             };
                                             device.cmd_push_constants(
                                                 cmd_buf,
-                                                self.material_manager.materials[obj.material_id].pipeline.vk_layout,
-                                                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                                                self.material_manager.materials[obj.material_id]
+                                                    .pipeline
+                                                    .vk_layout,
+                                                vk::ShaderStageFlags::VERTEX
+                                                    | vk::ShaderStageFlags::FRAGMENT,
                                                 0,
                                                 &push_bytes,
                                             );
                                         }
-                                        self.mesh_manager.meshes[obj.mesh_id].record(device, cmd_buf);
+                                        self.mesh_manager.meshes[obj.mesh_id]
+                                            .record(device, cmd_buf);
                                     }
                                     // Bind and draw ImGui on top
                                     unsafe {
                                         device.cmd_bind_pipeline(
                                             cmd_buf,
                                             vk::PipelineBindPoint::GRAPHICS,
-                                            imgui_renderer.vk_pipeline);
+                                            imgui_renderer.vk_pipeline,
+                                        );
                                     }
                                     imgui_renderer.render(device, cmd_buf, &draw_data);
                                 }
@@ -589,7 +643,7 @@ impl ApplicationHandler for App {
             }
         }
     }
-    
+
     /// Called before waiting for new events; requests a redraw each loop iteration.
     /// # Arguments
     /// * `event_loop` - The active event loop managing the application.
@@ -606,7 +660,9 @@ impl Drop for App {
     fn drop(&mut self) {
         // 1) Pull the VulkanBase out so we can take ownership
         if let Some(vb) = self.vulkan_base.take() {
-            unsafe { let _ = vb.device.device_wait_idle(); }
+            unsafe {
+                let _ = vb.device.device_wait_idle();
+            }
 
             self.material_manager.cleanup(&vb.device);
             self.mesh_manager.cleanup(&vb.device);

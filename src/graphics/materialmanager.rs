@@ -10,9 +10,10 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use ash::Device;
 use crate::graphics::material::Material;
 use crate::vulkan::base::VulkanBase;
+use ash::Device;
+use std::error::Error;
 
 pub struct MaterialManager {
     pub materials: Vec<Material>,
@@ -25,16 +26,20 @@ impl MaterialManager {
         }
     }
 
-    pub fn recreate_pipelines(
-        &mut self,
-        vb: &VulkanBase
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn recreate_pipelines(&mut self, vb: &VulkanBase) -> Result<(), Box<dyn Error>> {
+        let mut first_error: Option<Box<dyn Error>> = None;
         for material in &mut self.materials {
             if let Err(e) = material.recreate_pipeline(vb) {
-                eprintln!("Failed to recreate pipeline: {}", e);
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
             }
         }
-        Ok(())
+        if let Some(err) = first_error {
+            Err(err)
+        } else {
+            Ok(())
+        }
     }
 
     pub fn request_material(
@@ -45,10 +50,10 @@ impl MaterialManager {
         fs_path: String,
         diffuse_texture_path: Option<String>,
         normalmap_texture_path: Option<String>,
-        depth_write: bool
-    ) -> usize {
+        depth_write: bool,
+    ) -> Result<usize, Box<dyn Error>> {
         if let Some(idx) = self.materials.iter().position(|m| m.name == name) {
-            idx
+            Ok(idx)
         } else {
             let mat = Material::new(
                 name,
@@ -57,10 +62,10 @@ impl MaterialManager {
                 fs_path,
                 diffuse_texture_path,
                 normalmap_texture_path,
-                depth_write
-            ).unwrap();
+                depth_write,
+            )?;
             self.materials.push(mat);
-            self.materials.len() - 1
+            Ok(self.materials.len() - 1)
         }
     }
 

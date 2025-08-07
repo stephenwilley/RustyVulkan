@@ -1,20 +1,19 @@
-use std::error::Error;
-use gltf::import;
-use gltf::image::Source;
-use crate::vulkan::base::VulkanBase;
-use crate::graphics::meshmanager::MeshManager;
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::mesh::Mesh;
 use crate::graphics::mesh::Vertex as MeshVertex;
+use crate::graphics::meshmanager::MeshManager;
+use crate::vulkan::base::VulkanBase;
 use cgmath::Vector3;
+use gltf::image::Source;
+use gltf::import;
 use mikktspace;
 use mikktspace::Geometry;
-
+use std::error::Error;
 
 // Inline MikkTSpace Geometry adapter for CPU-side mesh
 struct MikkGeom<'a> {
     verts: &'a mut [MeshVertex],
-    idxs:  &'a [u32],
+    idxs: &'a [u32],
 }
 
 impl<'a> Geometry for MikkGeom<'a> {
@@ -39,11 +38,11 @@ impl<'a> Geometry for MikkGeom<'a> {
     fn set_tangent_encoded(&mut self, t: [f32; 4], face: usize, vert: usize) {
         let i = self.idxs[face * 3 + vert] as usize;
         // store tangent xyz
-        self.verts[i].tangent  = [t[0], t[1], t[2]];
+        self.verts[i].tangent = [t[0], t[1], t[2]];
         // reconstruct bitangent = sign * cross(tangent, normal)
         let n = Vector3::from(self.verts[i].normal);
         let tan = Vector3::from(self.verts[i].tangent);
-        let b   = tan.cross(n) * -t[3];
+        let b = tan.cross(n) * -t[3];
         self.verts[i].bitangent = b.into();
     }
 }
@@ -51,16 +50,16 @@ impl<'a> Geometry for MikkGeom<'a> {
 /// A single primitive from a glTF file, tied to a mesh and a material.
 pub struct GltfPrim {
     pub mesh_id: usize,
-    pub mat_id:  usize,
+    pub mat_id: usize,
 }
 
 /// Loads a glTF file, imports its geometry and materials into your managers,
 /// and returns a list of primitives you can add to your scene.
 pub fn import_gltf(
     path: &str,
-    vb:   &VulkanBase,
+    vb: &VulkanBase,
     meshes: &mut MeshManager,
-    mats:   &mut MaterialManager,
+    mats: &mut MaterialManager,
 ) -> Result<Vec<GltfPrim>, Box<dyn Error>> {
     let base_dir = std::path::Path::new(path)
         .parent()
@@ -72,7 +71,8 @@ pub fn import_gltf(
     // 2) Import materials, giving fallback names if unnamed
     let mut material_ids = Vec::new();
     for (i, mat) in doc.materials().enumerate() {
-        let name = mat.name()
+        let name = mat
+            .name()
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("gltf_mat{}", i));
         // Base-color and normal textures are optional
@@ -80,18 +80,14 @@ pub fn import_gltf(
         let base_color = pbr
             .base_color_texture()
             .map(|t| match t.texture().source().source() {
-                Source::Uri { uri, .. } => base_dir.join(uri)
-                    .to_string_lossy()
-                    .into_owned(),
-                Source::View { .. }  => panic!("Embedded glTF images not supported"),
+                Source::Uri { uri, .. } => base_dir.join(uri).to_string_lossy().into_owned(),
+                Source::View { .. } => panic!("Embedded glTF images not supported"),
             });
         let normal_map = mat
             .normal_texture()
             .map(|t| match t.texture().source().source() {
-                Source::Uri { uri, .. } => base_dir.join(uri)
-                    .to_string_lossy()
-                    .into_owned(),
-                Source::View { .. }  => panic!("Embedded glTF images not supported"),
+                Source::Uri { uri, .. } => base_dir.join(uri).to_string_lossy().into_owned(),
+                Source::View { .. } => panic!("Embedded glTF images not supported"),
             });
         println!("GLTF Material: {:?}, {:?}", base_color, normal_map);
 
@@ -103,7 +99,7 @@ pub fn import_gltf(
             base_color,
             normal_map,
             true,
-        );
+        )?;
         material_ids.push(mat_id);
     }
     // If no materials were defined, create a single default material
@@ -116,7 +112,7 @@ pub fn import_gltf(
             None,
             None,
             true,
-        );
+        )?;
         material_ids.push(default_id);
     }
 
@@ -127,17 +123,16 @@ pub fn import_gltf(
             // Build a CPU-side Mesh from this primitive
             let reader = prim.reader(|buffer| Some(&buffers[buffer.index()]));
 
-            let positions: Vec<[f32;3]> = reader.read_positions()
+            let positions: Vec<[f32; 3]> = reader
+                .read_positions()
                 .ok_or("Positions missing")?
                 .collect();
-            let normals: Vec<[f32;3]> = reader.read_normals()
-                .ok_or("Normals missing")?
-                .collect();
-            let uvs: Vec<[f32;2]> = reader.read_tex_coords(0)
+            let normals: Vec<[f32; 3]> = reader.read_normals().ok_or("Normals missing")?.collect();
+            let uvs: Vec<[f32; 2]> = reader
+                .read_tex_coords(0)
                 .map(|tc| tc.into_f32().collect())
-                .unwrap_or_else(|| vec![[0.0,0.0]; positions.len()]);
-            let tangents: Option<Vec<[f32;4]>> =
-                reader.read_tangents().map(|t| t.collect());
+                .unwrap_or_else(|| vec![[0.0, 0.0]; positions.len()]);
+            let tangents: Option<Vec<[f32; 4]>> = reader.read_tangents().map(|t| t.collect());
             let maybe_tangents = tangents;
             // Read indices if provided, otherwise generate a sequential index for each vertex
             let indices: Vec<u32> = if let Some(index_iter) = reader.read_indices() {
@@ -156,24 +151,24 @@ pub fn import_gltf(
                     let bsign = t4[3];
                     let n = normals[i];
                     let b = [
-                        bsign * (n[1]*t[2] - n[2]*t[1]),
-                        bsign * (n[2]*t[0] - n[0]*t[2]),
-                        bsign * (n[0]*t[1] - n[1]*t[0]),
+                        bsign * (n[1] * t[2] - n[2] * t[1]),
+                        bsign * (n[2] * t[0] - n[0] * t[2]),
+                        bsign * (n[0] * t[1] - n[1] * t[0]),
                     ];
                     (t, b)
                 } else {
                     // Gotta put something in there but we'll overwrite these zeroes shortly with
                     // computed tangents
-                    ([0.0;3], [0.0;3])
+                    ([0.0; 3], [0.0; 3])
                 };
                 cpu_mesh.vertices.push(crate::graphics::mesh::Vertex {
-                    pos:        positions[i],
-                    normal:     normals[i],
-                    color:      [1.0,1.0,1.0],
+                    pos: positions[i],
+                    normal: normals[i],
+                    color: [1.0, 1.0, 1.0],
                     // Store original UVs for tangent calc; flip V later for Vulkan
-                    uv:         uvs[i],
-                    tangent:    tan,
-                    bitangent:  bitan,
+                    uv: uvs[i],
+                    tangent: tan,
+                    bitangent: bitan,
                 });
             }
             // Assign original indices
@@ -183,9 +178,9 @@ pub fn import_gltf(
             if maybe_tangents.is_none() {
                 // Unweld: duplicate vertices per triangle to avoid shared-vertex smoothing across UV seams
                 let orig_vertices = std::mem::take(&mut cpu_mesh.vertices);
-                let orig_indices  = cpu_mesh.indices.clone();
+                let orig_indices = cpu_mesh.indices.clone();
                 let mut uw_vertices = Vec::with_capacity(orig_indices.len());
-                let mut uw_indices  = Vec::with_capacity(orig_indices.len());
+                let mut uw_indices = Vec::with_capacity(orig_indices.len());
                 for tri in orig_indices.chunks(3) {
                     for &idx in tri {
                         let v = orig_vertices[idx as usize];
@@ -194,12 +189,12 @@ pub fn import_gltf(
                     }
                 }
                 cpu_mesh.vertices = uw_vertices;
-                cpu_mesh.indices  = uw_indices;
+                cpu_mesh.indices = uw_indices;
 
                 // Generate tangents on the unwelded mesh
                 let mut geom = MikkGeom {
                     verts: &mut cpu_mesh.vertices,
-                    idxs:  &cpu_mesh.indices,
+                    idxs: &cpu_mesh.indices,
                 };
                 if !mikktspace::generate_tangents(&mut geom) {
                     panic!("MikkTSpace tangent generation failed");
@@ -212,11 +207,11 @@ pub fn import_gltf(
             }
 
             // Upload via new helper
-            let mesh_name = mesh.name()
+            let mesh_name = mesh
+                .name()
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("gltf_mesh#{}", pi));
-            let mesh_id = meshes.request_mesh_from_cpu(
-                mesh_name, vb, cpu_mesh);
+            let mesh_id = meshes.request_mesh_from_cpu(mesh_name, vb, cpu_mesh);
 
             // Pick the corresponding material ID (fall back to first)
             let mat_index = prim.material().index().unwrap_or(0);

@@ -14,6 +14,7 @@ use ash::Device;
 use crate::vulkan::base::VulkanBase;
 use crate::graphics::mesh::LoadedMesh;
 use crate::graphics::mesh::Mesh;
+use std::error::Error;
 
 pub struct MeshManager {
     pub meshes: Vec<LoadedMesh>,
@@ -30,19 +31,19 @@ impl MeshManager {
     pub fn request_cube(
         &mut self,
         vb: &VulkanBase
-    ) -> usize {
+    ) -> Result<usize, Box<dyn Error>> {
 
         if let Some(idx) = self.meshes.iter().position(|m| m.name == "Cube") {
-            idx
+            Ok(idx)
         } else {
             let mesh = LoadedMesh::cube(
                 "Cube".into(),
                 &vb.instance,
                 &vb.device,
                 vb.physical_device,
-            ).expect("Failed to load mesh");
+            )?;
             self.meshes.push(mesh);
-            self.meshes.len() - 1
+            Ok(self.meshes.len() - 1)
         }
     }
 
@@ -50,19 +51,19 @@ impl MeshManager {
     pub fn request_unit_plane(
         &mut self,
         vb: &VulkanBase
-    ) -> usize {
+    ) -> Result<usize, Box<dyn Error>> {
 
         if let Some(idx) = self.meshes.iter().position(|m| m.name == "UnitPlane") {
-            idx
+            Ok(idx)
         } else {
             let mesh = LoadedMesh::unit_plane(
                 "UnitPlane".into(),
                 &vb.instance,
                 &vb.device,
                 vb.physical_device,
-            ).expect("Failed to load mesh");
+            )?;
             self.meshes.push(mesh);
-            self.meshes.len() - 1
+            Ok(self.meshes.len() - 1)
         }
     }
 
@@ -72,10 +73,10 @@ impl MeshManager {
         name: String,
         vb: &VulkanBase,
         mesh: Mesh,
-    ) -> usize {
+    ) -> Result<usize, Box<dyn Error>> {
         // If we already have one by this name, return it.
         if let Some(idx) = self.meshes.iter().position(|m| m.name == name) {
-            return idx;
+            return Ok(idx);
         }
         // Otherwise upload to GPU...
         let loaded = crate::graphics::mesh::LoadedMesh::load(
@@ -84,9 +85,9 @@ impl MeshManager {
             &vb.device,
             vb.physical_device,
             &mesh,
-        ).expect("Failed to upload CPU mesh");
+        )?;
         self.meshes.push(loaded);
-        self.meshes.len() - 1
+        Ok(self.meshes.len() - 1)
     }
 
     pub fn cleanup(&mut self, device: &Device) {

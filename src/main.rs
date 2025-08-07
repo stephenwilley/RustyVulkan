@@ -532,7 +532,7 @@ impl ApplicationHandler for App {
                             if let Err(e) = vb.draw_frame({
                                 |base, cmd_buf| {
                                     let device = &base.device;
-                                    let mut current_pipeline_id = 9999999999;
+                                    let mut current_pipeline_id = usize::MAX;
                                     for obj in &scene.objects {
                                         // Update the transform for each object
                                         let model_matrix = obj.transform.model_matrix();

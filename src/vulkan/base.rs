@@ -40,8 +40,35 @@ use std::ffi::CStr;
 use std::error::Error;
 
 use super::swapchain::Swapchain;
-use crate::graphics::pipeline::Pipeline;
-use crate::graphics::shaders::load_default_stages;
+
+/// The debug callback function that prints validation layer messages.
+#[cfg(debug_assertions)]
+unsafe extern "system" fn vulkan_debug_callback(
+    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    _p_user_data: *mut std::ffi::c_void,
+) -> vk::Bool32 {
+    unsafe {
+        let message = CStr::from_ptr((*p_callback_data).p_message);
+        let severity = match message_severity {
+            vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => "📢 [VERBOSE]",
+            vk::DebugUtilsMessageSeverityFlagsEXT::INFO => "ℹ️ [INFO]",
+            vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => "⚠️ [WARNING]",
+            vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => "❌ [ERROR]",
+            _ => "[UNKNOWN SEVERITY]",
+        };
+        let ty = match message_type {
+            vk::DebugUtilsMessageTypeFlagsEXT::GENERAL => "[GENERAL]",
+            vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION => "[VALIDATION]",
+            vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE => "[PERFORMANCE]",
+            _ => "[UNKNOWN TYPE]",
+        };
+        eprintln!("{} {} {:?}", severity, ty, message);
+    }
+    vk::FALSE
+
+}
 
 /// Represents the Vulkan backend, encapsulating all Vulkan-related state and operations
 /// and acts as the parent for the swapchain and rendering pipeline.
@@ -54,25 +81,30 @@ pub struct VulkanBase {
     pub instance: Instance,
     pub physical_device: vk::PhysicalDevice,
     pub device: ash::Device,
-    graphics_queue: vk::Queue,
+    pub graphics_queue: vk::Queue,
     surface: vk::SurfaceKHR,
     surface_loader: surface::Instance,
-    command_pool: vk::CommandPool,
+    pub command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
-    image_available_semaphore: vk::Semaphore,
-    render_finished_semaphore: vk::Semaphore,
-    in_flight_fence: vk::Fence,
+    image_available_semaphores: Vec<vk::Semaphore>,
+    render_finished_semaphores: Vec<vk::Semaphore>,
+    in_flight_fences: Vec<vk::Fence>,
     pub swapchain: Swapchain,
     swapchain_loader: swapchain::Device,
-    pub pipeline: Pipeline,
     secondary_command_pool: vk::CommandPool,
-    secondary_command_buffer: vk::CommandBuffer,
-    debug_settings: EngineDebugSettings,
+    secondary_command_buffers: Vec<vk::CommandBuffer>,
+    pub debug_settings: EngineDebugSettings,
+    #[cfg(debug_assertions)]
+    debug_messenger: vk::DebugUtilsMessengerEXT,
+    #[cfg(debug_assertions)]
+    debug_utils_loader: ash::ext::debug_utils::Instance,
+    current_frame: usize,
 }
 
 impl VulkanBase {
-    // Creates a new `VulkanBase` instance, initializing Vulkan resources and setting up the swapchain.
-    fn create_instance(entry: &Entry, event_loop: &ActiveEventLoop) -> Result<Instance, Box<dyn Error>> {
+    fn create_instance(
+        entry: &Entry, event_loop: &ActiveEventLoop, layers: &[*const i8]
+    ) -> Result<Instance, Box<dyn Error>> {
         let app_name = std::ffi::CString::new("Ash Vulkan Tutorial")?;
 
         let app_info = vk::ApplicationInfo {
@@ -87,14 +119,20 @@ impl VulkanBase {
         let ext_names = enumerate_required_extensions(event_loop.display_handle().unwrap().as_raw())?;
         let mut extension_ptrs: Vec<*const i8> = ext_names.iter().copied().collect();
 
+        #[cfg(debug_assertions)]
+        extension_ptrs.push(ash::ext::debug_utils::NAME.as_ptr());
+
         // Add portability enumeration so macOS MoltenVK gets picked up:
         extension_ptrs.push(vk::KHR_PORTABILITY_ENUMERATION_NAME.as_ptr());
+        extension_ptrs.push(vk::KHR_GET_PHYSICAL_DEVICE_PROPERTIES2_NAME.as_ptr());
 
         let create_info = vk::InstanceCreateInfo {
             s_type: vk::StructureType::INSTANCE_CREATE_INFO,
             p_next: std::ptr::null(),
             flags: vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR,
             p_application_info: &app_info,
+            enabled_layer_count: layers.len() as u32,
+            pp_enabled_layer_names: layers.as_ptr(),
             enabled_extension_count: extension_ptrs.len() as u32,
             pp_enabled_extension_names: extension_ptrs.as_ptr(),
             ..Default::default()
@@ -161,6 +199,13 @@ impl VulkanBase {
         queue_family_index: u32,
     ) -> Result<(ash::Device, vk::Queue), vk::Result> {
         let queue_priority = [1.0_f32];
+
+        // Query and enable device features, including sampler anisotropy
+        let mut device_features = unsafe {
+            instance.get_physical_device_features(physical_device)
+        };
+        device_features.sampler_anisotropy = vk::TRUE;
+
         let queue_info = vk::DeviceQueueCreateInfo {
             s_type: vk::StructureType::DEVICE_QUEUE_CREATE_INFO,
             queue_family_index,
@@ -176,10 +221,12 @@ impl VulkanBase {
 
         let device_create_info = vk::DeviceCreateInfo {
             s_type: vk::StructureType::DEVICE_CREATE_INFO,
+            p_next: std::ptr::null(),
             p_queue_create_infos: &queue_info,
             queue_create_info_count: 1,
             enabled_extension_count: device_extensions.len() as u32,
             pp_enabled_extension_names: device_extensions.as_ptr(),
+            p_enabled_features: &device_features,
             ..Default::default()
         };
 
@@ -236,74 +283,59 @@ impl VulkanBase {
         Ok(command_buffers)
     }
 
-    fn record_command_buffers(
+    /// Records the commands for a single primary command buffer.
+    /// This involves beginning the render pass and executing the corresponding secondary command buffer.
+    fn record_primary_command_buffer(
         &self,
-        render_pass: vk::RenderPass,
-        framebuffers: &[vk::Framebuffer],
-        extent: vk::Extent2D,
-        graphics_pipeline: vk::Pipeline,
+        image_index: usize,
     ) -> Result<(), vk::Result> {
-        for (index, &command_buffer) in self.command_buffers.iter().enumerate() {
-            let framebuffer = framebuffers[index];
-            let begin_info = vk::CommandBufferBeginInfo::default();
-            let clear_values = [vk::ClearValue {
+        let command_buffer = self.command_buffers[image_index];
+        let framebuffer = self.swapchain.framebuffers[image_index];
+        let render_pass = self.swapchain.render_pass;
+        let extent = self.swapchain.extent;
+
+        let begin_info = vk::CommandBufferBeginInfo::default();
+        let clear_values = [
+            vk::ClearValue {
                 color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] },
             },
             vk::ClearValue {
-                    depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
-            }];
-            let render_pass_info = vk::RenderPassBeginInfo {
-                render_pass,
-                framebuffer,
-                render_area: vk::Rect2D {
-                    offset: vk::Offset2D { x: 0, y: 0 },
-                    extent,
-                },
-                clear_value_count: clear_values.len() as u32,
-                p_clear_values: clear_values.as_ptr(),
-                ..Default::default()
-            };
-            unsafe {
-                self.device.begin_command_buffer(command_buffer, &begin_info)?;
-                self.device.cmd_begin_render_pass(
-                    command_buffer,
-                    &render_pass_info,
-                    vk::SubpassContents::INLINE,
-                );
-                self.device.cmd_bind_pipeline(
-                    command_buffer,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    graphics_pipeline,
-                );
-                self.device.cmd_execute_commands(command_buffer, &[self.secondary_command_buffer]);
-                self.device.cmd_end_render_pass(command_buffer);
-                self.device.end_command_buffer(command_buffer)?;
-            }
-            println!("📜 Recorded command buffer {}", index);
+                depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
+            },
+        ];
+        let render_pass_info = vk::RenderPassBeginInfo {
+            render_pass,
+            framebuffer,
+            render_area: vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent },
+            clear_value_count: clear_values.len() as u32,
+            p_clear_values: clear_values.as_ptr(),
+            ..Default::default()
+        };
+
+        unsafe {
+            self.device.begin_command_buffer(command_buffer, &begin_info)?;
+            self.device.cmd_begin_render_pass(command_buffer, &render_pass_info, vk::SubpassContents::SECONDARY_COMMAND_BUFFERS);
+            self.device.cmd_execute_commands(command_buffer, &[self.secondary_command_buffers[image_index]]);
+            self.device.cmd_end_render_pass(command_buffer);
+            self.device.end_command_buffer(command_buffer)?;
         }
         Ok(())
     }
 
-    fn create_sync_objects(device: &ash::Device) -> Result<(vk::Semaphore, vk::Semaphore, vk::Fence), vk::Result> {
-        let semaphore_info = vk::SemaphoreCreateInfo::default();
-        let fence_info = vk::FenceCreateInfo {
-            flags: vk::FenceCreateFlags::SIGNALED,
-            ..Default::default()
-        };
-
-        let image_available_semaphore = unsafe { device.create_semaphore(&semaphore_info, None)? };
-        let render_finished_semaphore = unsafe { device.create_semaphore(&semaphore_info, None)? };
-        let in_flight_fence = unsafe { device.create_fence(&fence_info, None)? };
-
-        println!("⛓️ Sync objects created");
-        Ok((image_available_semaphore, render_finished_semaphore, in_flight_fence))
+    pub fn record_command_buffers(&self) -> Result<(), vk::Result> {
+        for (index, _) in self.command_buffers.iter().enumerate() {
+            self.record_primary_command_buffer(index)?;
+        }
+        Ok(())
     }
 
     fn record_secondary_command_buffer<F>(
         &self,
         image_index: usize,
-        mut record_fn: F) -> Result<(), vk::Result> 
-    where F: FnMut(vk::CommandBuffer, &ash::Device), {
+        mut record_fn: F,
+    ) -> Result<(), vk::Result>
+    where F: FnMut(&VulkanBase, vk::CommandBuffer),
+    {
         let inh = vk::CommandBufferInheritanceInfo {
             render_pass:   self.swapchain.render_pass,
             subpass:       0,
@@ -318,12 +350,11 @@ impl VulkanBase {
         };
 
         unsafe {
-            self.device.reset_command_buffer(self.secondary_command_buffer, vk::CommandBufferResetFlags::empty())?;
-            self.device.begin_command_buffer(self.secondary_command_buffer, &begin_info)?;
-
-            record_fn(self.secondary_command_buffer, &self.device);
-
-            self.device.end_command_buffer(self.secondary_command_buffer)?;
+            let cmd = self.secondary_command_buffers[image_index];
+            self.device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
+            self.device.begin_command_buffer(cmd, &begin_info)?;
+            record_fn(self, cmd);
+            self.device.end_command_buffer(cmd)?;
         }
 
         Ok(())
@@ -335,52 +366,64 @@ impl VulkanBase {
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error if the frame could not be drawn.
     pub fn draw_frame<F>(
         &mut self,
-        mut record_secondary: F) -> Result<(), Box<dyn Error>>
-    where F: FnMut(vk::CommandBuffer, &ash::Device), {
+        mut record_secondary: F,
+    ) -> Result<(), Box<dyn Error>>
+    where F: FnMut(&VulkanBase, vk::CommandBuffer),
+    {
         unsafe {
-            self.device.wait_for_fences(&[self.in_flight_fence], true, u64::MAX)?;
-            self.device.reset_fences(&[self.in_flight_fence])?;
+            let frame = self.current_frame;
+            // Wait for the fence of the frame we want to use. This ensures that the command
+            // buffer and semaphores for this frame index are no longer in use by the GPU.
+            self.device.wait_for_fences(&[self.in_flight_fences[frame]], true, u64::MAX)?;
 
+            // Acquire next image
             let (image_index, _is_suboptimal) = match self.swapchain_loader
                 .acquire_next_image(
                     self.swapchain.handle,
                     u64::MAX,
-                    self.image_available_semaphore,
+                    self.image_available_semaphores[frame],
                     vk::Fence::null(),
                 ) {
                     Ok(result) => result,
                     Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                        // Handling of out-of-date swapchain should be done in the event loop
+                        // The swapchain is out of date (e.g., window was resized) and
+                        // must be recreated. The event loop will handle this.
                         return Ok(());
                     }
                     Err(e) => return Err(e.into()),
                 };
+            
+            // Now that we've waited, we can safely reset the fence for this frame.
+            self.device.reset_fences(&[self.in_flight_fences[frame]])?;
 
-            self.record_secondary_command_buffer(image_index as usize, |cmd_buf, device| {
-                record_secondary(cmd_buf, device);
-            })?;
+            let idx = image_index as usize;
+            self.record_secondary_command_buffer(idx, &mut record_secondary)?;
+            // Re-record the primary command buffer right before submission to ensure it's valid.
+            self.record_primary_command_buffer(idx)?;
 
             let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
             let submit_info = vk::SubmitInfo {
                 wait_semaphore_count: 1,
-                p_wait_semaphores: &self.image_available_semaphore,
+                p_wait_semaphores: &self.image_available_semaphores[frame],
                 p_wait_dst_stage_mask: wait_stages.as_ptr(),
                 command_buffer_count: 1,
-                p_command_buffers: &self.command_buffers[image_index as usize],
+                p_command_buffers: &self.command_buffers[idx],
                 signal_semaphore_count: 1,
-                p_signal_semaphores: &self.render_finished_semaphore,
+                p_signal_semaphores: &self.render_finished_semaphores[frame],
                 ..Default::default()
             };
 
+            // Submit the command buffer to the graphics queue, signaling the in_flight_fence
+            // when it's done.
             self.device.queue_submit(
                 self.graphics_queue,
                 &[submit_info],
-                self.in_flight_fence,
+                self.in_flight_fences[frame],
             )?;
 
             let present_info = vk::PresentInfoKHR {
                 wait_semaphore_count: 1,
-                p_wait_semaphores: &self.render_finished_semaphore,
+                p_wait_semaphores: &self.render_finished_semaphores[frame],
                 swapchain_count: 1,
                 p_swapchains: &self.swapchain.handle,
                 p_image_indices: &image_index,
@@ -389,11 +432,13 @@ impl VulkanBase {
 
             match self.swapchain_loader.queue_present(self.graphics_queue, &present_info) {
                 Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                    // Handling of out-of-date or suboptimal swapchain should be done in the event loop
+                    // Swapchain is suboptimal or out of date. The event loop will handle recreation.
                 }
                 Err(e) => return Err(e.into()),
                 _ => {}
             }
+            
+            self.current_frame = (frame + 1) % self.image_available_semaphores.len();
         }
         Ok(())
     }
@@ -403,64 +448,56 @@ impl VulkanBase {
     /// * `window` - The winit `Window` to associate with the new swapchain.
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error if the swapchain could not be recreated.
-    pub fn recreate_swapchain(&mut self, window: &Window, shader_stages: &[&crate::graphics::shaders::ShaderStageInfo],) -> Result<(), Box<dyn Error>> {
+    pub fn recreate_swapchain(&mut self, window: &Window) -> Result<(), Box<dyn Error>> {
+        // Ensure GPU is idle before destroying and reallocating command buffers
+        unsafe {
+            self.device.device_wait_idle().expect("Failed to wait device idle before recreating swapchain");
+        }
         self.swapchain.recreate(
             &self.instance,
             &self.device,
             self.physical_device,
             &self.surface,
             &self.surface_loader,
-            &self.pipeline,
-            window,
-            shader_stages,
-            self.debug_settings.wireframe,
+            window
         )?;
+        // Free old primary command buffers before reallocating
+        unsafe {
+            self.device.free_command_buffers(self.command_pool, &self.command_buffers);
+        }
         self.command_buffers = Self::allocate_command_buffers(
             &self.device,
             self.command_pool,
             vk::CommandBufferLevel::PRIMARY,
             self.swapchain.swapchain_image_views.len(),
         )?;
-        self.record_command_buffers(
-            self.swapchain.render_pass,
-            &self.swapchain.framebuffers,
-            self.swapchain.extent,
-            self.swapchain.graphics_pipeline,
-        )?;
-        // The secondary command buffer is recorded in the draw_frame method
-        Ok(())
-    }
-
-    /// Swap out the old graphics pipeline *and* re-record all primary command buffers
-    /// so they bind that new pipeline.
-    pub fn recreate_pipeline_and_record(
-        &mut self,
-        shader_stages: &[&crate::graphics::shaders::ShaderStageInfo],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        unsafe { self.device.device_wait_idle()?; }
-
-        self.swapchain.recreate_pipeline(
+        // Free old secondary command buffers before reallocating
+        unsafe {
+            self.device.free_command_buffers(self.secondary_command_pool, &self.secondary_command_buffers);
+        }
+        self.secondary_command_buffers = Self::allocate_command_buffers(
             &self.device,
-            &self.pipeline,
-            shader_stages,
-            self.debug_settings.wireframe,
+            self.secondary_command_pool,
+            vk::CommandBufferLevel::SECONDARY,
+            self.swapchain.swapchain_image_views.len(),
         )?;
-
-        self.record_command_buffers(
-            self.swapchain.render_pass,
-            &self.swapchain.framebuffers,
-            self.swapchain.extent,
-            self.swapchain.graphics_pipeline,
-        )?;
-
-        println!("🛠️ Pipeline re-created and command buffers re-recorded");
-
+        // Pre-record each secondary command buffer (no-op) so they're executable
+        for idx in 0..self.secondary_command_buffers.len() {
+            self.record_secondary_command_buffer(idx, |_, _| {})
+                .expect("Failed to pre-record secondary command buffer");
+        }
+        self.record_command_buffers()?;
+        // The secondary command buffer is recorded in the draw_frame method
         Ok(())
     }
 
     /// Toggles the wireframe mode in the debug settings.
     pub fn toggle_wireframe(&mut self) {
         self.debug_settings.wireframe = !self.debug_settings.wireframe;
+    }
+    /// Toggles the FPS display
+    pub fn toggle_ms_per_frame(&mut self) {
+        self.debug_settings.show_ms_per_frame = !self.debug_settings.show_ms_per_frame;
     }
 
     /// Creates a new `VulkanBase` instance, initializing Vulkan resources and setting up the swapchain.
@@ -472,11 +509,40 @@ impl VulkanBase {
     pub fn new(window: &Window, event_loop: &ActiveEventLoop) -> Result<Self, Box<dyn Error>> {
         let debug_settings = EngineDebugSettings {
             wireframe: false,
+            show_ms_per_frame: false,
         };
 
         let entry = Entry::linked();
-        let instance = Self::create_instance(&entry, event_loop)?;
+
+        #[cfg(debug_assertions)]
+        let layer_names = [CStr::from_bytes_with_nul(b"VK_LAYER_KHRONOS_validation\0").unwrap()];
+        #[cfg(debug_assertions)]
+        let layer_name_ptrs: Vec<*const i8> = layer_names.iter().map(|s| s.as_ptr()).collect();
+
+        #[cfg(not(debug_assertions))]
+        let layer_name_ptrs: Vec<*const i8> = Vec::new();
+
+        #[cfg(debug_assertions)]
+        {
+            unsafe {
+                let available_layers = entry.enumerate_instance_layer_properties()?;
+                let validation_layer_name = CStr::from_bytes_with_nul(b"VK_LAYER_KHRONOS_validation\0").unwrap();
+                let is_layer_available = available_layers.iter().any(|layer| {
+                    let name = CStr::from_ptr(layer.layer_name.as_ptr());
+                    name == validation_layer_name
+                });
+                if !is_layer_available {
+                    return Err("Validation layers requested, but not available.".into());
+                }
+            }
+            println!("✅ Validation layers available and requested.");
+        }
+
+        let instance = Self::create_instance(&entry, event_loop, &layer_name_ptrs)?;
         println!("🛡️ Vulkan Instance created");
+
+        #[cfg(debug_assertions)]
+        let (debug_utils_loader, debug_messenger) = Self::setup_debug_messenger(&entry, &instance)?;
 
         let physical_devices = unsafe { instance.enumerate_physical_devices()? };
 
@@ -499,27 +565,46 @@ impl VulkanBase {
         let surface_loader = surface::Instance::new(&entry, &instance);
 
         let command_pool = Self::create_command_pool(&device, graphics_queue_family_index)?;
-        
-        let pipeline = Pipeline::new(&device)?;
 
-        let (image_available_semaphore, render_finished_semaphore, in_flight_fence) =
-            Self::create_sync_objects(&device)?;
-
-        let initial_shader_stages = load_default_stages(&device)?;
         let swapchain = Swapchain::new(
             &instance,
             &device,
             physical_device,
             &surface,
             &surface_loader,
-            &pipeline, window,
-            &[&initial_shader_stages[0], &initial_shader_stages[1]],
-            false)?;
+            window)?;
         let swapchain_loader= swapchain::Device::new(&instance, &device);
 
-        let command_buffers = Self::allocate_command_buffers(&device, command_pool, vk::CommandBufferLevel::PRIMARY, swapchain.swapchain_image_views.len())?;
+        // Create per-swapchain-image semaphores and fences:
+        let image_count = swapchain.swapchain_image_views.len();
+        let mut image_available_semaphores = Vec::with_capacity(image_count);
+        let mut render_finished_semaphores = Vec::with_capacity(image_count);
+        let mut in_flight_fences = Vec::with_capacity(image_count);
+        let semaphore_info = vk::SemaphoreCreateInfo::default();
+        let fence_info = vk::FenceCreateInfo {
+            flags: vk::FenceCreateFlags::SIGNALED,
+            ..Default::default()
+        };
+        for _ in 0..image_count {
+            unsafe {
+                image_available_semaphores.push(device.create_semaphore(&semaphore_info, None)?);
+                render_finished_semaphores.push(device.create_semaphore(&semaphore_info, None)?);
+                in_flight_fences.push(device.create_fence(&fence_info, None)?);
+            }
+        }
+
+        let command_buffers = Self::allocate_command_buffers(
+            &device,
+            command_pool,
+            vk::CommandBufferLevel::PRIMARY,
+            swapchain.swapchain_image_views.len())?;
         let secondary_command_pool = Self::create_command_pool(&device, graphics_queue_family_index)?;
-        let secondary_command_buffer = Self::allocate_command_buffers(&device, secondary_command_pool, vk::CommandBufferLevel::SECONDARY, 1)?[0];
+        let secondary_command_buffers = Self::allocate_command_buffers(
+            &device,
+            secondary_command_pool,
+            vk::CommandBufferLevel::SECONDARY,
+            swapchain.swapchain_image_views.len()
+        )?;
 
         let vulkan_base = Self {
             instance,
@@ -530,27 +615,57 @@ impl VulkanBase {
             surface_loader,
             command_pool,
             command_buffers,
-            image_available_semaphore,
-            render_finished_semaphore,
-            in_flight_fence,
+            image_available_semaphores,
+            render_finished_semaphores,
+            in_flight_fences,
             swapchain,
             swapchain_loader,
-            pipeline,
             secondary_command_pool,
-            secondary_command_buffer,
+            secondary_command_buffers,
             debug_settings,
+            #[cfg(debug_assertions)]
+            debug_messenger,
+            #[cfg(debug_assertions)]
+            debug_utils_loader,
+            current_frame: 0,
         };
 
-        vulkan_base.record_command_buffers(
-            vulkan_base.swapchain.render_pass,
-            &vulkan_base.swapchain.framebuffers,
-            vulkan_base.swapchain.extent,
-            vulkan_base.swapchain.graphics_pipeline,
-        )?;
-        // The secondary command buffer is recorded in the draw_frame method
+        // Pre-record each secondary command buffer (no-op) so they're executable
+        for idx in 0..vulkan_base.secondary_command_buffers.len() {
+            vulkan_base
+                .record_secondary_command_buffer(idx, |_, _| {})
+                .expect("Failed to pre-record secondary command buffer");
+        }
+        // The proper secondary command buffer is recorded in the draw_frame method
+
+        vulkan_base.record_command_buffers()?;
 
         println!("✅ VulkanBase initialized successfully");
         Ok(vulkan_base)
+    }
+
+    #[cfg(debug_assertions)]
+    fn setup_debug_messenger(
+        entry: &Entry,
+        instance: &Instance,
+    ) -> Result<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT), Box<dyn Error>> {
+        let loader = ash::ext::debug_utils::Instance::new(entry, instance);
+        let create_info = vk::DebugUtilsMessengerCreateInfoEXT {
+            message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
+                | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
+            message_type: vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+                | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+            pfn_user_callback: Some(vulkan_debug_callback),
+            ..Default::default()
+        };
+        let messenger = unsafe {
+            loader
+                .create_debug_utils_messenger(&create_info, None)?
+        };
+        println!("🔍 Debug messenger created");
+        Ok((loader, messenger))
     }
 }
 
@@ -565,22 +680,36 @@ impl Drop for VulkanBase {
             self.device.device_wait_idle().expect("Failed to wait device idle");
 
             self.swapchain.cleanup(&self.instance, &self.device);
-            self.pipeline.cleanup(&self.device);
 
             // Then destroy the rest of the resources
-            self.device.destroy_command_pool(self.secondary_command_pool, None);
-            self.device.destroy_semaphore(self.image_available_semaphore, None);
-            self.device.destroy_semaphore(self.render_finished_semaphore, None);
-            self.device.destroy_fence(self.in_flight_fence, None);
+            for &sem in &self.image_available_semaphores {
+                self.device.destroy_semaphore(sem, None);
+            }
+            for &sem in &self.render_finished_semaphores {
+                self.device.destroy_semaphore(sem, None);
+            }
+            for &fence in &self.in_flight_fences {
+                self.device.destroy_fence(fence, None);
+            }
+            for &buffer in &self.command_buffers {
+                self.device.free_command_buffers(self.command_pool, &[buffer]);
+            }
+            for &buffer in &self.secondary_command_buffers {
+                self.device.free_command_buffers(self.secondary_command_pool, &[buffer]);
+            }
             self.device.destroy_command_pool(self.command_pool, None);
+            self.device.destroy_command_pool(self.secondary_command_pool, None);
             self.device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
+            #[cfg(debug_assertions)]
+            self.debug_utils_loader.destroy_debug_utils_messenger(self.debug_messenger, None);
             self.instance.destroy_instance(None);
         }
     }
 }
 
 /// Debug settings for the Vulkan engine
-struct EngineDebugSettings {
+pub struct EngineDebugSettings {
     pub wireframe: bool,
+    pub show_ms_per_frame: bool,
 }

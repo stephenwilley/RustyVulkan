@@ -33,7 +33,9 @@ use super::mesh::Vertex;
 /// It is responsible for creating the graphics pipeline and managing its resources.
 /// This struct is used by the `VulkanBase` to set up the rendering pipeline.
 pub struct Pipeline {
-    pub layout: vk::PipelineLayout,
+    pub vk_layout: vk::PipelineLayout,
+    pub vk_pipeline: vk::Pipeline,
+    pub depth_write: bool,
 }
 
 impl Pipeline {
@@ -47,42 +49,51 @@ impl Pipeline {
     /// * Returns an error if the shader modules cannot be created or if the pipeline layout cannot be created.
     /// # Notes
     /// * The shader modules are loaded from SPIR-V files located in the `assets/shaders` directory.
-    pub fn new(device: &ash::Device) -> Result<Self, Box<dyn Error>> {
-        // 1 - Define a PushConstantRange covering 2 4×4 MVP matrices (16 floats = 64 bytes) for MV and MVP and a
-        // light direction vector (3 floats = 12 bytes)
+    pub fn new(
+        device: &ash::Device,
+        set_layouts: &[vk::DescriptorSetLayout],
+        depth_write: bool
+    ) -> Result<Self, Box<dyn Error>> {
+        // 1 - Define a PushConstantRange covering 2 4×4 MVP matrices (16 floats = 64 bytes) for MV and MVP, a
+        // light position vector (3 floats = 12 bytes) and a light intensity float (1 float = 4 bytes)
         let push_constant_range = vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             offset:      0,
             size:        std::mem::size_of::<[[f32; 4]; 4]>() as u32
                        + std::mem::size_of::<[[f32; 4]; 4]>() as u32
-                            + std::mem::size_of::<[f32; 3]>() as u32,
+                            + std::mem::size_of::<[f32; 3]>() as u32
+                                 + std::mem::size_of::<f32>() as u32,
         };
 
-        // 2 - Build your PipelineLayoutCreateInfo with that push-constant baked in
+        // 2 - Build your PipelineLayoutCreateInfo with that push-constant baked in and descriptor set layouts
         let layout_info = vk::PipelineLayoutCreateInfo {
+            set_layout_count:        set_layouts.len() as u32,
+            p_set_layouts:           set_layouts.as_ptr(),
             push_constant_range_count: 1,
             p_push_constant_ranges:    &push_constant_range as *const _,
             ..Default::default()
         };
 
         // 3 - Create the layout as before
-        let layout = unsafe { device.create_pipeline_layout(&layout_info, None)? };
+        let vk_layout = unsafe { device.create_pipeline_layout(&layout_info, None)? };
         println!("🛠️ Pipeline layout created with push‐constant support");
 
         Ok(Self {
-            layout,
+            vk_layout,
+            vk_pipeline: vk::Pipeline::null(),
+            depth_write,
         })
     }
 
     /// Loads shaders, ties them to the given render_pass/extent, and creates the pipeline.
     pub fn create_graphics_pipeline(
-        &self,
+        &mut self,
         device: &ash::Device,
         extent: vk::Extent2D,
         render_pass: vk::RenderPass,
         shader_infos: &[&ShaderStageInfo],
         wireframe: bool,
-    ) -> Result<vk::Pipeline, Box<dyn Error>> {
+    ) -> Result<(), Box<dyn Error>> {
         let binding_descs   = [Vertex::binding_description()];
         let attribute_descs = Vertex::attribute_descriptions();
 
@@ -139,13 +150,19 @@ impl Pipeline {
             ..Default::default()
         };
 
+        // Enable alpha blending for transparency
         let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
             color_write_mask: vk::ColorComponentFlags::R
                 | vk::ColorComponentFlags::G
                 | vk::ColorComponentFlags::B
                 | vk::ColorComponentFlags::A,
-            blend_enable: vk::FALSE,
-            ..Default::default()
+            blend_enable: vk::TRUE,
+            src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
+            dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            color_blend_op: vk::BlendOp::ADD,
+            src_alpha_blend_factor: vk::BlendFactor::ONE,
+            dst_alpha_blend_factor: vk::BlendFactor::ZERO,
+            alpha_blend_op: vk::BlendOp::ADD,
         };
 
         let color_blending = vk::PipelineColorBlendStateCreateInfo {
@@ -162,7 +179,7 @@ impl Pipeline {
 
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo {
             depth_test_enable:     vk::TRUE,
-            depth_write_enable:    vk::TRUE,
+            depth_write_enable:    if self.depth_write { vk::TRUE } else { vk::FALSE },
             depth_compare_op:      vk::CompareOp::LESS,
             // stencil is off for now—
             stencil_test_enable:   vk::FALSE,
@@ -181,7 +198,7 @@ impl Pipeline {
             p_multisample_state: &multisampling,
             p_color_blend_state: &color_blending,
             p_depth_stencil_state: &depth_stencil,
-            layout: self.layout,
+            layout: self.vk_layout,
             render_pass,
             subpass: 0,
             ..Default::default()
@@ -194,7 +211,31 @@ impl Pipeline {
         };
 
         println!("🛠️ Graphics pipeline created with {} stages", pipelines.len());
-        Ok(pipelines[0])
+        self.vk_pipeline = pipelines[0];
+        Ok(())
+    }
+
+    /// Recreate the pipeline
+    pub fn recreate(
+        &mut self,
+        device: &ash::Device,
+        extent: vk::Extent2D,
+        render_pass: vk::RenderPass,
+        shader_infos: &[&ShaderStageInfo],
+        wireframe: bool
+    ) -> Result<(), Box<dyn Error>> {
+        unsafe {
+            device.device_wait_idle().expect("Failed to wait device idle");
+            device.destroy_pipeline(self.vk_pipeline, None);
+        }
+        self.create_graphics_pipeline(
+            device,
+            extent,
+            render_pass,
+            shader_infos,
+            wireframe
+        )?;
+        Ok(())
     }
 
     /// Cleans up the pipeline resources, destroying the shader modules and pipeline layout.
@@ -205,7 +246,8 @@ impl Pipeline {
     /// application shutdown or when the pipeline is being recreated.
     pub fn cleanup(&self, device: &ash::Device) {
         unsafe {
-            device.destroy_pipeline_layout(self.layout, None);
+            device.destroy_pipeline_layout(self.vk_layout, None);
+            device.destroy_pipeline(self.vk_pipeline, None);
         }
     }
 }

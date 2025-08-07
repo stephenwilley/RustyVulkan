@@ -1,6 +1,6 @@
 // src/scene.rs
 
-use cgmath::{Matrix4, Vector3, Quaternion};
+use cgmath::{Matrix4, Vector3, Quaternion, Deg, Rotation3};
 
 /// A simple 3D transform: position, rotation (as a quaternion), uniform scale.
 #[derive(Clone, Copy)]
@@ -14,9 +14,27 @@ impl Transform {
     pub fn identity() -> Self {
         Self {
             translation: Vector3::new(0.0, 0.0, 0.0),
-            rotation:    Quaternion::new(0.0, 0.0, 0.0, 1.0),
+            rotation:    Quaternion::new(1.0, 0.0, 0.0, 0.0),
             scale:       1.0,
         }
+    }
+
+    /// Creates a new Transform from Euler angles (degrees) about X, Y, and Z axes.
+    /// `translation` is the position, `euler_deg` contains rotation angles in degrees,
+    /// and `scale` is a uniform scale factor.
+    pub fn from_euler(
+        translation: Vector3<f32>,
+        euler_deg: Vector3<f32>,
+        scale: f32,
+    ) -> Self {
+        // build each axis rotation
+        let qx = Quaternion::from_angle_x(Deg(euler_deg.x));
+        let qy = Quaternion::from_angle_y(Deg(euler_deg.y));
+        let qz = Quaternion::from_angle_z(Deg(euler_deg.z));
+        // combine them in Y→X→Z order (you can tweak order if you prefer)
+        let rotation = qz * qx * qy;
+
+        Transform { translation, rotation, scale }
     }
 
     /// Build a 4×4 model‐matrix: T × R × S
@@ -31,6 +49,8 @@ impl Transform {
 /// One thing in your world that you can draw:
 pub struct SceneObject {
     pub transform: Transform,
+    pub material_id: usize,
+    pub mesh_id: usize,
 }
 
 /// A container holding *all* the drawables:

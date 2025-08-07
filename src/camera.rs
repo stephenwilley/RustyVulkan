@@ -19,9 +19,9 @@ impl Camera {
         let mut cam = Camera {
             projection: Matrix4::identity(),
             view:       Matrix4::identity(),
-            position:   Point3::new(0.0, 0.0, 5.0),
-            yaw:        0.0,  // so “forward” is −Z
-            pitch:      0.0,
+            position:   Point3::new(-2.0, 3.0, 8.0),
+            yaw:        12.0,
+            pitch:      -15.0,
             roll:       0.0,
         };
         cam.set_perspective_projection(45.0, 16.0/9.0, 0.1, 100.0);

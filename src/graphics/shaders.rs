@@ -87,18 +87,3 @@ impl ShaderStageInfo {
         }
     }
 }
-
-/// Convenience Helper: Load both vertex and fragment stages in one go.
-pub fn load_default_stages(
-    device: &Device,
-) -> Result<[ShaderStageInfo; 2], Box<dyn Error>> {
-    let entry = CStr::from_bytes_with_nul(b"main\0").unwrap();
-
-    let vert = ShaderModule::from_spv_file(device, "assets/shaders/spv/passthrough.vert.spv")?;
-    let frag = ShaderModule::from_spv_file(device, "assets/shaders/spv/passthrough.frag.spv")?;
-
-    Ok([
-        ShaderStageInfo { stage: vk::ShaderStageFlags::VERTEX,   shader_module: vert, entry_name: entry },
-        ShaderStageInfo { stage: vk::ShaderStageFlags::FRAGMENT, shader_module: frag, entry_name: entry },
-    ])
-}

@@ -25,8 +25,6 @@ use ash::khr::swapchain;
 use winit::window::Window;
 use std::error::Error;
 
-use crate::graphics::pipeline::Pipeline;
-
 /// Represents the Vulkan swapchain and associated resources
 /// including image views, framebuffers, and render pass.
 /// It handles swapchain creation, recreation, and cleanup.
@@ -36,7 +34,6 @@ pub struct Swapchain {
     pub depth_image_views: Vec<vk::ImageView>,
     pub framebuffers: Vec<vk::Framebuffer>,
     pub render_pass: vk::RenderPass,
-    pub graphics_pipeline: vk::Pipeline,
     pub extent: vk::Extent2D,
     pub depth_images: Vec<vk::Image>,
     pub depth_memories: Vec<vk::DeviceMemory>,
@@ -61,10 +58,7 @@ impl Swapchain {
         physical_device: vk::PhysicalDevice,
         surface: &vk::SurfaceKHR,
         surface_loader: &surface::Instance,
-        pipeline: &Pipeline,
         window: &Window,
-        shader_stages: &[&crate::graphics::shaders::ShaderStageInfo],
-        wireframe: bool,
     ) -> Result<Self, Box<dyn Error>> {
         let swapchain_support = SwapchainSupportDetails::query(physical_device, *surface, surface_loader)?;
 
@@ -110,8 +104,6 @@ impl Swapchain {
         let swapchain_image_views = Self::create_image_views(device, &swapchain_images, surface_format.format)?;
         let render_pass = Self::create_render_pass(device, surface_format.format)?;
 
-        let graphics_pipeline = pipeline.create_graphics_pipeline(device, extent, render_pass, shader_stages, wireframe)?;
-
         let framebuffers = Self::create_framebuffers(device, render_pass, &swapchain_image_views, &depth_image_views, extent)?;
 
         Ok(Self {
@@ -120,7 +112,6 @@ impl Swapchain {
             depth_image_views,
             framebuffers,
             render_pass,
-            graphics_pipeline,
             extent,
             depth_images,
             depth_memories,
@@ -148,16 +139,13 @@ impl Swapchain {
         physical_device: vk::PhysicalDevice,
         surface: &vk::SurfaceKHR,
         surface_loader: &surface::Instance,
-        pipeline: &Pipeline,
-        window: &Window,
-        shader_stages: &[&crate::graphics::shaders::ShaderStageInfo],
-        wireframe: bool) -> Result<(), Box<dyn Error>> {
+        window: &Window) -> Result<(), Box<dyn Error>> {
         unsafe {
             device.device_wait_idle()?;
         }
         self.cleanup(instance, device);
 
-        let new_swapchain = Swapchain::new(instance, device, physical_device, surface, surface_loader, pipeline, window, shader_stages, wireframe)?;
+        let new_swapchain = Swapchain::new(instance, device, physical_device, surface, surface_loader, window)?;
         *self = new_swapchain;
 
         println!("🔄 Swapchain recreated successfully");
@@ -173,7 +161,6 @@ impl Swapchain {
     /// * `device` - The Vulkan logical device to use for destroying resources
     pub fn cleanup(&mut self, instance: &Instance, device: &ash::Device) {
         unsafe {
-            device.destroy_pipeline(self.graphics_pipeline, None);
             device.destroy_render_pass(self.render_pass, None);
             for &framebuffer in &self.framebuffers {
                 device.destroy_framebuffer(framebuffer, None);
@@ -449,28 +436,6 @@ impl Swapchain {
         }).collect::<Result<Vec<_>, _>>()?;
         println!("📦 Framebuffers created for each swapchain image view");
         Ok(framebuffers)
-    }
-
-    /// Swap out the old graphics pipeline for a fresh one, using your
-    /// application’s loaded shader stages.
-    pub fn recreate_pipeline(
-        &mut self,
-        device: &ash::Device,
-        pipeline: &crate::graphics::pipeline::Pipeline,
-        shader_stages: &[&crate::graphics::shaders::ShaderStageInfo],
-        wireframe: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        unsafe { device.destroy_pipeline(self.graphics_pipeline, None) };
-        
-        self.graphics_pipeline = pipeline.create_graphics_pipeline(
-            device,
-            self.extent,
-            self.render_pass,
-            shader_stages,
-            wireframe,
-        )?;
-
-        Ok(())
     }
 }
 

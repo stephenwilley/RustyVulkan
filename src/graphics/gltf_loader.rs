@@ -216,7 +216,7 @@ pub fn import_gltf(
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("gltf_mesh#{}", pi));
             let mesh_id = meshes.request_mesh_from_cpu(
-                mesh_name, vb, cpu_mesh);
+                mesh_name, vb, cpu_mesh)?;
 
             // Pick the corresponding material ID (fall back to first)
             let mat_index = prim.material().index().unwrap_or(0);

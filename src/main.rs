@@ -229,7 +229,7 @@ impl App {
             ),
             mesh_id: self.mesh_manager.request_unit_plane(
                 vulkan_base,
-            )
+            ).expect("Failed to load unit plane mesh"),
         };
 
         let cube = SceneObject {
@@ -249,7 +249,7 @@ impl App {
             ),
             mesh_id: self.mesh_manager.request_cube(
                 vulkan_base,
-            )
+            ).expect("Failed to load cube mesh"),
         };
 
         // Import duck mesh + material via glTF loader

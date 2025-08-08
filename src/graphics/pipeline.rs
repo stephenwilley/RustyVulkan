@@ -61,9 +61,7 @@ impl Pipeline {
             stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             offset:      0,
             size:        std::mem::size_of::<[[f32; 4]; 4]>() as u32
-                       + std::mem::size_of::<[[f32; 4]; 4]>() as u32
-                            + std::mem::size_of::<[f32; 3]>() as u32
-                                 + std::mem::size_of::<f32>() as u32,
+                       + std::mem::size_of::<[[f32; 4]; 4]>() as u32,
         };
 
         // 2 - Build your PipelineLayoutCreateInfo with that push-constant baked in and descriptor set layouts

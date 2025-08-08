@@ -57,7 +57,7 @@ impl Material {
     ), Box<dyn Error>> {
         let layout_bindings = [
             vk::DescriptorSetLayoutBinding {
-                binding: 2,
+                binding: 0,
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 descriptor_count: 1,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
@@ -65,7 +65,7 @@ impl Material {
                 ..Default::default()
             },
             vk::DescriptorSetLayoutBinding {
-                binding: 3,
+                binding: 1,
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 descriptor_count: 1,
                 stage_flags: vk::ShaderStageFlags::FRAGMENT,
@@ -147,10 +147,12 @@ impl Material {
                 (vk::DescriptorSetLayout::null(), vk::DescriptorSet::null(), vk::DescriptorPool::null())
             };
 
+        // Pipeline layout must be contiguous sets starting at 0.
+        // Always include the global set=0 layout first, then set=1 texture layout if used.
         let layouts = if texturing_enabled {
-            vec![texture_descriptor_set_layout]
+            vec![vb.set0_global_layout, texture_descriptor_set_layout] // set 0, set 1
         } else {
-            vec![]
+            vec![vb.set0_global_layout] // set 0 only
         };
 
         let pipeline = Pipeline::new(
@@ -196,10 +198,10 @@ impl Material {
                 image_view:  tex_diffuse.image_view,
                 image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             };
-            // Write it into binding 2 of set 0
+            // Write it into binding 0 of set 1
             let write_diffuse = vk::WriteDescriptorSet {
                 dst_set:           texture_descriptor_set,
-                dst_binding:       2,
+                dst_binding:       0,
                 dst_array_element: 0,
                 descriptor_count:  1,
                 descriptor_type:   vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -213,10 +215,10 @@ impl Material {
                 image_view:  tex_normal.image_view,
                 image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             };
-            // Write it into binding 3 of set 0
+            // Write it into binding 1 of set 1
             let write_normal = vk::WriteDescriptorSet {
                 dst_set:           texture_descriptor_set,
-                dst_binding:       3,
+                dst_binding:       1,
                 dst_array_element: 0,
                 descriptor_count:  1,
                 descriptor_type:   vk::DescriptorType::COMBINED_IMAGE_SAMPLER,

@@ -11,7 +11,11 @@
 
 #version 450
 
-layout(push_constant) uniform Push { mat4 mvp; mat4 mv; vec3 lightPos; float lightIntensity; } pc;
+layout(push_constant) uniform Push { mat4 mvp; mat4 mv; } pc;
+layout(set = 0, binding = 0) uniform GlobalUBO {
+    vec3 lightPos;
+    float lightIntensity;
+} ubo;
 
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
@@ -28,7 +32,7 @@ layout(location = 4) out vec3 fragPosView;
 
 void main() {
     fragPosView = (pc.mv * vec4(inPos, 1.0)).xyz;
-    vec3 lightDirView = pc.lightPos - fragPosView;
+    vec3 lightDirView = ubo.lightPos - fragPosView;
     vec3 viewDir = -fragPosView;
     vec3 halfwayDir = normalize(normalize(lightDirView) + normalize(viewDir));
 

@@ -8,7 +8,7 @@
 // GLSL version: 450
 #version 450
 
-layout(push_constant) uniform Push { mat4 mvp; mat4 mv; vec3 lightPos; float lightIntensity; } pc;
+layout(push_constant) uniform Push { mat4 mvp; mat4 mv; } pc;
 
 layout(location = 0) in vec3 inPos;
 

@@ -9,10 +9,14 @@
 
 #version 450
 
-layout(push_constant) uniform Push { mat4 mvp; mat4 mv; vec3 lightPos; float lightIntensity; } pc;
+layout(push_constant) uniform Push { mat4 mvp; mat4 mv; } pc;
+layout(set = 0, binding = 0) uniform GlobalUBO {
+    vec3 lightPos;
+    float lightIntensity;
+} ubo;
 
-layout(set = 0, binding = 2) uniform sampler2D diffuseMap;
-layout(set = 0, binding = 3) uniform sampler2D normalMap;
+layout(set = 1, binding = 0) uniform sampler2D diffuseMap;
+layout(set = 1, binding = 1) uniform sampler2D normalMap;
 
 layout(location = 0) in vec3 vHalfwayDirTangent;
 layout(location = 1) in vec3 vColor;
@@ -32,9 +36,9 @@ void main() {
     vec3 normalTangent = normalize(normalSample * 2.0 - 1.0);
 
     // Calculate attenuation
-    vec3 lightDir = pc.lightPos - fragPosView;
+    vec3 lightDir = ubo.lightPos - fragPosView;
     float dist = length(lightDir);
-    float attenuation = pc.lightIntensity / (1.0 + 0.001 * dist * dist);
+    float attenuation = ubo.lightIntensity / (1.0 + 0.001 * dist * dist);
 
     // Compute diffuse term
     float diff = max(dot(normalTangent, normalize(vLightTangent)), 0.0);

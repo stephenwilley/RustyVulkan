@@ -82,10 +82,15 @@ pub struct VulkanBase {
     pub physical_device: vk::PhysicalDevice,
     pub device: ash::Device,
     pub graphics_queue: vk::Queue,
+    pub set0_global_layout: vk::DescriptorSetLayout,
+    set0_descriptor_pool: vk::DescriptorPool,
+    pub set0_descriptor_sets: Vec<vk::DescriptorSet>,
+    ubo_buffers: Vec<vk::Buffer>,
+    pub ubo_memory: Vec<vk::DeviceMemory>,
     surface: vk::SurfaceKHR,
     surface_loader: surface::Instance,
     pub command_pool: vk::CommandPool,
-    command_buffers: Vec<vk::CommandBuffer>,
+    pub command_buffers: Vec<vk::CommandBuffer>,
     image_available_semaphores: Vec<vk::Semaphore>,
     render_finished_semaphores: Vec<vk::Semaphore>,
     in_flight_fences: Vec<vk::Fence>,
@@ -101,6 +106,23 @@ pub struct VulkanBase {
 }
 
 impl VulkanBase {
+    /// Helper: find a suitable memory type on the physical device.
+    fn find_memory_type(
+        instance: &ash::Instance,
+        physical_device: vk::PhysicalDevice,
+        type_filter: u32,
+        properties: vk::MemoryPropertyFlags,
+    ) -> u32 {
+        let mem_props = unsafe { instance.get_physical_device_memory_properties(physical_device) };
+        for i in 0..mem_props.memory_type_count {
+            let mt = mem_props.memory_types[i as usize];
+            if (type_filter & (1 << i)) != 0 && mt.property_flags.contains(properties) {
+                return i;
+            }
+        }
+        panic!("Failed to find suitable memory type");
+    }
+
     /// Creates a Vulkan instance.
     /// # Arguments
     /// * `entry` - The Ash Entry point.
@@ -331,6 +353,107 @@ impl VulkanBase {
         Ok(command_buffers)
     }
 
+    /// Create N host-visible, coherent uniform buffers sized for `GlobalUbo`.
+    fn create_uniform_buffers(
+        instance: &ash::Instance,
+        device: &ash::Device,
+        physical_device: vk::PhysicalDevice,
+        count: usize,
+    ) -> (Vec<vk::Buffer>, Vec<vk::DeviceMemory>) {
+        let mut buffers = Vec::with_capacity(count);
+        let mut memories = Vec::with_capacity(count);
+
+        let buffer_size = std::mem::size_of::<GlobalUbo>() as vk::DeviceSize;
+
+        for _ in 0..count {
+            // Buffer
+            let buffer_info = vk::BufferCreateInfo {
+                size: buffer_size,
+                usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+            let buffer = unsafe { device.create_buffer(&buffer_info, None).expect("create uniform buffer") };
+
+            // Memory
+            let reqs = unsafe { device.get_buffer_memory_requirements(buffer) };
+            let mem_type = Self::find_memory_type(
+                instance,
+                physical_device,
+                reqs.memory_type_bits,
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            );
+            let alloc_info = vk::MemoryAllocateInfo {
+                allocation_size: reqs.size,
+                memory_type_index: mem_type,
+                ..Default::default()
+            };
+            let memory = unsafe { device.allocate_memory(&alloc_info, None).expect("alloc uniform memory") };
+
+            unsafe { device.bind_buffer_memory(buffer, memory, 0).expect("bind uniform memory"); }
+
+            buffers.push(buffer);
+            memories.push(memory);
+        }
+
+        (buffers, memories)
+    }
+
+    /// Build a descriptor pool and one set=0 descriptor set per swapchain image, then write binding 0 to each UBO.
+    fn create_set0_descriptor_pool_and_sets(
+        device: &ash::Device,
+        layout: vk::DescriptorSetLayout,
+        ubo_buffers: &[vk::Buffer],
+    ) -> (vk::DescriptorPool, Vec<vk::DescriptorSet>) {
+        let count = ubo_buffers.len() as u32;
+
+        // Pool
+        let pool_sizes = [vk::DescriptorPoolSize {
+            ty: vk::DescriptorType::UNIFORM_BUFFER,
+            descriptor_count: count,
+        }];
+        let pool_info = vk::DescriptorPoolCreateInfo {
+            pool_size_count: pool_sizes.len() as u32,
+            p_pool_sizes: pool_sizes.as_ptr(),
+            max_sets: count,
+            ..Default::default()
+        };
+        let pool = unsafe { device.create_descriptor_pool(&pool_info, None).expect("create set0 pool") };
+
+        // Allocate
+        let layouts = vec![layout; count as usize];
+        let alloc_info = vk::DescriptorSetAllocateInfo {
+            descriptor_pool: pool,
+            descriptor_set_count: count,
+            p_set_layouts: layouts.as_ptr(),
+            ..Default::default()
+        };
+        let sets = unsafe { device.allocate_descriptor_sets(&alloc_info).expect("alloc set0 sets") };
+
+        // Write binding 0
+        let range = std::mem::size_of::<GlobalUbo>() as vk::DeviceSize;
+        let mut buf_infos: Vec<vk::DescriptorBufferInfo> = Vec::with_capacity(count as usize);
+        for &b in ubo_buffers {
+            buf_infos.push(vk::DescriptorBufferInfo { buffer: b, offset: 0, range });
+        }
+
+        let mut writes: Vec<vk::WriteDescriptorSet> = Vec::with_capacity(count as usize);
+        for i in 0..(count as usize) {
+            writes.push(vk::WriteDescriptorSet {
+                dst_set: sets[i],
+                dst_binding: 0,
+                dst_array_element: 0,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                p_buffer_info: &buf_infos[i],
+                ..Default::default()
+            });
+        }
+        unsafe { device.update_descriptor_sets(&writes, &[]); }
+
+        (pool, sets)
+    }
+
     /// Records the commands for a single primary command buffer directly.
     /// # Arguments
     /// * `image_index` - The index of the swapchain image to record commands for.
@@ -488,7 +611,6 @@ impl VulkanBase {
         for &sem in &self.render_finished_semaphores {
             unsafe { self.device.destroy_semaphore(sem, None); }
         }
-
         // Recreate to match new image count
         let new_image_count = self.swapchain.swapchain_image_views.len();
         let semaphore_info = vk::SemaphoreCreateInfo::default();
@@ -496,9 +618,28 @@ impl VulkanBase {
         for _ in 0..new_image_count {
             unsafe { self.render_finished_semaphores.push(self.device.create_semaphore(&semaphore_info, None)?); }
         }
-
         // Reset per-image fence tracking
         self.images_in_flight = vec![vk::Fence::null(); new_image_count];
+        // Tear down old UBO buffers and descriptor pool
+        for &buf in &self.ubo_buffers {
+            unsafe { self.device.destroy_buffer(buf, None); }
+        }
+        for &mem in &self.ubo_memory {
+            unsafe { self.device.free_memory(mem, None); }
+        }
+        unsafe { self.device.destroy_descriptor_pool(self.set0_descriptor_pool, None); }
+
+        // Recreate UBO buffers and set0 descriptor sets for the new image count
+        let (new_ubo_buffers, new_ubo_memory) =
+            Self::create_uniform_buffers(&self.instance, &self.device, self.physical_device, new_image_count);
+        let (new_pool, new_sets) =
+            Self::create_set0_descriptor_pool_and_sets(&self.device, self.set0_global_layout, &new_ubo_buffers);
+
+        self.ubo_buffers = new_ubo_buffers;
+        self.ubo_memory = new_ubo_memory;
+        self.set0_descriptor_pool = new_pool;
+        self.set0_descriptor_sets = new_sets;
+
         Ok(())
     }
 
@@ -577,6 +718,23 @@ impl VulkanBase {
 
         let command_pool = Self::create_command_pool(&device, graphics_queue_family_index)?;
 
+        // --- Global set-0 layout: reserve binding 0 for a per-frame/per-image UBO ---
+        let ubo_binding = vk::DescriptorSetLayoutBinding {
+            binding: 0,
+            descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            p_immutable_samplers: std::ptr::null(),
+            ..Default::default()
+        };
+        let set0_info = vk::DescriptorSetLayoutCreateInfo {
+            binding_count: 1,
+            p_bindings: &ubo_binding,
+            ..Default::default()
+        };
+        let set0_global_layout = unsafe { device.create_descriptor_set_layout(&set0_info, None)? };
+        println!("🔧 Created global set=0 layout (binding 0 = UBO)");
+
         let swapchain = Swapchain::new(
             &instance,
             &device,
@@ -588,6 +746,10 @@ impl VulkanBase {
 
         // Create sync objects: N frames-in-flight worth of semaphores/fences
         let image_count = swapchain.swapchain_image_views.len();
+        let (ubo_buffers, ubo_memory) =
+            Self::create_uniform_buffers(&instance, &device, physical_device, image_count);
+        let (set0_descriptor_pool, set0_descriptor_sets) =
+            Self::create_set0_descriptor_pool_and_sets(&device, set0_global_layout, &ubo_buffers);
         let inflight_count: usize = 2; // number of CPU frames in flight
         let mut image_available_semaphores = Vec::with_capacity(inflight_count);
         let mut in_flight_fences = Vec::with_capacity(inflight_count);
@@ -622,6 +784,11 @@ impl VulkanBase {
             physical_device,
             device,
             graphics_queue,
+            set0_global_layout,
+            set0_descriptor_pool,
+            set0_descriptor_sets,
+            ubo_buffers,
+            ubo_memory,
             surface,
             surface_loader,
             command_pool,
@@ -682,6 +849,7 @@ impl Drop for VulkanBase {
             self.device.device_wait_idle().expect("Failed to wait device idle");
 
             self.swapchain.cleanup(&self.instance, &self.device);
+            self.device.destroy_descriptor_set_layout(self.set0_global_layout, None);
 
             // Then destroy the rest of the resources
             for &sem in &self.image_available_semaphores {
@@ -696,6 +864,14 @@ impl Drop for VulkanBase {
             for &buffer in &self.command_buffers {
                 self.device.free_command_buffers(self.command_pool, &[buffer]);
             }
+            // UBO and descriptor resources
+            for &buf in &self.ubo_buffers {
+                self.device.destroy_buffer(buf, None);
+            }
+            for &mem in &self.ubo_memory {
+                self.device.free_memory(mem, None);
+            }
+            self.device.destroy_descriptor_pool(self.set0_descriptor_pool, None);
             self.device.destroy_command_pool(self.command_pool, None);
             self.device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
@@ -710,4 +886,18 @@ impl Drop for VulkanBase {
 pub struct EngineDebugSettings {
     pub wireframe: bool,
     pub show_ms_per_frame: bool,
+}
+
+/// Global (per-frame/per-image) uniform buffer object layout.
+/// Keep fields 16-byte aligned for std140-like layouts.
+#[repr(C)]
+pub struct GlobalUbo {
+    /*
+    pub view: [[f32; 4]; 4],
+    pub proj: [[f32; 4]; 4],
+    pub time: f32,
+    _pad: [f32; 3], // pad to 16-byte multiple
+    */
+    pub light_pos: [f32; 3],
+    pub light_intensity: f32,
 }

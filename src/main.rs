@@ -5,6 +5,7 @@
 //! Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
 //!
 //! Add a UBO to pass to shaders
+//! There's also a bit more tidy up of semaphores and VulkanBase logic in this one
 //! 
 //! --------------------------------------------------------------------------------------
 
@@ -34,6 +35,7 @@ use crate::scene::{Scene, SceneObject, Transform as SceneTransform};
 use crate::graphics::gltf_loader::import_gltf;
 use crate::graphics::materialmanager::{MaterialManager, MaterialProperties};
 use crate::graphics::meshmanager::MeshManager;
+use crate::vulkan::base::GlobalUbo;
 use cgmath::{prelude::*};
 use cgmath::{Vector1,Vector3,Matrix4};
 
@@ -151,7 +153,7 @@ impl App {
     /// * `light_intensity` - The intensity of the light.
     /// # Returns
     /// * `Vec<u8>` - The serialized push constant data containing the MVP matrix and light direction.
-    fn compute_push_constant_per_obj(camera: &Camera, model_matrix: &Matrix4<f32>, light_pos: Vector3<f32>, light_intensity: Vector1<f32>) -> Vec<u8> {
+    fn compute_push_constant_per_obj(camera: &Camera, model_matrix: &Matrix4<f32>) -> Vec<u8> {
         let proj: Matrix4<f32> = *camera.get_projection();
         let view: Matrix4<f32> = *camera.get_view();
 
@@ -161,7 +163,7 @@ impl App {
 
         // 5) Flatten MVP (4×4) and MV (4×4) into column‐major bytes,
         //    then append lightDir (3 floats).
-        let mut bytes = Vec::with_capacity((16 + 16 + 3) * 4);
+        let mut bytes = Vec::with_capacity((16 + 16) * 4);
         // Flatten a 4×4 in column-major by transposing then iterating row/col
         let flatten_mat4 = |m: Matrix4<f32>, buf: &mut Vec<u8>| {
             let cols = m.transpose();
@@ -177,18 +179,35 @@ impl App {
         // then MV
         flatten_mat4(mv,  &mut bytes);
 
-        // 6) Transform world-space light position into view-space
-        // This saves doing that multiplication in every run of the vertex shader
-        let light_pos = view.transform_vector(light_pos);
-        // Append the three components of light_view
-        bytes.extend_from_slice(&light_pos.x.to_ne_bytes());
-        bytes.extend_from_slice(&light_pos.y.to_ne_bytes());
-        bytes.extend_from_slice(&light_pos.z.to_ne_bytes());
-
-        // Finally add the light intensity float
-        bytes.extend_from_slice(&light_intensity[0].to_ne_bytes());
-
         bytes
+    }
+
+    fn update_ubo(base: &VulkanBase,
+        image_index: usize,
+        light_pos: Vector3<f32>,
+        light_intensity: Vector1<f32>) {
+        // 1) Build the CPU-side value
+        let ubo = GlobalUbo {
+            light_pos: [light_pos.x, light_pos.y, light_pos.z],
+            light_intensity: light_intensity[0],
+        };
+
+        // 2) Map the memory for this swapchain image
+        let mem = base.ubo_memory[image_index];
+        let size = std::mem::size_of::<GlobalUbo>() as vk::DeviceSize;
+
+        unsafe {
+            let ptr = base.device.map_memory(mem, 0, size, vk::MemoryMapFlags::empty())
+                .expect("Map UBO memory");
+            // 3) Copy bytes into mapped region
+            std::ptr::copy_nonoverlapping(
+                &ubo as *const GlobalUbo as *const u8,
+                ptr as *mut u8,
+                std::mem::size_of::<GlobalUbo>()
+            );
+            // 4) Unmap
+            base.device.unmap_memory(mem);
+        }
     }
 
     /// Creates a new window with the specified title and default attributes.
@@ -197,7 +216,7 @@ impl App {
     /// # Returns
     /// * A new window instance.
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Window {
-        let window_attributes = WindowAttributes::default().with_title("Rust Vulkan 47 - Specular Highlights Blinn Phong");
+        let window_attributes = WindowAttributes::default().with_title("Rust Vulkan 48 - UBO");
         let window = event_loop
             .create_window(window_attributes)
             .expect("Failed to create window");
@@ -536,6 +555,17 @@ impl ApplicationHandler for App {
                             if let Err(e) = vb.draw_frame({
                                 |base, cmd_buf| {
                                     let device = &base.device;
+                                    // Image index is the swapchain image
+                                    let image_index = base.command_buffers
+                                        .iter()
+                                        .position(|&cb| cb == cmd_buf)
+                                        .expect("cmd_buf not found in base.command_buffers");
+                                    Self::update_ubo(
+                                        base,
+                                        image_index,
+                                        self.world_controls.light_pos,
+                                        self.world_controls.light_intensity
+                                    );
                                     let mut current_pipeline_id = usize::MAX;
                                     for obj in &scene.objects {
                                         // Update the transform for each object
@@ -543,9 +573,7 @@ impl ApplicationHandler for App {
                                         // Push the model matrix as a push constant
                                         let push_bytes = Self::compute_push_constant_per_obj(
                                             &self.camera,
-                                            &model_matrix,
-                                            self.world_controls.light_pos,
-                                            self.world_controls.light_intensity
+                                            &model_matrix
                                         );
                                         unsafe {
                                             if current_pipeline_id != obj.material_id {
@@ -554,13 +582,24 @@ impl ApplicationHandler for App {
                                                     vk::PipelineBindPoint::GRAPHICS,
                                                     self.material_manager.materials[obj.material_id].pipeline.vk_pipeline
                                                 );
-                                                if self.material_manager.materials[obj.material_id].textures.is_some() {
+                                                // We need to UBO associated with this swapchain image
+                                                let set0 = base.set0_descriptor_sets[image_index];
+                                                if let Some(_tex) = self.material_manager.materials[obj.material_id].textures.as_ref() {
                                                     device.cmd_bind_descriptor_sets(
                                                         cmd_buf,
                                                         vk::PipelineBindPoint::GRAPHICS,
                                                         self.material_manager.materials[obj.material_id].pipeline.vk_layout,
-                                                        0, // set index
-                                                        &[self.material_manager.materials[obj.material_id].texture_descriptor_set],
+                                                        0,
+                                                        &[set0, self.material_manager.materials[obj.material_id].texture_descriptor_set],
+                                                        &[],
+                                                    );
+                                                } else {
+                                                    device.cmd_bind_descriptor_sets(
+                                                        cmd_buf,
+                                                        vk::PipelineBindPoint::GRAPHICS,
+                                                        self.material_manager.materials[obj.material_id].pipeline.vk_layout,
+                                                        0,
+                                                        &[set0],
                                                         &[],
                                                     );
                                                 }

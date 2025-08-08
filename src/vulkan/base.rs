@@ -89,10 +89,9 @@ pub struct VulkanBase {
     image_available_semaphores: Vec<vk::Semaphore>,
     render_finished_semaphores: Vec<vk::Semaphore>,
     in_flight_fences: Vec<vk::Fence>,
+    images_in_flight: Vec<vk::Fence>,
     pub swapchain: Swapchain,
     swapchain_loader: swapchain::Device,
-    secondary_command_pool: vk::CommandPool,
-    secondary_command_buffers: Vec<vk::CommandBuffer>,
     pub debug_settings: EngineDebugSettings,
     #[cfg(debug_assertions)]
     debug_messenger: vk::DebugUtilsMessengerEXT,
@@ -311,7 +310,7 @@ impl VulkanBase {
     /// # Arguments
     /// * `device` - The Vulkan logical device.
     /// * `command_pool` - The command pool to allocate from.
-    /// * `buffer_level` - The level of the command buffers (primary or secondary).
+    /// * `buffer_level` - The level of the command buffers.
     /// * `count` - The number of command buffers to allocate.
     /// # Returns
     /// * `Result<Vec<vk::CommandBuffer>, vk::Result>` - A vector of allocated command buffers on success, or a Vulkan error on failure.
@@ -332,16 +331,19 @@ impl VulkanBase {
         Ok(command_buffers)
     }
 
-    /// Records the commands for a single primary command buffer.
-    /// This involves beginning the render pass and executing the corresponding secondary command buffer.
+    /// Records the commands for a single primary command buffer directly.
     /// # Arguments
     /// * `image_index` - The index of the swapchain image to record commands for.
+    /// * `draw_frame` - A closure that takes `&VulkanBase` and `vk::CommandBuffer` and records this frame's drawing commands directly into the primary command buffer.
     /// # Returns
     /// * `Result<(), vk::Result>` - Returns Ok on success, or a Vulkan error on failure.
-    fn record_primary_command_buffer(
+    fn record_primary_command_buffer<F>(
         &self,
         image_index: usize,
-    ) -> Result<(), vk::Result> {
+        mut draw_frame: F,
+    ) -> Result<(), vk::Result>
+    where F: FnMut(&VulkanBase, vk::CommandBuffer),
+    {
         let command_buffer = self.command_buffers[image_index];
         let framebuffer = self.swapchain.framebuffers[image_index];
         let render_pass = self.swapchain.render_pass;
@@ -367,80 +369,32 @@ impl VulkanBase {
 
         unsafe {
             self.device.begin_command_buffer(command_buffer, &begin_info)?;
-            self.device.cmd_begin_render_pass(command_buffer, &render_pass_info, vk::SubpassContents::SECONDARY_COMMAND_BUFFERS);
-            self.device.cmd_execute_commands(command_buffer, &[self.secondary_command_buffers[image_index]]);
+            self.device.cmd_begin_render_pass(command_buffer, &render_pass_info, vk::SubpassContents::INLINE);
+            draw_frame(self, command_buffer);
             self.device.cmd_end_render_pass(command_buffer);
             self.device.end_command_buffer(command_buffer)?;
         }
         Ok(())
     }
 
-    /// Records commands for all primary command buffers.
-    /// # Returns
-    /// * `Result<(), vk::Result>` - Returns Ok on success, or a Vulkan error on failure.
-    pub fn record_command_buffers(&self) -> Result<(), vk::Result> {
-        for (index, _) in self.command_buffers.iter().enumerate() {
-            self.record_primary_command_buffer(index)?;
-        }
-        Ok(())
-    }
-
-    /// Records commands for a single secondary command buffer.
-    /// # Arguments
-    /// * `image_index` - The index of the swapchain image to record commands for.
-    /// * `record_fn` - A closure that takes `&VulkanBase` and `vk::CommandBuffer` and records commands.
-    /// # Returns
-    /// * `Result<(), vk::Result>` - Returns Ok on success, or a Vulkan error on failure.
-    fn record_secondary_command_buffer<F>(
-        &self,
-        image_index: usize,
-        mut record_fn: F,
-    ) -> Result<(), vk::Result>
-    where F: FnMut(&VulkanBase, vk::CommandBuffer),
-    {
-        let inh = vk::CommandBufferInheritanceInfo {
-            render_pass:   self.swapchain.render_pass,
-            subpass:       0,
-            framebuffer:   self.swapchain.framebuffers[image_index],
-            ..Default::default()
-        };
-        let begin_info = vk::CommandBufferBeginInfo {
-            flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT
-                | vk::CommandBufferUsageFlags::RENDER_PASS_CONTINUE,
-            p_inheritance_info: &inh,
-            ..Default::default()
-        };
-
-        unsafe {
-            let cmd = self.secondary_command_buffers[image_index];
-            self.device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())?;
-            self.device.begin_command_buffer(cmd, &begin_info)?;
-            record_fn(self, cmd);
-            self.device.end_command_buffer(cmd)?;
-        }
-
-        Ok(())
-    }
+    /// Records commands for all primary command buffers (no-op, for compatibility).
+    pub fn record_command_buffers(&self) -> Result<(), vk::Result> { Ok(()) }
 
     /// Draws a frame by acquiring an image from the swapchain, submitting a command buffer,
-    /// and presenting the image.
+    /// and presenting the image. Records drawing commands directly into the primary command buffer.
     /// # Arguments
-    /// * `record_secondary` - A closure that takes `&VulkanBase` and `vk::CommandBuffer` and records commands for the secondary command buffer.
+    /// * `draw_frame_closure` - A closure that takes `&VulkanBase` and `vk::CommandBuffer` and issues draw commands for the current frame.
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error if the frame could not be drawn.
     pub fn draw_frame<'a, F>(
         &mut self,
-        record_secondary: F,
+        draw_frame_closure: F,
     ) -> Result<(), Box<dyn Error>>
     where F: FnMut(&VulkanBase, vk::CommandBuffer),
     {
         unsafe {
             let frame = self.current_frame;
-            // Wait for the fence of the frame we want to use. This ensures that the command
-            // buffer and semaphores for this frame index are no longer in use by the GPU.
             self.device.wait_for_fences(&[self.in_flight_fences[frame]], true, u64::MAX)?;
-
-            // Acquire next image
             let (image_index, _is_suboptimal) = match self.swapchain_loader
                 .acquire_next_image(
                     self.swapchain.handle,
@@ -450,58 +404,55 @@ impl VulkanBase {
                 ) {
                     Ok(result) => result,
                     Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                        // The swapchain is out of date (e.g., window was resized) and
-                        // must be recreated. The event loop will handle this.
                         return Ok(());
                     }
                     Err(e) => return Err(e.into()),
                 };
-            
-            // Now that we've waited, we can safely reset the fence for this frame.
-            self.device.reset_fences(&[self.in_flight_fences[frame]])?;
 
             let idx = image_index as usize;
-            self.record_secondary_command_buffer(idx, record_secondary)?;
-            // Re-record the primary command buffer right before submission to ensure it's valid.
-            self.record_primary_command_buffer(idx)?;
+            // If this image is already tied to a different in-flight frame, wait for it.
+            if self.images_in_flight[idx] != vk::Fence::null() {
+                self.device.wait_for_fences(&[self.images_in_flight[idx]], true, u64::MAX)?;
+            }
 
+            // Reuse the current per-frame fence and bind it to this image
+            self.device.reset_fences(&[self.in_flight_fences[frame]])?;
+            self.images_in_flight[idx] = self.in_flight_fences[frame];
+
+            self.record_primary_command_buffer(idx, draw_frame_closure)?;
             let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+            let wait_sems = [self.image_available_semaphores[frame]];
+            let signal_sems = [self.render_finished_semaphores[idx]];
             let submit_info = vk::SubmitInfo {
                 wait_semaphore_count: 1,
-                p_wait_semaphores: &self.image_available_semaphores[frame],
+                p_wait_semaphores: wait_sems.as_ptr(),
                 p_wait_dst_stage_mask: wait_stages.as_ptr(),
                 command_buffer_count: 1,
                 p_command_buffers: &self.command_buffers[idx],
                 signal_semaphore_count: 1,
-                p_signal_semaphores: &self.render_finished_semaphores[frame],
+                p_signal_semaphores: signal_sems.as_ptr(),
                 ..Default::default()
             };
-
-            // Submit the command buffer to the graphics queue, signaling the in_flight_fence
-            // when it's done.
             self.device.queue_submit(
                 self.graphics_queue,
                 &[submit_info],
                 self.in_flight_fences[frame],
             )?;
-
+            let present_wait_sems = [self.render_finished_semaphores[idx]];
             let present_info = vk::PresentInfoKHR {
                 wait_semaphore_count: 1,
-                p_wait_semaphores: &self.render_finished_semaphores[frame],
+                p_wait_semaphores: present_wait_sems.as_ptr(),
                 swapchain_count: 1,
                 p_swapchains: &self.swapchain.handle,
                 p_image_indices: &image_index,
                 ..Default::default()
             };
-
             match self.swapchain_loader.queue_present(self.graphics_queue, &present_info) {
                 Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                    // Swapchain is suboptimal or out of date. The event loop will handle recreation.
                 }
                 Err(e) => return Err(e.into()),
                 _ => {}
             }
-            
             self.current_frame = (frame + 1) % self.image_available_semaphores.len();
         }
         Ok(())
@@ -513,7 +464,6 @@ impl VulkanBase {
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error if the swapchain could not be recreated.
     pub fn recreate_swapchain(&mut self, window: &Window) -> Result<(), Box<dyn Error>> {
-        // Ensure GPU is idle before destroying and reallocating command buffers
         unsafe {
             self.device.device_wait_idle().expect("Failed to wait device idle before recreating swapchain");
         }
@@ -525,7 +475,6 @@ impl VulkanBase {
             &self.surface_loader,
             window
         )?;
-        // Free old primary command buffers before reallocating
         unsafe {
             self.device.free_command_buffers(self.command_pool, &self.command_buffers);
         }
@@ -535,23 +484,21 @@ impl VulkanBase {
             vk::CommandBufferLevel::PRIMARY,
             self.swapchain.swapchain_image_views.len(),
         )?;
-        // Free old secondary command buffers before reallocating
-        unsafe {
-            self.device.free_command_buffers(self.secondary_command_pool, &self.secondary_command_buffers);
+        // Destroy old per-image present semaphores
+        for &sem in &self.render_finished_semaphores {
+            unsafe { self.device.destroy_semaphore(sem, None); }
         }
-        self.secondary_command_buffers = Self::allocate_command_buffers(
-            &self.device,
-            self.secondary_command_pool,
-            vk::CommandBufferLevel::SECONDARY,
-            self.swapchain.swapchain_image_views.len()
-        )?;
-        // Pre-record each secondary command buffer (no-op) so they're executable
-        for idx in 0..self.secondary_command_buffers.len() {
-            self.record_secondary_command_buffer(idx, |_, _| {})
-                .expect("Failed to pre-record secondary command buffer");
+
+        // Recreate to match new image count
+        let new_image_count = self.swapchain.swapchain_image_views.len();
+        let semaphore_info = vk::SemaphoreCreateInfo::default();
+        self.render_finished_semaphores = Vec::with_capacity(new_image_count);
+        for _ in 0..new_image_count {
+            unsafe { self.render_finished_semaphores.push(self.device.create_semaphore(&semaphore_info, None)?); }
         }
-        self.record_command_buffers()?;
-        // The secondary command buffer is recorded in the draw_frame method
+
+        // Reset per-image fence tracking
+        self.images_in_flight = vec![vk::Fence::null(); new_image_count];
         Ok(())
     }
 
@@ -639,36 +586,36 @@ impl VulkanBase {
             window)?;
         let swapchain_loader= swapchain::Device::new(&instance, &device);
 
-        // Create per-swapchain-image semaphores and fences:
+        // Create sync objects: N frames-in-flight worth of semaphores/fences
         let image_count = swapchain.swapchain_image_views.len();
-        let mut image_available_semaphores = Vec::with_capacity(image_count);
-        let mut render_finished_semaphores = Vec::with_capacity(image_count);
-        let mut in_flight_fences = Vec::with_capacity(image_count);
+        let inflight_count: usize = 2; // number of CPU frames in flight
+        let mut image_available_semaphores = Vec::with_capacity(inflight_count);
+        let mut in_flight_fences = Vec::with_capacity(inflight_count);
         let semaphore_info = vk::SemaphoreCreateInfo::default();
         let fence_info = vk::FenceCreateInfo {
             flags: vk::FenceCreateFlags::SIGNALED,
             ..Default::default()
         };
-        for _ in 0..image_count {
+        for _ in 0..inflight_count {
             unsafe {
                 image_available_semaphores.push(device.create_semaphore(&semaphore_info, None)?);
-                render_finished_semaphores.push(device.create_semaphore(&semaphore_info, None)?);
                 in_flight_fences.push(device.create_fence(&fence_info, None)?);
             }
         }
+
+        let mut render_finished_semaphores = Vec::with_capacity(inflight_count);
+        for _ in 0..image_count {
+            unsafe { render_finished_semaphores.push(device.create_semaphore(&semaphore_info, None)?); }
+        }
+
+        // Per-swapchain-image tracker: which fence currently owns each image (or null)
+        let images_in_flight = vec![vk::Fence::null(); image_count];
 
         let command_buffers = Self::allocate_command_buffers(
             &device,
             command_pool,
             vk::CommandBufferLevel::PRIMARY,
             swapchain.swapchain_image_views.len())?;
-        let secondary_command_pool = Self::create_command_pool(&device, graphics_queue_family_index)?;
-        let secondary_command_buffers = Self::allocate_command_buffers(
-            &device,
-            secondary_command_pool,
-            vk::CommandBufferLevel::SECONDARY,
-            swapchain.swapchain_image_views.len()
-        )?;
 
         let vulkan_base = Self {
             instance,
@@ -682,10 +629,9 @@ impl VulkanBase {
             image_available_semaphores,
             render_finished_semaphores,
             in_flight_fences,
+            images_in_flight,
             swapchain,
             swapchain_loader,
-            secondary_command_pool,
-            secondary_command_buffers,
             debug_settings,
             #[cfg(debug_assertions)]
             debug_messenger,
@@ -693,14 +639,6 @@ impl VulkanBase {
             debug_utils_loader,
             current_frame: 0,
         };
-
-        // Pre-record each secondary command buffer (no-op) so they're executable
-        for idx in 0..vulkan_base.secondary_command_buffers.len() {
-            vulkan_base
-                .record_secondary_command_buffer(idx, |_, _| {})
-                .expect("Failed to pre-record secondary command buffer");
-        }
-        // The proper secondary command buffer is recorded in the draw_frame method
 
         vulkan_base.record_command_buffers()?;
 
@@ -758,11 +696,7 @@ impl Drop for VulkanBase {
             for &buffer in &self.command_buffers {
                 self.device.free_command_buffers(self.command_pool, &[buffer]);
             }
-            for &buffer in &self.secondary_command_buffers {
-                self.device.free_command_buffers(self.secondary_command_pool, &[buffer]);
-            }
             self.device.destroy_command_pool(self.command_pool, None);
-            self.device.destroy_command_pool(self.secondary_command_pool, None);
             self.device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
             #[cfg(debug_assertions)]

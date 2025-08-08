@@ -1,10 +1,10 @@
 //! --------------------------------------------------------------------------------------
-//! 47 - Specular Highlights Blinn Phong
+//! 48 - UBO and World Params
 //!
 //! Created: July 2025
 //! Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
 //!
-//! Add Blinn-Phong spec to the shaders
+//! Add a UBO to pass to shaders
 //! 
 //! --------------------------------------------------------------------------------------
 
@@ -45,12 +45,7 @@ struct App {
     camera: Camera,
     step: f32,
     modifiers: ModifiersState,
-    moving_forward:  bool,  // W held
-    moving_backward: bool,  // S held
-    moving_left:     bool,  // A held
-    moving_right:    bool,  // D held
-    toggle_locked:   bool,  // prevent rapid toggle repeats
-    mouselook_enabled: bool,
+    input: InputState,
     imgui: Option<ImGuiContext>,
     platform: Option<WinitPlatform>,
     imgui_renderer: Option<ImGuiRenderer>,
@@ -58,8 +53,7 @@ struct App {
     mesh_manager: MeshManager,
     start_of_frame_time: Instant,
     current_ms_per_frame: f32,
-    light_pos: Vector3<f32>,
-    light_intensity: Vector1<f32>,
+    world_controls: WorldControls,
 }
 
 impl App {
@@ -72,12 +66,7 @@ impl App {
             camera: Camera::new(),
             step: 0.1,
             modifiers: ModifiersState::default(),
-            moving_forward: false,
-            moving_backward: false,
-            moving_left: false,
-            moving_right: false,
-            toggle_locked: false,
-            mouselook_enabled: false,
+            input: InputState::default(),
             imgui: None,
             platform: None,
             imgui_renderer: None,
@@ -85,8 +74,7 @@ impl App {
             mesh_manager: MeshManager::new(),
             start_of_frame_time: Instant::now(),
             current_ms_per_frame: 0.0,
-            light_pos: Vector3::new(0.5, 0.8, 1.0),
-            light_intensity: Vector1::new(1.0),
+            world_controls: WorldControls::default(),
         }
     }
 
@@ -106,8 +94,7 @@ impl App {
     /// * `imgui` - The ImGui context.
     /// * `window` - The winit Window.
     /// * `show_ms_per_frame` - Whether to display milliseconds per frame.
-    /// * `light_pos` - The light position vector.
-    /// * `light_intensity` - The light intensity vector.
+    /// * `world_controls` - The world controls (light position and intensity).
     /// # Returns
     /// * `&'a imgui::DrawData` - The ImGui draw data.
     fn prepare_imgui_draw_data<'a>(
@@ -116,8 +103,7 @@ impl App {
         imgui: &'a mut ImGuiContext,
         window: &Window,
         show_ms_per_frame: bool,
-        light_pos: &mut Vector3<f32>,
-        light_intensity: &mut Vector1<f32>
+        world_controls: &mut WorldControls
     ) -> &'a imgui::DrawData {
         // Let winit-platform prepare ImGui for a new frame
         platform
@@ -145,11 +131,11 @@ impl App {
             .size([300.0, 180.0], Condition::FirstUseEver)
             .build(|| {
                 ui.text("Light Position");
-                ui.slider("X", -100.0, 100.0, &mut light_pos[0]);
-                ui.slider("Y", -100.0, 100.0, &mut light_pos[1]);
-                ui.slider("Z", -100.0, 100.0, &mut light_pos[2]);
+                ui.slider("X", -100.0, 100.0, &mut world_controls.light_pos[0]);
+                ui.slider("Y", -100.0, 100.0, &mut world_controls.light_pos[1]);
+                ui.slider("Z", -100.0, 100.0, &mut world_controls.light_pos[2]);
                 ui.text("Light Intensity");
-                ui.slider("LI", 0.0, 20.0, &mut light_intensity[0]);
+                ui.slider("LI", 0.0, 20.0, &mut world_controls.light_intensity[0]);
             });
         // Prepare the Vulkan render pass for ImGui
         platform.prepare_render(ui, window);
@@ -368,7 +354,7 @@ impl ApplicationHandler for App {
         event: DeviceEvent,
     ) {
         if let DeviceEvent::MouseMotion { delta } = event {
-            if self.mouselook_enabled {
+            if self.input.mouselook_enabled {
                 let (dx, dy) = (delta.0 as f32, delta.1 as f32);
                 let sensitivity = 0.1;
                 // convert to yaw/pitch deltas and feed into camera:
@@ -460,45 +446,45 @@ impl ApplicationHandler for App {
                                 println!("🖥️ Toggled fullscreen");
                             }
                             (Code(KeyCode::KeyF), Released) => {
-                                self.toggle_locked = false;
+                                self.input.toggle_locked = false;
                             }
                             // — Movement keys —
                             (Code(KeyCode::KeyW), Pressed) if !self.modifiers.control_key() => {
-                                self.moving_forward = true;
+                                self.input.moving_forward = true;
                             }
                             (Code(KeyCode::KeyW), Released) => {
-                                self.moving_forward = false;
+                                self.input.moving_forward = false;
                                 // also unlock Ctrl+W toggle when released
-                                self.toggle_locked = false;
+                                self.input.toggle_locked = false;
                             }
                             (Code(KeyCode::KeyS), Pressed) => {
-                                self.moving_backward = true;
+                                self.input.moving_backward = true;
                             }
                             (Code(KeyCode::KeyS), Released) => {
-                                self.moving_backward = false;
+                                self.input.moving_backward = false;
                             }
                             (Code(KeyCode::KeyA), Pressed) => {
-                                self.moving_left = true;
+                                self.input.moving_left = true;
                             }
                             (Code(KeyCode::KeyA), Released) => {
-                                self.moving_left = false;
+                                self.input.moving_left = false;
                             }
                             (Code(KeyCode::KeyD), Pressed) => {
-                                self.moving_right = true;
+                                self.input.moving_right = true;
                             }
                             (Code(KeyCode::KeyD), Released) => {
-                                self.moving_right = false;
+                                self.input.moving_right = false;
                             }
-                            (Code(KeyCode::KeyM), Pressed) if !self.toggle_locked => {
-                                self.toggle_locked = true;
-                                self.mouselook_enabled = !self.mouselook_enabled;
+                            (Code(KeyCode::KeyM), Pressed) if !self.input.toggle_locked => {
+                                self.input.toggle_locked = true;
+                                self.input.mouselook_enabled = !self.input.mouselook_enabled;
                             }
                             (Code(KeyCode::KeyM), Released) => {
-                                self.toggle_locked = false;
+                                self.input.toggle_locked = false;
                             }
                             // — Wireframe toggle on Ctrl+W, one shot —
-                            (Code(KeyCode::KeyW), Pressed) if self.modifiers.control_key() && !self.toggle_locked => {
-                                self.toggle_locked = true;
+                            (Code(KeyCode::KeyW), Pressed) if self.modifiers.control_key() && !self.input.toggle_locked => {
+                                self.input.toggle_locked = true;
                                 if let Some(vb) = &mut self.vulkan_base {
                                     vb.toggle_wireframe();
                                     println!("🔲 Wireframe mode toggled");
@@ -511,8 +497,8 @@ impl ApplicationHandler for App {
                                 }
                             }
                             // — ms per frame toggle on Ctrl+F, one shot —
-                            (Code(KeyCode::KeyF), Pressed) if self.modifiers.control_key() && !self.toggle_locked => {
-                                self.toggle_locked = true;
+                            (Code(KeyCode::KeyF), Pressed) if self.modifiers.control_key() && !self.input.toggle_locked => {
+                                self.input.toggle_locked = true;
                                 if let Some(vb) = &mut self.vulkan_base {
                                     vb.toggle_ms_per_frame();
                                 }
@@ -531,10 +517,10 @@ impl ApplicationHandler for App {
 
                             // Now do movement
                             let s = self.step;
-                            if self.moving_forward  { self.camera.translate( s,  0.0) }
-                            if self.moving_backward { self.camera.translate(-s,  0.0) }
-                            if self.moving_left     { self.camera.translate( 0.0, -s) }
-                            if self.moving_right    { self.camera.translate( 0.0,  s) }
+                            if self.input.moving_forward  { self.camera.translate( s,  0.0) }
+                            if self.input.moving_backward { self.camera.translate(-s,  0.0) }
+                            if self.input.moving_left     { self.camera.translate( 0.0, -s) }
+                            if self.input.moving_right    { self.camera.translate( 0.0,  s) }
 
                             // Prepare ImGui UI and get draw data
                             let window = self.window.as_ref().unwrap();
@@ -544,8 +530,7 @@ impl ApplicationHandler for App {
                                 self.imgui.as_mut().unwrap(),
                                 window,
                                 vb.debug_settings.show_ms_per_frame,
-                                &mut self.light_pos,
-                                &mut self.light_intensity
+                                &mut self.world_controls
                             );
 
                             if let Err(e) = vb.draw_frame({
@@ -556,7 +541,12 @@ impl ApplicationHandler for App {
                                         // Update the transform for each object
                                         let model_matrix = obj.transform.model_matrix();
                                         // Push the model matrix as a push constant
-                                        let push_bytes = Self::compute_push_constant_per_obj(&self.camera, &model_matrix, self.light_pos, self.light_intensity);
+                                        let push_bytes = Self::compute_push_constant_per_obj(
+                                            &self.camera,
+                                            &model_matrix,
+                                            self.world_controls.light_pos,
+                                            self.world_controls.light_intensity
+                                        );
                                         unsafe {
                                             if current_pipeline_id != obj.material_id {
                                                 device.cmd_bind_pipeline(
@@ -643,4 +633,42 @@ fn main() {
     if let Err(e) = App::new().run() {
         eprintln!("Application error: {}", e);
     }
+}
+
+/// World-level tweakable parameters exposed via the UI.
+///
+/// Kept separate from `App` to avoid clutter and make it easy to pass
+/// a small bundle of knobs (e.g. to the UI and push-constant packing).
+/// Values are read each frame when building push constants/UBOs.
+///
+/// * `light_pos` — point light position in world units (XYZ).
+/// * `light_intensity` — scalar intensity, stored as `Vector1` to mirror
+///   the UI pattern of passing `&mut` to sliders.
+#[derive(Clone, Copy)]
+pub struct WorldControls {
+    pub light_pos: Vector3<f32>,
+    pub light_intensity: Vector1<f32>,
+}
+impl Default for WorldControls {
+    fn default() -> Self {
+        Self {
+            light_pos: Vector3::new(0.5, 0.8, 1.0),
+            light_intensity: Vector1::new(1.0),
+        }
+    }
+}
+
+/// Transient per-frame input state captured from winit events.
+///
+/// Grouping the movement/toggle flags keeps `App` smaller and makes
+/// it clear these values are ephemeral and updated every frame.
+/// Updated in `window_event`/`device_event`, read during movement.
+#[derive(Default, Clone, Copy)]
+pub struct InputState {
+    pub moving_forward:  bool, // W held
+    pub moving_backward: bool, // S held
+    pub moving_left:     bool, // A held
+    pub moving_right:    bool, // D held
+    pub toggle_locked:   bool, // prevent rapid toggle repeats
+    pub mouselook_enabled: bool,
 }

@@ -27,6 +27,9 @@
 //!
 //! --------------------------------------------------------------------------------------
 
+/// Number of CPU frames-in-flight (slots) for synchronization.
+const INFLIGHT_FRAMES: usize = 2;
+
 use ash::{Entry, Instance};
 use ash::vk;
 use ash_window::enumerate_required_extensions;
@@ -78,34 +81,185 @@ unsafe extern "system" fn vulkan_debug_callback(
 /// logical device creation, command pools, command buffers, synchronization objects, 
 /// and hands off swapchain management to the `Swapchain` struct.
 pub struct VulkanBase {
+    /// Owning Vulkan instance (created in `new`, destroyed in `Drop`).
     pub instance: Instance,
+    /// Chosen physical device handle.
     pub physical_device: vk::PhysicalDevice,
+    /// Logical device used for all Vulkan calls.
     pub device: ash::Device,
+    /// Graphics queue from the selected family.
     pub graphics_queue: vk::Queue,
+    // -- Global set 0 related --
+    /// Descriptor set layout for the global UBO (set = 0, binding = 0).
     pub set0_global_layout: vk::DescriptorSetLayout,
     set0_descriptor_pool: vk::DescriptorPool,
+    /// One descriptor set per swapchain image for set 0.
     pub set0_descriptor_sets: Vec<vk::DescriptorSet>,
     ubo_buffers: Vec<vk::Buffer>,
+    /// Device memory backing each per-image UBO buffer.
     pub ubo_memory: Vec<vk::DeviceMemory>,
-    surface: vk::SurfaceKHR,
-    surface_loader: surface::Instance,
-    pub command_pool: vk::CommandPool,
-    pub command_buffers: Vec<vk::CommandBuffer>,
+    // -- Synchronization objects --
     image_available_semaphores: Vec<vk::Semaphore>,
     render_finished_semaphores: Vec<vk::Semaphore>,
+    /// Fences tracking which frame-in-flight slot is using a GPU submission.
     in_flight_fences: Vec<vk::Fence>,
-    images_in_flight: Vec<vk::Fence>,
+    /// For each swapchain image, tracks which fence (frame slot) currently owns it.
+    image_owner_fence: Vec<vk::Fence>,
+    // -- Swapchain objects --
+    /// Wrapper containing the swapchain, render pass, and framebuffers.
     pub swapchain: Swapchain,
     swapchain_loader: swapchain::Device,
+    surface: vk::SurfaceKHR,
+    surface_loader: surface::Instance,
+    // -- Command objects --
+    /// Primary command pool for the graphics queue family.
+    pub command_pool: vk::CommandPool,
+    /// One primary command buffer per swapchain image.
+    pub command_buffers: Vec<vk::CommandBuffer>,
+    // -- Misc --
+    /// Runtime toggles (wireframe, ms/frame overlay).
     pub debug_settings: EngineDebugSettings,
     #[cfg(debug_assertions)]
     debug_messenger: vk::DebugUtilsMessengerEXT,
     #[cfg(debug_assertions)]
     debug_utils_loader: ash::ext::debug_utils::Instance,
-    current_frame: usize,
+    frame_slot: usize,
+}
+
+/// Frame context returned by `begin_frame` and consumed by `end_frame`.
+/// Holds which swapchain image we're drawing to and the command buffer to record into.
+pub struct FrameCtx {
+    /// Command buffer for this swapchain image.
+    pub cmd_buf: vk::CommandBuffer,
+    /// Index of the acquired swapchain image.
+    pub image_index: u32,
+    // CPU "frame-in-flight" slot that owns the fence/semaphore for this submission.
+    frame_slot: usize,
 }
 
 impl VulkanBase {
+    /// Begin a frame: wait/reset fences, acquire the next image, and begin the command buffer & render pass.
+    ///
+    /// Returns `Ok(None)` when the swapchain is out-of-date so the caller can skip this frame.
+    ///
+    /// # Steps
+    /// 1. Wait for the previous GPU work that used this CPU frame slot.
+    /// 2. Acquire the next swapchain image (signals the per-slot image-available semaphore).
+    /// 3. If that image is still owned by another slot, wait on that image's owner fence.
+    /// 4. Reset this slot's fence and mark it as the owner of the acquired image.
+    /// 5. Begin the command buffer and open the render pass so the caller can record draws.
+    pub fn begin_frame(&mut self) -> Result<Option<FrameCtx>, Box<dyn Error>> {
+        unsafe {
+            let slot = self.frame_slot;
+
+            // Wait for the previous work submitted on this CPU slot.
+            self.device.wait_for_fences(&[self.in_flight_fences[slot]], true, u64::MAX)?;
+
+            // Acquire an image; signal when it's ready via the per-slot image-available semaphore.
+            let (image_index, _is_suboptimal) = match self.swapchain_loader.acquire_next_image(
+                self.swapchain.handle,
+                u64::MAX,
+                self.image_available_semaphores[slot],
+                vk::Fence::null(),
+            ) {
+                Ok(result) => result,
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Ok(None),
+                Err(e) => return Err(e.into()),
+            };
+
+            let idx = image_index as usize;
+
+            // If this image is still tied to an older in-flight slot, wait for that slot to finish first.
+            if self.image_owner_fence[idx] != vk::Fence::null() {
+                self.device.wait_for_fences(&[self.image_owner_fence[idx]], true, u64::MAX)?;
+            }
+
+            // Reuse this slot's fence for the new submit and associate it with this image.
+            self.device.reset_fences(&[self.in_flight_fences[slot]])?;
+            self.image_owner_fence[idx] = self.in_flight_fences[slot];
+
+            // Begin recording and open the render pass so the caller can just bind/draw.
+            let cmd_buf    = self.command_buffers[idx];
+            let framebuffer = self.swapchain.framebuffers[idx];
+            let render_pass = self.swapchain.render_pass;
+            let extent      = self.swapchain.extent;
+
+            let begin_info = vk::CommandBufferBeginInfo::default();
+            let clear_values = [
+                vk::ClearValue { color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] } },
+                vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
+            ];
+            let render_pass_info = vk::RenderPassBeginInfo {
+                render_pass,
+                framebuffer,
+                render_area: vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent },
+                clear_value_count: clear_values.len() as u32,
+                p_clear_values: clear_values.as_ptr(),
+                ..Default::default()
+            };
+
+            self.device.begin_command_buffer(cmd_buf, &begin_info)?;
+            self.device.cmd_begin_render_pass(cmd_buf, &render_pass_info, vk::SubpassContents::INLINE);
+
+            Ok(Some(FrameCtx { cmd_buf, image_index, frame_slot: slot }))
+        }
+    }
+
+    /// End a frame: finish the render pass, submit, present, and advance the slot.
+    ///
+    /// # Steps
+    /// 1. End the render pass and command buffer.
+    /// 2. Submit the command buffer: wait on the per-slot image-available semaphore and signal the per-image render-finished semaphore.
+    /// 3. Present the image, waiting on the render-finished semaphore for this image.
+    /// 4. Advance to the next CPU frame-in-flight slot.
+    pub fn end_frame(&mut self, frame: FrameCtx) -> Result<(), Box<dyn Error>> {
+        unsafe {
+            // Close render pass and command buffer
+            self.device.cmd_end_render_pass(frame.cmd_buf);
+            self.device.end_command_buffer(frame.cmd_buf)?;
+
+            // Submit: wait for image-available (slot), signal render-finished (per-image)
+            let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+            let wait_sems   = [self.image_available_semaphores[frame.frame_slot]];
+            let signal_sems = [self.render_finished_semaphores[frame.image_index as usize]];
+            let submit_info = vk::SubmitInfo {
+                wait_semaphore_count: 1,
+                p_wait_semaphores: wait_sems.as_ptr(),
+                p_wait_dst_stage_mask: wait_stages.as_ptr(),
+                command_buffer_count: 1,
+                p_command_buffers: &frame.cmd_buf,
+                signal_semaphore_count: 1,
+                p_signal_semaphores: signal_sems.as_ptr(),
+                ..Default::default()
+            };
+            self.device.queue_submit(
+                self.graphics_queue,
+                &[submit_info],
+                self.in_flight_fences[frame.frame_slot],
+            )?;
+
+            // Present the image, waiting on the render-finished semaphore for this image
+            let present_wait = [self.render_finished_semaphores[frame.image_index as usize]];
+            let image_index = frame.image_index; // keep a local so we can take a stable pointer
+            let present_info = vk::PresentInfoKHR {
+                wait_semaphore_count: 1,
+                p_wait_semaphores: present_wait.as_ptr(),
+                swapchain_count: 1,
+                p_swapchains: &self.swapchain.handle,
+                p_image_indices: &image_index,
+                ..Default::default()
+            };
+            match self.swapchain_loader.queue_present(self.graphics_queue, &present_info) {
+                Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => { /* caller will recreate if needed */ }
+                Err(e) => return Err(e.into()),
+                _ => {}
+            }
+
+            // Advance to next CPU slot
+            self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len();
+        }
+        Ok(())
+    }
     /// Helper: find a suitable memory type on the physical device.
     fn find_memory_type(
         instance: &ash::Instance,
@@ -454,133 +608,6 @@ impl VulkanBase {
         (pool, sets)
     }
 
-    /// Records the commands for a single primary command buffer directly.
-    /// # Arguments
-    /// * `image_index` - The index of the swapchain image to record commands for.
-    /// * `draw_frame` - A closure that takes `&VulkanBase` and `vk::CommandBuffer` and records this frame's drawing commands directly into the primary command buffer.
-    /// # Returns
-    /// * `Result<(), vk::Result>` - Returns Ok on success, or a Vulkan error on failure.
-    fn record_primary_command_buffer<F>(
-        &self,
-        image_index: usize,
-        mut draw_frame: F,
-    ) -> Result<(), vk::Result>
-    where F: FnMut(&VulkanBase, vk::CommandBuffer),
-    {
-        let command_buffer = self.command_buffers[image_index];
-        let framebuffer = self.swapchain.framebuffers[image_index];
-        let render_pass = self.swapchain.render_pass;
-        let extent = self.swapchain.extent;
-
-        let begin_info = vk::CommandBufferBeginInfo::default();
-        let clear_values = [
-            vk::ClearValue {
-                color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] },
-            },
-            vk::ClearValue {
-                depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
-            },
-        ];
-        let render_pass_info = vk::RenderPassBeginInfo {
-            render_pass,
-            framebuffer,
-            render_area: vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent },
-            clear_value_count: clear_values.len() as u32,
-            p_clear_values: clear_values.as_ptr(),
-            ..Default::default()
-        };
-
-        unsafe {
-            self.device.begin_command_buffer(command_buffer, &begin_info)?;
-            self.device.cmd_begin_render_pass(command_buffer, &render_pass_info, vk::SubpassContents::INLINE);
-            draw_frame(self, command_buffer);
-            self.device.cmd_end_render_pass(command_buffer);
-            self.device.end_command_buffer(command_buffer)?;
-        }
-        Ok(())
-    }
-
-    /// Records commands for all primary command buffers (no-op, for compatibility).
-    pub fn record_command_buffers(&self) -> Result<(), vk::Result> { Ok(()) }
-
-    /// Draws a frame by acquiring an image from the swapchain, submitting a command buffer,
-    /// and presenting the image. Records drawing commands directly into the primary command buffer.
-    /// # Arguments
-    /// * `draw_frame_closure` - A closure that takes `&VulkanBase` and `vk::CommandBuffer` and issues draw commands for the current frame.
-    /// # Returns
-    /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error if the frame could not be drawn.
-    pub fn draw_frame<'a, F>(
-        &mut self,
-        draw_frame_closure: F,
-    ) -> Result<(), Box<dyn Error>>
-    where F: FnMut(&VulkanBase, vk::CommandBuffer),
-    {
-        unsafe {
-            let frame = self.current_frame;
-            self.device.wait_for_fences(&[self.in_flight_fences[frame]], true, u64::MAX)?;
-            let (image_index, _is_suboptimal) = match self.swapchain_loader
-                .acquire_next_image(
-                    self.swapchain.handle,
-                    u64::MAX,
-                    self.image_available_semaphores[frame],
-                    vk::Fence::null(),
-                ) {
-                    Ok(result) => result,
-                    Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                        return Ok(());
-                    }
-                    Err(e) => return Err(e.into()),
-                };
-
-            let idx = image_index as usize;
-            // If this image is already tied to a different in-flight frame, wait for it.
-            if self.images_in_flight[idx] != vk::Fence::null() {
-                self.device.wait_for_fences(&[self.images_in_flight[idx]], true, u64::MAX)?;
-            }
-
-            // Reuse the current per-frame fence and bind it to this image
-            self.device.reset_fences(&[self.in_flight_fences[frame]])?;
-            self.images_in_flight[idx] = self.in_flight_fences[frame];
-
-            self.record_primary_command_buffer(idx, draw_frame_closure)?;
-            let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-            let wait_sems = [self.image_available_semaphores[frame]];
-            let signal_sems = [self.render_finished_semaphores[idx]];
-            let submit_info = vk::SubmitInfo {
-                wait_semaphore_count: 1,
-                p_wait_semaphores: wait_sems.as_ptr(),
-                p_wait_dst_stage_mask: wait_stages.as_ptr(),
-                command_buffer_count: 1,
-                p_command_buffers: &self.command_buffers[idx],
-                signal_semaphore_count: 1,
-                p_signal_semaphores: signal_sems.as_ptr(),
-                ..Default::default()
-            };
-            self.device.queue_submit(
-                self.graphics_queue,
-                &[submit_info],
-                self.in_flight_fences[frame],
-            )?;
-            let present_wait_sems = [self.render_finished_semaphores[idx]];
-            let present_info = vk::PresentInfoKHR {
-                wait_semaphore_count: 1,
-                p_wait_semaphores: present_wait_sems.as_ptr(),
-                swapchain_count: 1,
-                p_swapchains: &self.swapchain.handle,
-                p_image_indices: &image_index,
-                ..Default::default()
-            };
-            match self.swapchain_loader.queue_present(self.graphics_queue, &present_info) {
-                Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                }
-                Err(e) => return Err(e.into()),
-                _ => {}
-            }
-            self.current_frame = (frame + 1) % self.image_available_semaphores.len();
-        }
-        Ok(())
-    }
-
     /// Recreates the swapchain and associated resources when the window is resized.
     /// # Arguments
     /// * `window` - The winit `Window` to associate with the new swapchain.
@@ -619,7 +646,7 @@ impl VulkanBase {
             unsafe { self.render_finished_semaphores.push(self.device.create_semaphore(&semaphore_info, None)?); }
         }
         // Reset per-image fence tracking
-        self.images_in_flight = vec![vk::Fence::null(); new_image_count];
+        self.image_owner_fence = vec![vk::Fence::null(); new_image_count];
         // Tear down old UBO buffers and descriptor pool
         for &buf in &self.ubo_buffers {
             unsafe { self.device.destroy_buffer(buf, None); }
@@ -750,28 +777,27 @@ impl VulkanBase {
             Self::create_uniform_buffers(&instance, &device, physical_device, image_count);
         let (set0_descriptor_pool, set0_descriptor_sets) =
             Self::create_set0_descriptor_pool_and_sets(&device, set0_global_layout, &ubo_buffers);
-        let inflight_count: usize = 2; // number of CPU frames in flight
-        let mut image_available_semaphores = Vec::with_capacity(inflight_count);
-        let mut in_flight_fences = Vec::with_capacity(inflight_count);
+        let mut image_available_semaphores = Vec::with_capacity(INFLIGHT_FRAMES);
+        let mut in_flight_fences = Vec::with_capacity(INFLIGHT_FRAMES);
         let semaphore_info = vk::SemaphoreCreateInfo::default();
         let fence_info = vk::FenceCreateInfo {
             flags: vk::FenceCreateFlags::SIGNALED,
             ..Default::default()
         };
-        for _ in 0..inflight_count {
+        for _ in 0..INFLIGHT_FRAMES {
             unsafe {
                 image_available_semaphores.push(device.create_semaphore(&semaphore_info, None)?);
                 in_flight_fences.push(device.create_fence(&fence_info, None)?);
             }
         }
 
-        let mut render_finished_semaphores = Vec::with_capacity(inflight_count);
+        let mut render_finished_semaphores = Vec::with_capacity(image_count);
         for _ in 0..image_count {
             unsafe { render_finished_semaphores.push(device.create_semaphore(&semaphore_info, None)?); }
         }
 
         // Per-swapchain-image tracker: which fence currently owns each image (or null)
-        let images_in_flight = vec![vk::Fence::null(); image_count];
+        let image_owner_fence = vec![vk::Fence::null(); image_count];
 
         let command_buffers = Self::allocate_command_buffers(
             &device,
@@ -784,30 +810,33 @@ impl VulkanBase {
             physical_device,
             device,
             graphics_queue,
+            // set 0
             set0_global_layout,
             set0_descriptor_pool,
             set0_descriptor_sets,
             ubo_buffers,
             ubo_memory,
-            surface,
-            surface_loader,
-            command_pool,
-            command_buffers,
+            // sync
             image_available_semaphores,
             render_finished_semaphores,
             in_flight_fences,
-            images_in_flight,
+            image_owner_fence,
+            // swapchain
             swapchain,
             swapchain_loader,
+            surface,
+            surface_loader,
+            // commands
+            command_pool,
+            command_buffers,
+            // misc
             debug_settings,
             #[cfg(debug_assertions)]
             debug_messenger,
             #[cfg(debug_assertions)]
             debug_utils_loader,
-            current_frame: 0,
+            frame_slot: 0,
         };
-
-        vulkan_base.record_command_buffers()?;
 
         println!("✅ VulkanBase initialized successfully");
         Ok(vulkan_base)
@@ -888,9 +917,10 @@ pub struct EngineDebugSettings {
     pub show_ms_per_frame: bool,
 }
 
-/// Global (per-frame/per-image) uniform buffer object layout.
+/// Global (per-frame/per-image) uniform buffer object shared across all pipelines via **descriptor set 0, binding 0**.
+/// There is **one buffer per swapchain image** so the CPU can update the UBO while another image is still in-flight.
 /// Keep fields 16-byte aligned for std140-like layouts.
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct GlobalUbo {
     /*
     pub view: [[f32; 4]; 4],

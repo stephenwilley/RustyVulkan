@@ -319,6 +319,106 @@ impl App {
         self.camera = Camera::new();
         self.step = 0.1;
     }
+
+    fn draw_frame(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(vb) = self.vulkan_base.as_mut() {
+            let imgui_renderer = self.imgui_renderer.as_mut().unwrap();
+
+            // Now do movement
+            let s = self.step;
+            if self.input.moving_forward  { self.camera.translate( s,  0.0) }
+            if self.input.moving_backward { self.camera.translate(-s,  0.0) }
+            if self.input.moving_left     { self.camera.translate( 0.0, -s) }
+            if self.input.moving_right    { self.camera.translate( 0.0,  s) }
+
+            // Prepare ImGui UI and get draw data
+            let window = self.window.as_ref().unwrap();
+            let draw_data = App::prepare_imgui_draw_data(
+                self.current_ms_per_frame,
+                self.platform.as_mut().unwrap(),
+                self.imgui.as_mut().unwrap(),
+                window,
+                vb.debug_settings.show_ms_per_frame,
+                &mut self.world_controls
+            );
+
+            // Simplified error handling: "?" bubbles up real errors; None means skip frame
+            if let Some(frame) = vb.begin_frame()? {
+                let image_index = frame.image_index as usize;
+                let device = &vb.device;
+
+                // Update per-image UBO for this frame
+                Self::update_ubo(
+                    &vb,
+                    image_index,
+                    self.world_controls.light_pos,
+                    self.world_controls.light_intensity
+                );
+
+                let mut current_pipeline_id = usize::MAX;
+                for obj in &self.scene.objects {
+                    // Update the transform for each object
+                    let model_matrix = obj.transform.model_matrix();
+                    let push_bytes = Self::compute_push_constant_per_obj(
+                        &self.camera,
+                        &model_matrix
+                    );
+
+                    unsafe {
+                        if current_pipeline_id != obj.material_id {
+                            device.cmd_bind_pipeline(
+                                frame.cmd_buf,
+                                vk::PipelineBindPoint::GRAPHICS,
+                                self.material_manager.materials[obj.material_id].pipeline.vk_pipeline
+                            );
+                            // Bind global set=0 (UBO) for this swapchain image, plus set=1 textures if present
+                            let set0 = vb.set0_descriptor_sets[image_index];
+                            if let Some(_tex) = self.material_manager.materials[obj.material_id].textures.as_ref() {
+                                device.cmd_bind_descriptor_sets(
+                                    frame.cmd_buf,
+                                    vk::PipelineBindPoint::GRAPHICS,
+                                    self.material_manager.materials[obj.material_id].pipeline.vk_layout,
+                                    0,
+                                    &[set0, self.material_manager.materials[obj.material_id].texture_descriptor_set],
+                                    &[],
+                                );
+                            } else {
+                                device.cmd_bind_descriptor_sets(
+                                    frame.cmd_buf,
+                                    vk::PipelineBindPoint::GRAPHICS,
+                                    self.material_manager.materials[obj.material_id].pipeline.vk_layout,
+                                    0,
+                                    &[set0],
+                                    &[],
+                                );
+                            }
+                            current_pipeline_id = obj.material_id;
+                        }
+                        device.cmd_push_constants(
+                            frame.cmd_buf,
+                            self.material_manager.materials[obj.material_id].pipeline.vk_layout,
+                            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                            0,
+                            &push_bytes,
+                        );
+                    }
+                    self.mesh_manager.meshes[obj.mesh_id].record(device, frame.cmd_buf);
+                }
+
+                // ImGui on top
+                unsafe {
+                    device.cmd_bind_pipeline(
+                        frame.cmd_buf,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        imgui_renderer.vk_pipeline);
+                }
+                imgui_renderer.render(device, frame.cmd_buf, draw_data);
+                vb.end_frame(frame)?;
+            }
+        }
+        Ok(())
+    }
+
 }
 
 impl ApplicationHandler for App {
@@ -428,9 +528,6 @@ impl ApplicationHandler for App {
                             if let Err(e) = self.material_manager.recreate_pipelines(vulkan_base) {
                                 eprintln!("Failed to recreate material pipelines: {}", e);
                             };
-                            if let Err(e) = vulkan_base.record_command_buffers() {
-                                eprintln!("Failed to record command buffers: {}", e);
-                            }
                             if let Err(e) = self.imgui_renderer.as_mut().unwrap().rebuild_pipeline(vulkan_base) {
                                 eprintln!("Failed to rebuild imgui pipeline: {}", e);
                             }
@@ -510,9 +607,6 @@ impl ApplicationHandler for App {
                                     if let Err(e) = self.material_manager.recreate_pipelines(vb) {
                                         eprintln!("Failed to recreate material pipelines: {}", e);
                                     };
-                                    if let Err(e) = vb.record_command_buffers() {
-                                        eprintln!("Failed to record command buffers: {}", e);
-                                    }
                                 }
                             }
                             // — ms per frame toggle on Ctrl+F, one shot —
@@ -527,110 +621,14 @@ impl ApplicationHandler for App {
                     }
                     WindowEvent::RedrawRequested => {
                         self.start_of_frame_time = Instant::now();
-                        // First check everything we need is built
-                        if let Some(vb) = self.vulkan_base.as_mut() {
-                            // Borrow VulkanBase, ImGui context, renderer, and platform for this frame
-                            let imgui_renderer = self.imgui_renderer.as_mut().unwrap();
-                            // Get a mutable reference to the scene for local use
-                            let scene = &mut self.scene;
 
-                            // Now do movement
-                            let s = self.step;
-                            if self.input.moving_forward  { self.camera.translate( s,  0.0) }
-                            if self.input.moving_backward { self.camera.translate(-s,  0.0) }
-                            if self.input.moving_left     { self.camera.translate( 0.0, -s) }
-                            if self.input.moving_right    { self.camera.translate( 0.0,  s) }
-
-                            // Prepare ImGui UI and get draw data
-                            let window = self.window.as_ref().unwrap();
-                            let draw_data = App::prepare_imgui_draw_data(
-                                self.current_ms_per_frame,
-                                self.platform.as_mut().unwrap(),
-                                self.imgui.as_mut().unwrap(),
-                                window,
-                                vb.debug_settings.show_ms_per_frame,
-                                &mut self.world_controls
-                            );
-
-                            if let Err(e) = vb.draw_frame({
-                                |base, cmd_buf| {
-                                    let device = &base.device;
-                                    // Image index is the swapchain image
-                                    let image_index = base.command_buffers
-                                        .iter()
-                                        .position(|&cb| cb == cmd_buf)
-                                        .expect("cmd_buf not found in base.command_buffers");
-                                    Self::update_ubo(
-                                        base,
-                                        image_index,
-                                        self.world_controls.light_pos,
-                                        self.world_controls.light_intensity
-                                    );
-                                    let mut current_pipeline_id = usize::MAX;
-                                    for obj in &scene.objects {
-                                        // Update the transform for each object
-                                        let model_matrix = obj.transform.model_matrix();
-                                        // Push the model matrix as a push constant
-                                        let push_bytes = Self::compute_push_constant_per_obj(
-                                            &self.camera,
-                                            &model_matrix
-                                        );
-                                        unsafe {
-                                            if current_pipeline_id != obj.material_id {
-                                                device.cmd_bind_pipeline(
-                                                    cmd_buf,
-                                                    vk::PipelineBindPoint::GRAPHICS,
-                                                    self.material_manager.materials[obj.material_id].pipeline.vk_pipeline
-                                                );
-                                                // We need to UBO associated with this swapchain image
-                                                let set0 = base.set0_descriptor_sets[image_index];
-                                                if let Some(_tex) = self.material_manager.materials[obj.material_id].textures.as_ref() {
-                                                    device.cmd_bind_descriptor_sets(
-                                                        cmd_buf,
-                                                        vk::PipelineBindPoint::GRAPHICS,
-                                                        self.material_manager.materials[obj.material_id].pipeline.vk_layout,
-                                                        0,
-                                                        &[set0, self.material_manager.materials[obj.material_id].texture_descriptor_set],
-                                                        &[],
-                                                    );
-                                                } else {
-                                                    device.cmd_bind_descriptor_sets(
-                                                        cmd_buf,
-                                                        vk::PipelineBindPoint::GRAPHICS,
-                                                        self.material_manager.materials[obj.material_id].pipeline.vk_layout,
-                                                        0,
-                                                        &[set0],
-                                                        &[],
-                                                    );
-                                                }
-                                                current_pipeline_id = obj.material_id;
-                                            };
-                                            device.cmd_push_constants(
-                                                cmd_buf,
-                                                self.material_manager.materials[obj.material_id].pipeline.vk_layout,
-                                                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                                                0,
-                                                &push_bytes,
-                                            );
-                                        }
-                                        self.mesh_manager.meshes[obj.mesh_id].record(device, cmd_buf);
-                                    }
-                                    // Bind and draw ImGui on top
-                                    unsafe {
-                                        device.cmd_bind_pipeline(
-                                            cmd_buf,
-                                            vk::PipelineBindPoint::GRAPHICS,
-                                            imgui_renderer.vk_pipeline);
-                                    }
-                                    imgui_renderer.render(device, cmd_buf, draw_data);
-                                }
-                            }) {
-                                eprintln!("Failed to draw frame: {}", e);
-                            }
-                            let now = Instant::now();
-                            let elapsed = now.duration_since(self.start_of_frame_time);
-                            self.current_ms_per_frame = elapsed.as_millis() as f32;
+                        if let Err(e) = self.draw_frame() {
+                            eprintln!("draw_frame error: {}", e);
                         }
+
+                        let now = Instant::now();
+                        let elapsed = now.duration_since(self.start_of_frame_time);
+                        self.current_ms_per_frame = elapsed.as_millis() as f32;
                     }
                     _ => {}
                 }

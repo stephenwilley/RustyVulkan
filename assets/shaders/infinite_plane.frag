@@ -22,16 +22,23 @@ vec4 grid(vec3 fragPos3D, float scale) {
     vec2 gridDist = abs(fract(coord - 0.5) - 0.5) / (derivative * thickness);
     float distToLine = min(gridDist.x, gridDist.y);
 
-    vec4 color = vec4(0.3, 0.3, 0.3, 1.0 - min(distToLine, 1.0));
+    float lineAlpha = 1.0 - smoothstep(0.0, 1.0, distToLine);
+    vec4 color = vec4(0.3, 0.3, 0.3, lineAlpha);
 
     // Calculate distance to the Z axis (x=0) and X axis (z=0)
-    vec2 axisDist = abs(fragPos3D.xz) / (derivative * thickness);
-    // Draw Z-axis (blue)
-    float zAxisAlpha = 1.0 - clamp(axisDist.x, 0.0, 1.0);
+    float axisPixels = 1.5;         // desired axis half-width in pixels
+
+    // Z-axis (blue) where x=0
+    float zAxisAlpha = 1.0 - smoothstep(0.0, axisPixels * (derivative.x / scale), abs(fragPos3D.x));
     color.rgb = mix(color.rgb, vec3(0.3, 0.3, 1.0), zAxisAlpha);
-    // Draw X-axis (red)
-    float xAxisAlpha = 1.0 - clamp(axisDist.y, 0.0, 1.0);
+
+    // X-axis (red) where z=0 (using derivative.y rather than z because it's a vec2 derivative calc)
+    float xAxisAlpha = 1.0 - smoothstep(0.0, axisPixels * (derivative.y / scale), abs(fragPos3D.z));
     color.rgb = mix(color.rgb, vec3(1.0, 0.3, 0.3), xAxisAlpha);
+
+    // Boost alpha coverage for axes so thickness matches axisPixels
+    float axisAlpha = max(zAxisAlpha, xAxisAlpha);
+    color.a = max(color.a, axisAlpha);
 
     return color;
 }

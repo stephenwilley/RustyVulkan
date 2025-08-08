@@ -268,6 +268,7 @@ impl fmt::Display for Material {
     }
 }
 
+/// A struct to hold the loaded shaders
 pub struct LoadedShaders {
     pub vertex:   ShaderStageInfo,
     pub fragment: ShaderStageInfo,
@@ -275,6 +276,12 @@ pub struct LoadedShaders {
 
 impl LoadedShaders {
     /// Loads SPIR-V files into ShaderStageInfo structs
+    /// # Arguments
+    /// * `device` - The Vulkan device to use for creating the shader modules.
+    /// * `vs_path` - The path to the vertex shader.
+    /// * `fs_path` - The path to the fragment shader.
+    /// # Returns
+    /// * `Result<Self, Box<dyn std::error::Error>>` - Returns the loaded shaders on success, or an error on failure.
     pub fn load(
         device: &Device,
         vs_path: String,
@@ -297,6 +304,7 @@ impl LoadedShaders {
     }
 }
 
+/// A struct to hold the loaded textures
 pub struct LoadedTextures {
     pub diffuse: Texture,
     pub normalmap: Texture,
@@ -304,6 +312,16 @@ pub struct LoadedTextures {
 
 impl LoadedTextures {
     /// Loads the diffuse PNG into a GPU-backed Texture.
+    /// # Arguments
+    /// * `instance` - The Vulkan instance.
+    /// * `device` - The Vulkan device.
+    /// * `physical_device` - The physical device.
+    /// * `command_pool` - The command pool to use for creating the texture.
+    /// * `queue` - The queue to use for submitting the texture creation commands.
+    /// * `diffuse_texture_path` - The path to the diffuse texture.
+    /// * `normalmap_texture_path` - The path to the normalmap texture.
+    /// # Returns
+    /// * `Result<Self, Box<dyn Error>>` - Returns the loaded textures on success, or an error on failure.
     pub fn load(
         instance: &ash::Instance,
         device: &Device,
@@ -333,6 +351,8 @@ impl LoadedTextures {
     }
 
     /// Cleans up Vulkan resources for the texture.
+    /// # Arguments
+    /// * `device` - The Vulkan device to use for cleanup.
     pub fn cleanup(&self, device: &Device) {
         self.diffuse.cleanup(device);
         self.normalmap.cleanup(device);

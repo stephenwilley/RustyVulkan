@@ -1,5 +1,5 @@
 // --------------------------------------------------------------------------------------
-// lambert.frag – Fragment Shader
+// lambert_no_tex.frag – Fragment Shader
 //
 // This shader implements a simple Lambertian reflectance model with a small ambient
 // light component.

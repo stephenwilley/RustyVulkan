@@ -14,10 +14,12 @@ use ash::Device;
 use crate::graphics::material::Material;
 use crate::vulkan::base::VulkanBase;
 
+/// Manages materials, ensuring that each material is only created once.
 pub struct MaterialManager {
     pub materials: Vec<Material>,
 }
 
+/// Properties for creating a new material.
 pub struct MaterialProperties {
     pub name: String,
     pub vs_path: String,
@@ -28,12 +30,18 @@ pub struct MaterialProperties {
 }
 
 impl MaterialManager {
+    /// Creates a new `MaterialManager`.
     pub fn new() -> MaterialManager {
         MaterialManager {
             materials: Vec::new(),
         }
     }
 
+    /// Recreates the pipelines for all materials.
+    /// # Arguments
+    /// * `vb` - The VulkanBase struct.
+    /// # Returns
+    /// * `Result<(), Box<dyn std::error::Error>>` - The result of the pipeline recreation.
     pub fn recreate_pipelines(
         &mut self,
         vb: &VulkanBase
@@ -46,6 +54,13 @@ impl MaterialManager {
         Ok(())
     }
 
+    /// Requests a material. If the material already exists, it returns the index of the existing material.
+    /// Otherwise, it creates a new material and returns its index.
+    /// # Arguments
+    /// * `vb` - The VulkanBase struct.
+    /// * `props` - The properties of the material to create.
+    /// # Returns
+    /// * `usize` - The index of the material.
     pub fn request_material(
         &mut self,
         vb: &VulkanBase,
@@ -68,6 +83,9 @@ impl MaterialManager {
         }
     }
 
+    /// Cleans up all materials.
+    /// # Arguments
+    /// * `device` - The Vulkan device.
     pub fn cleanup(&mut self, device: &Device) {
         for material in &mut self.materials {
             println!("🗑️ Cleaning up material {}", material.name);

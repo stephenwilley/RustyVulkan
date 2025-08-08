@@ -102,6 +102,13 @@ pub struct VulkanBase {
 }
 
 impl VulkanBase {
+    /// Creates a Vulkan instance.
+    /// # Arguments
+    /// * `entry` - The Ash Entry point.
+    /// * `event_loop` - The winit event loop.
+    /// * `layers` - The instance layers to enable.
+    /// # Returns
+    /// * `Result<Instance, Box<dyn Error>>` - The created Vulkan instance on success, or an error on failure.
     fn create_instance(
         entry: &Entry, event_loop: &ActiveEventLoop, layers: &[*const i8]
     ) -> Result<Instance, Box<dyn Error>> {
@@ -162,6 +169,13 @@ impl VulkanBase {
         }
     }
 
+    /// Chooses a suitable physical device.
+    /// Prioritizes discrete GPUs, otherwise selects the first available device.
+    /// # Arguments
+    /// * `instance` - The Vulkan instance.
+    /// * `physical_devices` - A slice of available physical devices.
+    /// # Returns
+    /// * `vk::PhysicalDevice` - The chosen physical device.
     fn choose_device(instance: &Instance, physical_devices: &[vk::PhysicalDevice]) -> vk::PhysicalDevice {
         physical_devices
             .iter()
@@ -173,6 +187,12 @@ impl VulkanBase {
             .unwrap_or(physical_devices[0])
     }
 
+    /// Finds the index of a queue family that supports graphics operations.
+    /// # Arguments
+    /// * `instance` - The Vulkan instance.
+    /// * `physical_device` - The physical device to query.
+    /// # Returns
+    /// * `Result<u32, String>` - The queue family index on success, or an error string if not found.
     fn find_graphics_queue_family_index(instance: &Instance, physical_device: vk::PhysicalDevice) -> Result<u32, String> {
         let queue_family_properties = unsafe {
             instance.get_physical_device_queue_family_properties(physical_device)
@@ -193,6 +213,13 @@ impl VulkanBase {
         }
     }
 
+    /// Creates a logical device and retrieves the graphics queue.
+    /// # Arguments
+    /// * `instance` - The Vulkan instance.
+    /// * `physical_device` - The physical device to create the logical device from.
+    /// * `queue_family_index` - The index of the graphics queue family.
+    /// # Returns
+    /// * `Result<(ash::Device, vk::Queue), vk::Result>` - A tuple containing the logical device and graphics queue on success, or a Vulkan error on failure.
     fn create_logical_device_and_queue(
         instance: &Instance,
         physical_device: vk::PhysicalDevice,
@@ -224,8 +251,8 @@ impl VulkanBase {
             p_next: std::ptr::null(),
             p_queue_create_infos: &queue_info,
             queue_create_info_count: 1,
-            enabled_extension_count: device_extensions.len() as u32,
             pp_enabled_extension_names: device_extensions.as_ptr(),
+            enabled_extension_count: device_extensions.len() as u32,
             p_enabled_features: &device_features,
             ..Default::default()
         };
@@ -236,6 +263,14 @@ impl VulkanBase {
         Ok((device, queue))
     }
 
+    /// Creates a Vulkan surface for rendering.
+    /// # Arguments
+    /// * `entry` - The Ash Entry point.
+    /// * `instance` - The Vulkan instance.
+    /// * `window` - The winit window.
+    /// * `event_loop` - The winit event loop.
+    /// # Returns
+    /// * `Result<vk::SurfaceKHR, vk::Result>` - The created surface on success, or a Vulkan error on failure.
     fn create_surface(
         entry: &Entry,
         instance: &Instance,
@@ -255,6 +290,12 @@ impl VulkanBase {
         Ok(surface)
     }
 
+    /// Creates a Vulkan command pool.
+    /// # Arguments
+    /// * `device` - The Vulkan logical device.
+    /// * `queue_family_index` - The index of the queue family to associate with the command pool.
+    /// # Returns
+    /// * `Result<vk::CommandPool, vk::Result>` - The created command pool on success, or a Vulkan error on failure.
     fn create_command_pool(device: &ash::Device, queue_family_index: u32) -> Result<vk::CommandPool, vk::Result> {
         let info = vk::CommandPoolCreateInfo {
             queue_family_index,
@@ -266,6 +307,14 @@ impl VulkanBase {
         Ok(command_pool)
     }
 
+    /// Allocates Vulkan command buffers.
+    /// # Arguments
+    /// * `device` - The Vulkan logical device.
+    /// * `command_pool` - The command pool to allocate from.
+    /// * `buffer_level` - The level of the command buffers (primary or secondary).
+    /// * `count` - The number of command buffers to allocate.
+    /// # Returns
+    /// * `Result<Vec<vk::CommandBuffer>, vk::Result>` - A vector of allocated command buffers on success, or a Vulkan error on failure.
     fn allocate_command_buffers(
         device: &ash::Device,
         command_pool: vk::CommandPool,
@@ -285,6 +334,10 @@ impl VulkanBase {
 
     /// Records the commands for a single primary command buffer.
     /// This involves beginning the render pass and executing the corresponding secondary command buffer.
+    /// # Arguments
+    /// * `image_index` - The index of the swapchain image to record commands for.
+    /// # Returns
+    /// * `Result<(), vk::Result>` - Returns Ok on success, or a Vulkan error on failure.
     fn record_primary_command_buffer(
         &self,
         image_index: usize,
@@ -322,6 +375,9 @@ impl VulkanBase {
         Ok(())
     }
 
+    /// Records commands for all primary command buffers.
+    /// # Returns
+    /// * `Result<(), vk::Result>` - Returns Ok on success, or a Vulkan error on failure.
     pub fn record_command_buffers(&self) -> Result<(), vk::Result> {
         for (index, _) in self.command_buffers.iter().enumerate() {
             self.record_primary_command_buffer(index)?;
@@ -329,6 +385,12 @@ impl VulkanBase {
         Ok(())
     }
 
+    /// Records commands for a single secondary command buffer.
+    /// # Arguments
+    /// * `image_index` - The index of the swapchain image to record commands for.
+    /// * `record_fn` - A closure that takes `&VulkanBase` and `vk::CommandBuffer` and records commands.
+    /// # Returns
+    /// * `Result<(), vk::Result>` - Returns Ok on success, or a Vulkan error on failure.
     fn record_secondary_command_buffer<F>(
         &self,
         image_index: usize,
@@ -362,11 +424,13 @@ impl VulkanBase {
 
     /// Draws a frame by acquiring an image from the swapchain, submitting a command buffer,
     /// and presenting the image.
+    /// # Arguments
+    /// * `record_secondary` - A closure that takes `&VulkanBase` and `vk::CommandBuffer` and records commands for the secondary command buffer.
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error if the frame could not be drawn.
-    pub fn draw_frame<F>(
+    pub fn draw_frame<'a, F>(
         &mut self,
-        mut record_secondary: F,
+        record_secondary: F,
     ) -> Result<(), Box<dyn Error>>
     where F: FnMut(&VulkanBase, vk::CommandBuffer),
     {
@@ -397,7 +461,7 @@ impl VulkanBase {
             self.device.reset_fences(&[self.in_flight_fences[frame]])?;
 
             let idx = image_index as usize;
-            self.record_secondary_command_buffer(idx, &mut record_secondary)?;
+            self.record_secondary_command_buffer(idx, record_secondary)?;
             // Re-record the primary command buffer right before submission to ensure it's valid.
             self.record_primary_command_buffer(idx)?;
 
@@ -479,7 +543,7 @@ impl VulkanBase {
             &self.device,
             self.secondary_command_pool,
             vk::CommandBufferLevel::SECONDARY,
-            self.swapchain.swapchain_image_views.len(),
+            self.swapchain.swapchain_image_views.len()
         )?;
         // Pre-record each secondary command buffer (no-op) so they're executable
         for idx in 0..self.secondary_command_buffers.len() {

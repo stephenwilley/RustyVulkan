@@ -56,6 +56,13 @@ pub struct GltfPrim {
 
 /// Loads a glTF file, imports its geometry and materials into your managers,
 /// and returns a list of primitives you can add to your scene.
+/// # Arguments
+/// * `path` - The path to the glTF file.
+/// * `vb` - The VulkanBase struct.
+/// * `meshes` - The MeshManager to use for creating meshes.
+/// * `mats` - The MaterialManager to use for creating materials.
+/// # Returns
+/// * `Result<Vec<GltfPrim>, Box<dyn Error>>` - Returns a list of primitives on success, or an error on failure.
 pub fn import_gltf(
     path: &str,
     vb:   &VulkanBase,

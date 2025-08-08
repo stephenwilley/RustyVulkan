@@ -1,4 +1,11 @@
-// assets/shaders/imgui.vert
+// --------------------------------------------------------------------------------------
+// imgui.vert – Vertex Shader
+//
+// This shader is used by Dear ImGui to transform vertex positions and UVs,
+// and pass them along with vertex colors to the fragment shader.
+//
+// Shader stage: Vertex
+// GLSL version: 450
 #version 450
 layout(location = 0) in vec2 Position;
 layout(location = 1) in vec2 UV;

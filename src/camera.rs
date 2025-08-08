@@ -30,10 +30,11 @@ impl Camera {
     }
 
     /// Set up a perspective projection.
-    /// - `fov_deg`: vertical field of view in degrees  
-    /// - `aspect` : width/height ratio  
-    /// - `near`   : near clipping plane  
-    /// - `far`    : far clipping plane
+    /// # Arguments
+    /// * `fov_deg` - vertical field of view in degrees  
+    /// * `aspect` - width/height ratio  
+    /// * `near` - near clipping plane  
+    /// * `far` - far clipping plane
     pub fn set_perspective_projection(
         &mut self,
         fov_deg: f32,
@@ -49,6 +50,11 @@ impl Camera {
 
     /// Define the camera’s position & orientation using yaw & pitch (degrees).
     /// We ignore roll for now and build the view via `look_at_rh`.
+    /// # Arguments
+    /// * `position` - The position of the camera.
+    /// * `yaw_deg` - The yaw of the camera in degrees.
+    /// * `pitch_deg` - The pitch of the camera in degrees.
+    /// * `roll_deg` - The roll of the camera in degrees.
     pub fn set_view_yxz(
         &mut self,
         position: Point3<f32>,
@@ -79,6 +85,9 @@ impl Camera {
 
     /// Rotate the camera by the given yaw and pitch angles (in degrees).
     /// The camera's position will not be changed.
+    /// # Arguments
+    /// * `delta_yaw` - The change in yaw in degrees.
+    /// * `delta_pitch` - The change in pitch in degrees.
     pub fn rotate(&mut self, delta_yaw: f32, delta_pitch: f32) {
         self.yaw   += delta_yaw;
         self.pitch  = (self.pitch + delta_pitch).clamp(-89.0, 89.0);
@@ -87,8 +96,9 @@ impl Camera {
     }
 
     /// Move the camera along its local forward and right axes.
-    /// `forward` >0 moves you “into” the scene, `<0` moves you back.
-    /// `right`   >0 strafes you right,  `<0` strafes you left.
+    /// # Arguments
+    /// * `forward_amt` - The amount to move forward. `forward_amt` > 0 moves you “into” the scene, `<0` moves you back.
+    /// * `right_amt` - The amount to move right. `right_amt` > 0 strafes you right,  `<0` strafes you left.
     pub fn translate(&mut self, forward_amt: f32, right_amt: f32) {
         let yaw_rad: Rad<f32> = Deg(self.yaw).into();
         let pitch_rad: Rad<f32> = Deg(self.pitch).into();

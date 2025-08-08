@@ -1,9 +1,9 @@
 //! --------------------------------------------------------------------------------------
 //! ImGui Renderer Module (imgui_renderer.rs)
-//_!
+//!
 //! Created: July 2025
 //! Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
-//_!
+//!
 //! This module defines `ImGuiRenderer`, which encapsulates the Vulkan setup and rendering
 //! logic for Dear ImGui. It handles:
 //!   • Uploading the font atlas and creating associated Vulkan resources (image, view, sampler)
@@ -11,12 +11,12 @@
 //!   • Building the ImGui-specific graphics pipeline and pipeline layout
 //!   • Recording draw commands for ImGui draw data into command buffers
 //!   • Cleaning up all ImGui-related Vulkan resources on teardown
-//_!
+//!
 //! Usage:
 //!   1. `ImGuiRenderer::new(base: &mut VulkanBase, atlas: &FontAtlasTexture) -> Self`  
 //!   2. `renderer.render(base: &VulkanBase, cmd_buf: vk::CommandBuffer, draw_data: &imgui::DrawData)`  
 //!   3. `renderer.cleanup(base: &mut VulkanBase)`
-//! 
+//!
 //! --------------------------------------------------------------------------------------
 
 use ash::vk;
@@ -31,6 +31,7 @@ use imgui::DrawData;
 use bytemuck;
 use imgui::DrawIdx;
 
+/// Renders ImGui UI elements using Vulkan.
 pub struct ImGuiRenderer {
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool:       vk::DescriptorPool,
@@ -56,13 +57,12 @@ pub struct ImGuiRenderer {
 impl ImGuiRenderer {
     // ----------------------------------------------------------
     // 1 - Font Atlas Upload
-    /// create_staging buffer
-    /// fill_staging_buffer
-    /// create_font_image
-    /// copy_buffer_to_image
-    /// create_image_view
-    /// create_sampler
-    // ----------------------------------------------------------
+    /// Creates a staging buffer for font atlas data.
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// * `atlas` - The ImGui font atlas texture.
+    /// # Returns
+    /// * `(vk::Buffer, vk::DeviceMemory)` - The staging buffer and its memory.
     fn create_staging_buffer(base: &VulkanBase, atlas: &FontAtlasTexture)
         -> (vk::Buffer, vk::DeviceMemory)
     {
@@ -93,7 +93,11 @@ impl ImGuiRenderer {
         (staging_buffer, staging_buffer_memory)
     }
 
-    /// Maps that memory and memcpy’s the atlas into it.
+    /// Maps the staging buffer memory and copies the font atlas data into it.
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// * `staging_mem` - The staging buffer memory.
+    /// * `atlas` - The ImGui font atlas texture.
     fn fill_staging_buffer(base: &VulkanBase, staging_mem: vk::DeviceMemory, atlas: &FontAtlasTexture) {
         let device = &base.device;
         let size = (atlas.width * atlas.height * 4) as vk::DeviceSize;
@@ -106,7 +110,13 @@ impl ImGuiRenderer {
         }
     }
 
-    /// Creates an OPTIMAL‐tiling vk::Image + device‐local memory for the atlas.
+    /// Creates an optimal-tiling Vulkan image and device-local memory for the font atlas.
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// * `width` - The width of the font atlas.
+    /// * `height` - The height of the font atlas.
+    /// # Returns
+    /// * `(vk::Image, vk::DeviceMemory)` - The font image and its memory.
     fn create_font_image(base: &VulkanBase, width: u32, height: u32)
         -> (vk::Image, vk::DeviceMemory)
     {
@@ -142,10 +152,13 @@ impl ImGuiRenderer {
         (font_image, font_image_memory)
     }
 
-    /// Records and submits a one-time cmd buffer that:
-    /// 1) TRANSITIONS UNDEFINED → TRANSFER_DST_OPTIMAL  
-    /// 2) COPIES the staging buffer into the VkImage  
-    /// 3) TRANSITIONS → SHADER_READ_ONLY_OPTIMAL  
+    /// Records and submits a one-time command buffer to transition image layouts and copy data from a staging buffer to the image.
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// * `staging_buffer` - The staging buffer containing the image data.
+    /// * `image` - The destination image.
+    /// * `width` - The width of the image.
+    /// * `height` - The height of the image.
     fn copy_buffer_to_image(base: &VulkanBase,
                             staging_buffer: vk::Buffer,
                             image: vk::Image,
@@ -270,7 +283,12 @@ impl ImGuiRenderer {
         }
     }
 
-    /// Make a 2D ImageView for the font atlas.
+    /// Creates a 2D ImageView for the font atlas.
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// * `image` - The image to create the view for.
+    /// # Returns
+    /// * `vk::ImageView` - The created image view.
     fn create_image_view(base: &VulkanBase, image: vk::Image) -> vk::ImageView {
         let device = &base.device;
         let view_info = vk::ImageViewCreateInfo {
@@ -289,7 +307,11 @@ impl ImGuiRenderer {
         unsafe { device.create_image_view(&view_info, None).unwrap() }
     }
 
-    /// Create the linear, clamp‐to‐edge sampler.
+    /// Creates a linear, clamp-to-edge sampler.
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// # Returns
+    /// * `vk::Sampler` - The created sampler.
     fn create_sampler(base: &VulkanBase) -> vk::Sampler {
         let device = &base.device;
         let sampler_info = vk::SamplerCreateInfo {
@@ -320,6 +342,10 @@ impl ImGuiRenderer {
     // Aggregated in `init_imgui_descriptor_resources`
     // ----------------------------------------------------------
     /// Helper: create descriptor set layout for ImGui font atlas
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// # Returns
+    /// * `vk::DescriptorSetLayout` - The created descriptor set layout.
     fn create_imgui_descriptor_set_layout(base: &VulkanBase) -> vk::DescriptorSetLayout {
         let bindings = [vk::DescriptorSetLayoutBinding {
             binding: 0,
@@ -338,6 +364,10 @@ impl ImGuiRenderer {
     }
 
     /// Helper: create descriptor pool for one combined image sampler
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// # Returns
+    /// * `vk::DescriptorPool` - The created descriptor pool.
     fn create_imgui_descriptor_pool(base: &VulkanBase) -> vk::DescriptorPool {
         let pool_sizes = [vk::DescriptorPoolSize {
             ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -353,6 +383,10 @@ impl ImGuiRenderer {
     }
 
     /// Helper: allocate a descriptor set for ImGui
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// # Returns
+    /// * `vk::DescriptorSet` - The allocated descriptor set.
     fn allocate_imgui_descriptor_set(&self, base: &VulkanBase) -> vk::DescriptorSet {
         let layouts = [self.descriptor_set_layout];
         let alloc_info = vk::DescriptorSetAllocateInfo {
@@ -365,6 +399,8 @@ impl ImGuiRenderer {
     }
     
     /// Updates the previously-allocated descriptor set so binding 0 points at our atlas view+sampler.
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
     fn write_descriptor_set(&self, base: &VulkanBase) {
         let device = &base.device;
         let image_info = vk::DescriptorImageInfo {
@@ -387,6 +423,8 @@ impl ImGuiRenderer {
     }
 
     /// Initialize ImGui descriptor resources
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
     fn init_imgui_descriptor_resources(&mut self, base: &VulkanBase) {
         // Layout
         self.descriptor_set_layout = Self::create_imgui_descriptor_set_layout(base);
@@ -406,6 +444,10 @@ impl ImGuiRenderer {
     // update_buffers
     // ----------------------------------------------------------
     /// Load the ImGui shaders
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// # Returns
+    /// * `(ShaderStageInfo, ShaderStageInfo)` - A tuple containing the vertex and fragment shader stage info.
     fn load_shaders(&mut self, base: &mut VulkanBase) -> (ShaderStageInfo, ShaderStageInfo) {
         let entry_name = c"main";
         // Load vertex shader
@@ -429,6 +471,13 @@ impl ImGuiRenderer {
     }
 
     /// Creates the ImGui graphics pipeline with blending and the UI vertex layout.
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// * `extent` - The extent of the swapchain.
+    /// * `render_pass` - The render pass to use.
+    /// * `shader_stages` - The shader stage create infos.
+    /// # Returns
+    /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
     fn create_pipeline(
         &mut self,
         base: &VulkanBase,
@@ -593,7 +642,13 @@ impl ImGuiRenderer {
         Ok(())
     }
 
-    // Helper to choose memory type
+    /// Helper to choose memory type
+    /// # Arguments
+    /// * `type_filter` - The memory type filter.
+    /// * `properties` - The memory properties.
+    /// * `mem_props` - The physical device memory properties.
+    /// # Returns
+    /// * `u32` - The index of the suitable memory type.
     fn find_memory_type(
         type_filter: u32,
         properties: vk::MemoryPropertyFlags,
@@ -610,7 +665,12 @@ impl ImGuiRenderer {
     }
 
     /// Creates a Vulkan buffer and allocates its memory.
-    /// Returns (buffer, buffer_memory).
+    /// # Arguments
+    /// * `size` - The size of the buffer.
+    /// * `usage` - The usage flags for the buffer.
+    /// * `properties` - The memory properties for the buffer.
+    /// # Returns
+    /// * `(vk::Buffer, vk::DeviceMemory)` - A tuple containing the created buffer and its memory.
     fn create_buffer(&self,
         size: vk::DeviceSize,
         usage: vk::BufferUsageFlags,
@@ -646,6 +706,8 @@ impl ImGuiRenderer {
     }
 
      /// Ensures the vertex and index buffers are large enough and uploads ImGui draw data into them.
+    /// # Arguments
+    /// * `draw_data` - The ImGui draw data.
     pub fn update_buffers(&mut self, draw_data: &DrawData) {
         let device = &self.device;
         // Total vertex and index data sizes
@@ -720,6 +782,11 @@ impl ImGuiRenderer {
         }
     }
 
+    /// Rebuilds the ImGui rendering pipeline.
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// # Returns
+    /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
     pub fn rebuild_pipeline(&mut self, base: &mut VulkanBase) -> Result<(), Box<dyn Error>> {
         unsafe {
             base.device.device_wait_idle().expect("Failed to wait device idle");

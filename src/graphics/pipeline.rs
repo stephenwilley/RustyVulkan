@@ -42,6 +42,8 @@ impl Pipeline {
     /// Creates a new `Pipeline` instance, initializing the pipeline layout and shader modules.
     /// # Arguments
     /// * `device` - The Vulkan logical device to use for creating the pipeline.
+    /// * `set_layouts` - The descriptor set layouts to use for the pipeline.
+    /// * `depth_write` - Whether depth writing is enabled for this pipeline.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `Pipeline` on success, or an error on failure.
     /// # Errors
@@ -85,6 +87,14 @@ impl Pipeline {
     }
 
     /// Loads shaders, ties them to the given render_pass/extent, and creates the pipeline.
+    /// # Arguments
+    /// * `device` - The Vulkan logical device.
+    /// * `extent` - The extent of the swapchain.
+    /// * `render_pass` - The render pass to use.
+    /// * `shader_infos` - The shader stage information.
+    /// * `wireframe` - Whether to enable wireframe mode.
+    /// # Returns
+    /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
     pub fn create_graphics_pipeline(
         &mut self,
         device: &ash::Device,
@@ -215,6 +225,14 @@ impl Pipeline {
     }
 
     /// Recreate the pipeline
+    /// # Arguments
+    /// * `device` - The Vulkan logical device.
+    /// * `extent` - The extent of the swapchain.
+    /// * `render_pass` - The render pass to use.
+    /// * `shader_infos` - The shader stage information.
+    /// * `wireframe` - Whether to enable wireframe mode.
+    /// # Returns
+    /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
     pub fn recreate(
         &mut self,
         device: &ash::Device,

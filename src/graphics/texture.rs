@@ -23,6 +23,15 @@ pub struct Texture {
 impl Texture {
     /// Creates a new `Texture` by loading image data from the given path,
     /// uploading via a staging buffer, and setting up the image, view, and sampler.
+    /// # Arguments
+    /// * `instance` - The Vulkan instance.
+    /// * `device` - The Vulkan device.
+    /// * `physical_device` - The physical device.
+    /// * `command_pool` - The command pool to use for creating the texture.
+    /// * `queue` - The queue to use for submitting the texture creation commands.
+    /// * `image_path` - The path to the image file.
+    /// # Returns
+    /// * `Result<Self, Box<dyn std::error::Error>>` - Returns the initialized `Texture` on success, or an error on failure.
     pub fn new(
         instance: &ash::Instance,
         device: &ash::Device,
@@ -242,7 +251,6 @@ impl Texture {
             compare_enable: vk::FALSE,
             compare_op: vk::CompareOp::ALWAYS,
             mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-            mip_lod_bias: 0.0,
             min_lod: 0.0,
             max_lod: 0.0,
             ..Default::default()
@@ -258,6 +266,8 @@ impl Texture {
     }
 
     /// Cleans up Vulkan resources associated with this texture.
+    /// # Arguments
+    /// * `device` - The Vulkan device to use for cleanup.
     pub fn cleanup(&self, device: &ash::Device) {
         unsafe {
             device.destroy_sampler(self.sampler, None);

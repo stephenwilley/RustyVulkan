@@ -1,3 +1,11 @@
+// --------------------------------------------------------------------------------------
+// infinite_plane.vert – Vertex Shader
+//
+// This shader calculates the world position and camera position for rendering
+// an infinite grid plane.
+//
+// Shader stage: Vertex
+// GLSL version: 450
 #version 450
 
 layout(push_constant) uniform Push { mat4 mvp; mat4 mv; vec3 lightPos; float lightIntensity; } pc;

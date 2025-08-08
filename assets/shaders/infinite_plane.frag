@@ -1,3 +1,11 @@
+// --------------------------------------------------------------------------------------
+// infinite_plane.frag – Fragment Shader
+//
+// This shader renders an infinite grid plane with major axes (X and Z) highlighted.
+// It includes distance-based fading for the grid lines.
+//
+// Shader stage: Fragment
+// GLSL version: 450
 #version 450
 
 layout(location = 0) in vec3 fragPos3D;

@@ -61,6 +61,8 @@ impl ShaderModule {
     }
 
     /// Clean up the shader module by destroying it
+    /// # Arguments
+    /// * `self` - The shader module to clean up.
     pub fn cleanup(&self) {
         unsafe { self.device.destroy_shader_module(self.vk_shader_module, None) };
     }

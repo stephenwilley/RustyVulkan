@@ -48,7 +48,6 @@ impl Swapchain {
     /// * `physical_device` - The physical device to query capabilities and formats.
     /// * `surface` - The Vulkan surface to associate with the swapchain.
     /// * `surface_loader` - The surface loader to manage the surface.
-    /// * `pipeline` - The `Pipeline` containing shader modules and layout for the graphics pipeline.
     /// * `window` - The winit `Window` to determine swapchain extent.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `Swapchain` on success, or an error on failure.
@@ -127,7 +126,6 @@ impl Swapchain {
     /// * `physical_device` - The physical device to query capabilities and formats
     /// * `surface` - The Vulkan surface to associate with the swapchain
     /// * `surface_loader` - The surface loader to manage the surface
-    /// * `pipeline` - The `Pipeline` containing shader modules and layout for the graphics
     /// * `window` - The winit `Window` to determine swapchain extent
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or
@@ -182,6 +180,11 @@ impl Swapchain {
         }
     }
 
+    /// Chooses the best swap surface format from the available formats.
+    /// # Arguments
+    /// * `available_formats` - A slice of available surface formats.
+    /// # Returns
+    /// * `vk::SurfaceFormatKHR` - The chosen surface format.
     fn choose_swap_surface_format(
         available_formats: &[vk::SurfaceFormatKHR]
     ) -> vk::SurfaceFormatKHR {
@@ -193,6 +196,12 @@ impl Swapchain {
             .unwrap_or_else(|| available_formats[0])
     }
 
+    /// Chooses the best swap present mode from the available present modes.
+    /// Prioritizes `MAILBOX` for low-latency, falls back to `FIFO` (V-Sync).
+    /// # Arguments
+    /// * `available_present_modes` - A slice of available present modes.
+    /// # Returns
+    /// * `vk::PresentModeKHR` - The chosen present mode.
     fn choose_swap_present_mode(
         available_present_modes: &[vk::PresentModeKHR]
     ) -> vk::PresentModeKHR {
@@ -203,6 +212,13 @@ impl Swapchain {
         }
     }
 
+    /// Chooses the swap extent (resolution) for the swapchain.
+    /// Uses the current extent if available, otherwise clamps to window size.
+    /// # Arguments
+    /// * `capabilities` - The surface capabilities.
+    /// * `window` - The winit `Window`.
+    /// # Returns
+    /// * `vk::Extent2D` - The chosen swap extent.
     fn choose_swap_extent(
         capabilities: &vk::SurfaceCapabilitiesKHR,
         window: &Window
@@ -224,6 +240,13 @@ impl Swapchain {
         }
     }
 
+    /// Creates depth images for the swapchain.
+    /// # Arguments
+    /// * `device` - The Vulkan logical device.
+    /// * `swapchain_images` - The swapchain images.
+    /// * `extent` - The extent of the swapchain.
+    /// # Returns
+    /// * `Result<Vec<vk::Image>, vk::Result>` - A vector of created depth images on success, or a Vulkan error on failure.
     fn create_depth_images(
         device: &ash::Device,
         swapchain_images: &[vk::Image],
@@ -256,6 +279,14 @@ impl Swapchain {
         Ok(depth_images)
     }
 
+    /// Creates device memory for depth images.
+    /// # Arguments
+    /// * `device` - The Vulkan logical device.
+    /// * `instance` - The Vulkan instance.
+    /// * `physical_device` - The physical device.
+    /// * `depth_images` - The depth images to allocate memory for.
+    /// # Returns
+    /// * `Result<Vec<vk::DeviceMemory>, vk::Result>` - A vector of allocated device memories on success, or a Vulkan error on failure.
     fn create_depth_memories(
         device: &ash::Device,
         instance: &Instance,
@@ -291,6 +322,12 @@ impl Swapchain {
         Ok(depth_memories)
     }
 
+    /// Creates image views for depth images.
+    /// # Arguments
+    /// * `device` - The Vulkan logical device.
+    /// * `depth_images` - The depth images to create views for.
+    /// # Returns
+    /// * `Result<Vec<vk::ImageView>, vk::Result>` - A vector of created depth image views on success, or a Vulkan error on failure.
     fn create_depth_image_views(
         device: &ash::Device,
         depth_images: &[vk::Image],
@@ -317,6 +354,13 @@ impl Swapchain {
         Ok(depth_image_views)
     }
 
+    /// Creates image views for swapchain images.
+    /// # Arguments
+    /// * `device` - The Vulkan logical device.
+    /// * `swapchain_images` - The swapchain images to create views for.
+    /// * `swapchain_format` - The format of the swapchain images.
+    /// # Returns
+    /// * `Result<Vec<vk::ImageView>, vk::Result>` - A vector of created image views on success, or a Vulkan error on failure.
     fn create_image_views(
         device: &ash::Device,
         swapchain_images: &[vk::Image],
@@ -342,6 +386,12 @@ impl Swapchain {
         }).collect()
     }
 
+    /// Creates a render pass.
+    /// # Arguments
+    /// * `device` - The Vulkan logical device.
+    /// * `swapchain_format` - The format of the swapchain images.
+    /// # Returns
+    /// * `Result<vk::RenderPass, vk::Result>` - The created render pass on success, or a Vulkan error on failure.
     fn create_render_pass(
         device: &ash::Device,
         swapchain_format: vk::Format,
@@ -413,6 +463,15 @@ impl Swapchain {
         Ok(render_pass)
     }
 
+    /// Creates framebuffers for the swapchain.
+    /// # Arguments
+    /// * `device` - The Vulkan logical device.
+    /// * `render_pass` - The render pass.
+    /// * `image_views` - The swapchain image views.
+    /// * `depth_image_views` - The depth image views.
+    /// * `extent` - The extent of the swapchain.
+    /// # Returns
+    /// * `Result<Vec<vk::Framebuffer>, vk::Result>` - A vector of created framebuffers on success, or a Vulkan error on failure.
     fn create_framebuffers(
         device: &ash::Device,
         render_pass: vk::RenderPass,

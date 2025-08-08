@@ -1,10 +1,9 @@
 // --------------------------------------------------------------------------------------
-// passthrough.vert – Vertex Shader
+// point_light.vert – Vertex Shader
 //
-// This shader takes in vertex positions and colors, and outputs the position
-// and color for each vertex to be used in the fragment shader.
-// It is designed to work with a simple mesh, where each vertex has
-// a position in 3D space and a color in RGB format.
+// This shader transforms vertex attributes (position, normal, tangent, bitangent)
+// into view space and tangent space, and calculates the halfway direction for
+// Blinn-Phong shading in the fragment shader. It also handles UV coordinate flipping.
 //
 // Shader stage: Vertex  
 // GLSL version: 450

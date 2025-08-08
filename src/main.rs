@@ -63,7 +63,7 @@ struct App {
 }
 
 impl App {
-    /// Simple constructuro so that I can get rid of the Default trait
+    /// Simple constructor to initialize the App struct.
     pub fn new() -> Self {
         App {
             window: None,
@@ -100,6 +100,16 @@ impl App {
     }
 
     /// Prepares a new ImGui frame, builds UI, and returns a reference to DrawData.
+    /// # Arguments
+    /// * `ms_per_frame` - Milliseconds per frame for display.
+    /// * `platform` - The WinitPlatform for ImGui.
+    /// * `imgui` - The ImGui context.
+    /// * `window` - The winit Window.
+    /// * `show_ms_per_frame` - Whether to display milliseconds per frame.
+    /// * `light_pos` - The light position vector.
+    /// * `light_intensity` - The light intensity vector.
+    /// # Returns
+    /// * `&'a imgui::DrawData` - The ImGui draw data.
     fn prepare_imgui_draw_data<'a>(
         ms_per_frame: f32,
         platform: &'a mut WinitPlatform,
@@ -151,6 +161,8 @@ impl App {
     /// # Arguments
     /// * `camera` - The camera used for the scene, providing view and projection matrices.
     /// * `model_matrix` - The model matrix of the object being drawn.
+    /// * `light_pos` - The position of the light.
+    /// * `light_intensity` - The intensity of the light.
     /// # Returns
     /// * `Vec<u8>` - The serialized push constant data containing the MVP matrix and light direction.
     fn compute_push_constant_per_obj(camera: &Camera, model_matrix: &Matrix4<f32>, light_pos: Vector3<f32>, light_intensity: Vector1<f32>) -> Vec<u8> {
@@ -345,6 +357,10 @@ impl ApplicationHandler for App {
     }
 
     /// Called for *all* raw device events (mouse, keyboard, etc).
+    /// # Arguments
+    /// * `_event_loop` - The active event loop.
+    /// * `_device_id` - The ID of the device that sent the event.
+    /// * `event` - The device event.
     fn device_event(
         &mut self,
         _event_loop: &ActiveEventLoop,

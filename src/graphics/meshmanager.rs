@@ -16,18 +16,25 @@ use crate::graphics::mesh::LoadedMesh;
 use crate::graphics::mesh::Mesh;
 use std::error::Error;
 
+/// Manages meshes, ensuring that each mesh is only created once.
 pub struct MeshManager {
     pub meshes: Vec<LoadedMesh>,
 }
 
 impl MeshManager {
+    /// Creates a new `MeshManager`.
     pub fn new() -> MeshManager {
         MeshManager {
             meshes: Vec::new(),
         }
     }
 
-    // Cube
+    /// Requests a cube mesh. If the mesh already exists, it returns the index of the existing mesh.
+    /// Otherwise, it creates a new cube mesh and returns its index.
+    /// # Arguments
+    /// * `vb` - The VulkanBase struct.
+    /// # Returns
+    /// * `Result<usize, Box<dyn Error>>` - The index of the cube mesh on success, or an error on failure.
     pub fn request_cube(
         &mut self,
         vb: &VulkanBase
@@ -47,7 +54,12 @@ impl MeshManager {
         }
     }
 
-    // Unit Plane
+    /// Requests a unit plane mesh. If the mesh already exists, it returns the index of the existing mesh.
+    /// Otherwise, it creates a new unit plane mesh and returns its index.
+    /// # Arguments
+    /// * `vb` - The VulkanBase struct.
+    /// # Returns
+    /// * `Result<usize, Box<dyn Error>>` - The index of the unit plane mesh on success, or an error on failure.
     pub fn request_unit_plane(
         &mut self,
         vb: &VulkanBase
@@ -68,6 +80,12 @@ impl MeshManager {
     }
 
     /// Uploads a CPU-side mesh directly into a LoadedMesh and returns its ID.
+    /// # Arguments
+    /// * `name` - The name of the mesh.
+    /// * `vb` - The VulkanBase struct.
+    /// * `mesh` - The CPU-side mesh data.
+    /// # Returns
+    /// * `Result<usize, Box<dyn Error>>` - The index of the loaded mesh on success, or an error on failure.
     pub fn request_mesh_from_cpu(
         &mut self,
         name: String,
@@ -90,6 +108,9 @@ impl MeshManager {
         Ok(self.meshes.len() - 1)
     }
 
+    /// Cleans up all meshes.
+    /// # Arguments
+    /// * `device` - The Vulkan device.
     pub fn cleanup(&mut self, device: &Device) {
         for mesh in &mut self.meshes {
             println!("🗑️ Cleaning up mesh {}", mesh.name);

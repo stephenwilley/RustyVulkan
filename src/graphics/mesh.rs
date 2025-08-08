@@ -89,6 +89,13 @@ pub struct VertexBuffer {
 impl VertexBuffer {
     /// Create a new vertex buffer, upload `data` (slice of Vertex)
     /// using HOST_VISIBLE | HOST_COHERENT memory properties.
+    /// # Arguments
+    /// * `instance` - The Vulkan instance.
+    /// * `device` - The Vulkan device.
+    /// * `physical_device` - The physical device.
+    /// * `data` - The vertex data to upload.
+    /// # Returns
+    /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `VertexBuffer` on success, or an error on failure.
     pub fn new(
         instance: &Instance,
         device: &Device,
@@ -137,6 +144,8 @@ impl VertexBuffer {
     }
 
     /// Frees the Vulkan buffer and its backing memory.
+    /// # Arguments
+    /// * `device` - The Vulkan device to use for cleanup.
     pub fn cleanup(&self, device: &Device) {
         unsafe {
             device.destroy_buffer(self.buffer, None);
@@ -155,11 +164,12 @@ pub struct IndexBuffer {
 impl IndexBuffer {
     /// Create a new index buffer, uploading `indices` (slice of u32).
     /// # Arguments
+    /// * `instance` - The Vulkan instance.
     /// * `device` - The Vulkan device to use for creating the buffer.
     /// * `physical_device` - The physical device to query memory properties from.
-    /// * `indices` - The indices to upload to the buffer.
+    /// * `data` - The index data to upload.
     /// # Returns
-    /// * `Result<Self, vk::Result>` - Returns the initialized `IndexBuffer`
+    /// * `Result<Self, vk::Result>` - Returns the initialized `IndexBuffer` on success, or an error on failure.
     pub fn new(
         instance: &Instance,
         device: &ash::Device,
@@ -207,6 +217,9 @@ impl IndexBuffer {
         Ok(IndexBuffer { buffer, memory, count: data.len() as u32 })
     }
 
+    /// Frees the Vulkan buffer and its backing memory.
+    /// # Arguments
+    /// * `device` - The Vulkan device to use for cleanup.
     pub fn cleanup(&self, device: &ash::Device) {
         unsafe {
             device.destroy_buffer(self.buffer, None);
@@ -248,12 +261,14 @@ pub fn find_memory_type(
     panic!("Failed to find suitable memory type!");
 }
 
+/// A CPU-side representation of a mesh, containing vertices and indices.
 pub struct Mesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
 }
 
 impl Mesh {
+    /// Creates a new empty `Mesh`.
     pub fn new() -> Self {
         Self {
             vertices: Vec::new(),
@@ -261,6 +276,7 @@ impl Mesh {
         }
     }
 
+    /// Creates a unit plane mesh.
     pub fn unit_plane() -> Self {
         Self {
             vertices: vec![
@@ -303,6 +319,7 @@ impl Mesh {
         }
     }
 
+    /// Creates a unit cube mesh.
     pub fn cube() -> Self {
         Self {
             vertices: vec![
@@ -526,6 +543,14 @@ pub struct LoadedMesh {
 
 impl LoadedMesh {
     /// Uploads the vertices and indices into a GPU buffer.
+    /// # Arguments
+    /// * `name` - The name of the mesh.
+    /// * `instance` - The Vulkan instance.
+    /// * `device` - The Vulkan device.
+    /// * `phys` - The physical device.
+    /// * `mesh` - The CPU-side mesh data.
+    /// # Returns
+    /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `LoadedMesh` on success, or an error on failure.
     pub fn load(
         name: String,
         instance: &ash::Instance,
@@ -554,6 +579,14 @@ impl LoadedMesh {
         Ok(LoadedMesh { name, v_buffer: vb, i_buffer: ib })
     }
 
+    /// Creates a unit plane mesh and uploads it to the GPU.
+    /// # Arguments
+    /// * `name` - The name of the mesh.
+    /// * `instance` - The Vulkan instance.
+    /// * `device` - The Vulkan device.
+    /// * `phys` - The physical device.
+    /// # Returns
+    /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `LoadedMesh` on success, or an error on failure.
     pub fn unit_plane(
         name: String,
         instance: &ash::Instance,
@@ -564,6 +597,14 @@ impl LoadedMesh {
         Self::load(name, instance, device, phys, &mesh)
     }
 
+    /// Creates a unit cube mesh and uploads it to the GPU.
+    /// # Arguments
+    /// * `name` - The name of the mesh.
+    /// * `instance` - The Vulkan instance.
+    /// * `device` - The Vulkan device.
+    /// * `phys` - The physical device.
+    /// # Returns
+    /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `LoadedMesh` on success, or an error on failure.
     pub fn cube(
         name: String,
         instance: &ash::Instance,
@@ -575,6 +616,9 @@ impl LoadedMesh {
     }
 
     /// Record only the indexed draw commands into the given secondary CB
+    /// # Arguments
+    /// * `device` - The Vulkan device.
+    /// * `cmd_buf` - The command buffer to record into.
     pub fn record(&self, device: &Device, cmd_buf: vk::CommandBuffer) {
         // Bind & draw
         unsafe {
@@ -585,6 +629,8 @@ impl LoadedMesh {
     }
 
     /// Frees the GPU buffer and its memory.
+    /// # Arguments
+    /// * `device` - The Vulkan device to use for cleanup.
     pub fn cleanup(&self, device: &Device) {
         self.v_buffer.cleanup(device);
         self.i_buffer.cleanup(device);

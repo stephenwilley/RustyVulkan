@@ -37,7 +37,7 @@ use crate::graphics::materialmanager::{MaterialManager, MaterialProperties};
 use crate::graphics::meshmanager::MeshManager;
 use crate::vulkan::base::GlobalUbo;
 use cgmath::{prelude::*};
-use cgmath::{Vector1,Vector3,Matrix4};
+use cgmath::{Vector3,Matrix4,Rad};
 
 /// Holds the window and Vulkan backend, orchestrating rendering and events.
 struct App {
@@ -133,11 +133,16 @@ impl App {
             .size([300.0, 180.0], Condition::FirstUseEver)
             .build(|| {
                 ui.text("Light Position");
-                ui.slider("X", -100.0, 100.0, &mut world_controls.light_pos[0]);
                 ui.slider("Y", -100.0, 100.0, &mut world_controls.light_pos[1]);
-                ui.slider("Z", -100.0, 100.0, &mut world_controls.light_pos[2]);
                 ui.text("Light Intensity");
-                ui.slider("LI", 0.0, 20.0, &mut world_controls.light_intensity[0]);
+                ui.slider("LI", 0.0, 10.0, &mut world_controls.light_intensity);
+                ui.text("Light Radius");
+                ui.slider("LR", 0.0, 50.0, &mut world_controls.light_radius);
+                ui.text(format!("Light Position: {:.1}, {:.1}, {:.1}",
+                    world_controls.light_pos[0],
+                    world_controls.light_pos[1],
+                    world_controls.light_pos[2]
+                ));
             });
         // Prepare the Vulkan render pass for ImGui
         platform.prepare_render(ui, window);
@@ -184,12 +189,22 @@ impl App {
 
     fn update_ubo(base: &VulkanBase,
         image_index: usize,
-        light_pos: Vector3<f32>,
-        light_intensity: Vector1<f32>) {
+        world_controls: &mut WorldControls,
+        camera: &Camera) {
         // 1) Build the CPU-side value
+        let angle = Rad(world_controls.light_rotation);
+        world_controls.light_pos.x = Rad::sin(angle) * world_controls.light_radius;
+        world_controls.light_pos.z = Rad::cos(angle) * world_controls.light_radius;
+
+        // convert to VIEW space
+        let v = camera.get_view();
+        let lp_world = world_controls.light_pos;
+        let lp_view4 = v * cgmath::Vector4::new(lp_world.x, lp_world.y, lp_world.z, 1.0);
+        let lp_view  = lp_view4.truncate();
+
         let ubo = GlobalUbo {
-            light_pos: [light_pos.x, light_pos.y, light_pos.z],
-            light_intensity: light_intensity[0],
+            light_pos: [lp_view.x, lp_view.y, lp_view.z],
+            light_intensity: world_controls.light_intensity,
         };
 
         // 2) Map the memory for this swapchain image
@@ -331,6 +346,11 @@ impl App {
             if self.input.moving_left     { self.camera.translate( 0.0, -s) }
             if self.input.moving_right    { self.camera.translate( 0.0,  s) }
 
+            self.world_controls.light_rotation += 0.01;
+            if self.world_controls.light_rotation >= 360.0 {
+                self.world_controls.light_rotation = 0.0;
+            }
+
             // Prepare ImGui UI and get draw data
             let window = self.window.as_ref().unwrap();
             let draw_data = App::prepare_imgui_draw_data(
@@ -351,8 +371,8 @@ impl App {
                 Self::update_ubo(
                     &vb,
                     image_index,
-                    self.world_controls.light_pos,
-                    self.world_controls.light_intensity
+                    &mut self.world_controls,
+                    &self.camera,
                 );
 
                 let mut current_pipeline_id = usize::MAX;
@@ -684,13 +704,17 @@ fn main() {
 #[derive(Clone, Copy)]
 pub struct WorldControls {
     pub light_pos: Vector3<f32>,
-    pub light_intensity: Vector1<f32>,
+    pub light_intensity: f32,
+    pub light_rotation: f32,
+    pub light_radius: f32,
 }
 impl Default for WorldControls {
     fn default() -> Self {
         Self {
-            light_pos: Vector3::new(0.5, 0.8, 1.0),
-            light_intensity: Vector1::new(1.0),
+            light_pos: Vector3::new(0.0, 0.5, 0.0),
+            light_intensity: 1.0,
+            light_rotation: 0.0,
+            light_radius: 5.0,
         }
     }
 }

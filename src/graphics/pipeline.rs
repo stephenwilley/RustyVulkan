@@ -84,11 +84,12 @@ impl Pipeline {
         })
     }
 
-    /// Loads shaders, ties them to the given render_pass/extent, and creates the pipeline.
+    /// Loads shaders, ties them to the given formats/extent, and creates the pipeline.
     /// # Arguments
     /// * `device` - The Vulkan logical device.
     /// * `extent` - The extent of the swapchain.
-    /// * `render_pass` - The render pass to use.
+    /// * `color_format` - The color attachment format.
+    /// * `depth_format` - The depth attachment format.
     /// * `shader_infos` - The shader stage information.
     /// * `wireframe` - Whether to enable wireframe mode.
     /// # Returns
@@ -97,7 +98,8 @@ impl Pipeline {
         &mut self,
         device: &ash::Device,
         extent: vk::Extent2D,
-        render_pass: vk::RenderPass,
+        color_format: vk::Format,
+        depth_format: vk::Format,
         shader_infos: &[&ShaderStageInfo],
         wireframe: bool,
     ) -> Result<(), Box<dyn Error>> {
@@ -195,7 +197,15 @@ impl Pipeline {
             ..Default::default()
         };
 
-        let pipeline_info = vk::GraphicsPipelineCreateInfo {
+        let color_formats = [color_format];
+        let rendering_info = vk::PipelineRenderingCreateInfo {
+            color_attachment_count: color_formats.len() as u32,
+            p_color_attachment_formats: color_formats.as_ptr(),
+            depth_attachment_format: depth_format,
+            ..Default::default()
+        };
+
+        let mut pipeline_info = vk::GraphicsPipelineCreateInfo {
             stage_count: shader_stage_create_infos.len() as u32,
             p_stages: shader_stage_create_infos.as_ptr(),
             p_vertex_input_state: &vertex_input_info,
@@ -206,10 +216,11 @@ impl Pipeline {
             p_color_blend_state: &color_blending,
             p_depth_stencil_state: &depth_stencil,
             layout: self.vk_layout,
-            render_pass,
+            render_pass: vk::RenderPass::null(),
             subpass: 0,
             ..Default::default()
         };
+        pipeline_info.p_next = &rendering_info as *const _ as *const std::ffi::c_void;
 
         let pipelines = unsafe {
             device
@@ -226,7 +237,8 @@ impl Pipeline {
     /// # Arguments
     /// * `device` - The Vulkan logical device.
     /// * `extent` - The extent of the swapchain.
-    /// * `render_pass` - The render pass to use.
+    /// * `color_format` - The color attachment format.
+    /// * `depth_format` - The depth attachment format.
     /// * `shader_infos` - The shader stage information.
     /// * `wireframe` - Whether to enable wireframe mode.
     /// # Returns
@@ -235,7 +247,8 @@ impl Pipeline {
         &mut self,
         device: &ash::Device,
         extent: vk::Extent2D,
-        render_pass: vk::RenderPass,
+        color_format: vk::Format,
+        depth_format: vk::Format,
         shader_infos: &[&ShaderStageInfo],
         wireframe: bool
     ) -> Result<(), Box<dyn Error>> {
@@ -246,7 +259,8 @@ impl Pipeline {
         self.create_graphics_pipeline(
             device,
             extent,
-            render_pass,
+            color_format,
+            depth_format,
             shader_infos,
             wireframe
         )?;

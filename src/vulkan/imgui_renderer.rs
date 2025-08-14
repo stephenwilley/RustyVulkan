@@ -474,7 +474,8 @@ impl ImGuiRenderer {
     /// # Arguments
     /// * `base` - The VulkanBase instance.
     /// * `extent` - The extent of the swapchain.
-    /// * `render_pass` - The render pass to use.
+    /// * `color_format` - The color attachment format.
+    /// * `depth_format` - The depth attachment format.
     /// * `shader_stages` - The shader stage create infos.
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
@@ -482,7 +483,8 @@ impl ImGuiRenderer {
         &mut self,
         base: &VulkanBase,
         extent: vk::Extent2D,
-        render_pass: vk::RenderPass,
+        color_format: vk::Format,
+        depth_format: vk::Format,
         shader_stages: &[vk::PipelineShaderStageCreateInfo],
     ) -> Result<(), Box<dyn Error>> {
         let device = &base.device;
@@ -619,7 +621,14 @@ impl ImGuiRenderer {
         };
 
         // Finally create the graphics pipeline
-        let pipeline_info = vk::GraphicsPipelineCreateInfo {
+        let color_formats = [color_format];
+        let rendering_info = vk::PipelineRenderingCreateInfo {
+            color_attachment_count: color_formats.len() as u32,
+            p_color_attachment_formats: color_formats.as_ptr(),
+            depth_attachment_format: depth_format,
+            ..Default::default()
+        };
+        let mut pipeline_info = vk::GraphicsPipelineCreateInfo {
             stage_count: shader_stages.len() as u32,
             p_stages: shader_stages.as_ptr(),
             p_vertex_input_state: &vertex_input_info,
@@ -631,10 +640,11 @@ impl ImGuiRenderer {
             p_color_blend_state: &color_blending,
             p_dynamic_state: &dynamic_state,
             layout: self.pipeline_layout,
-            render_pass,
+            render_pass: vk::RenderPass::null(),
             subpass: 0,
             ..Default::default()
         };
+        pipeline_info.p_next = &rendering_info as *const _ as *const std::ffi::c_void;
         self.vk_pipeline = unsafe {
             device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
                   .map_err(|e| e.1).unwrap()[0]
@@ -804,8 +814,9 @@ impl ImGuiRenderer {
         ];
 
         let extent = base.swapchain.extent;
-        let render_pass = base.swapchain.render_pass;
-        self.create_pipeline(base, extent, render_pass, &shader_stages)?;
+        let color = base.swapchain.color_format;
+        let depth = base.swapchain.depth_format;
+        self.create_pipeline(base, extent, color, depth, &shader_stages)?;
 
         // 5) Store stages for potential future reload
         self.vert_stage = Some(vert_stage);

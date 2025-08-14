@@ -39,7 +39,8 @@ impl Material {
         self.pipeline.recreate(
             &vb.device,
             vb.swapchain.extent,
-            vb.swapchain.render_pass,
+            vb.swapchain.color_format,
+            vb.swapchain.depth_format,
             &[ &self.shaders.vertex,
                &self.shaders.fragment ],
             vb.debug_settings.wireframe,
@@ -234,7 +235,8 @@ impl Material {
         material.pipeline.create_graphics_pipeline(
             &vb.device,
             vb.swapchain.extent,
-            vb.swapchain.render_pass,
+            vb.swapchain.color_format,
+            vb.swapchain.depth_format,
             &[ &material.shaders.vertex,
                &material.shaders.fragment ],
             vb.debug_settings.wireframe

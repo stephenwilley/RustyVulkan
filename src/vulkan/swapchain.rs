@@ -8,9 +8,9 @@
 //! operations and their dependent resources. It handles:
 //!   • Querying physical device swapchain support (formats, present modes, capabilities)  
 //!   • Choosing the best surface format, present mode, and swap extent for the window  
-//!   • Creating the Vulkan swapchain, image views, render pass, graphics pipeline, and framebuffers  
-//!   • Recreating all those resources cleanly when the window is resized  
-//!   • Performing explicit manual cleanup of swapchain, image views, framebuffers, render pass, and pipeline  
+//!   • Creating the Vulkan swapchain and image/depth views
+//!   • Recreating all those resources cleanly when the window is resized
+//!   • Performing explicit manual cleanup of swapchain and associated views
 //!
 //! Usage:
 //!   1. Call `Swapchain::new(…)` during initialization.  
@@ -26,22 +26,24 @@ use winit::window::Window;
 use std::error::Error;
 
 /// Represents the Vulkan swapchain and associated resources
-/// including image views, framebuffers, and render pass.
+/// including image views and depth images.
 /// It handles swapchain creation, recreation, and cleanup.
 pub struct Swapchain {
     pub handle: vk::SwapchainKHR,
+    pub images: Vec<vk::Image>,
     pub swapchain_image_views: Vec<vk::ImageView>,
     pub depth_image_views: Vec<vk::ImageView>,
-    pub framebuffers: Vec<vk::Framebuffer>,
-    pub render_pass: vk::RenderPass,
     pub extent: vk::Extent2D,
+    pub color_format: vk::Format,
+    pub depth_format: vk::Format,
     pub depth_images: Vec<vk::Image>,
     pub depth_memories: Vec<vk::DeviceMemory>,
+    pub image_layouts: Vec<vk::ImageLayout>,
+    pub depth_layouts: Vec<vk::ImageLayout>,
 }
 
 impl Swapchain {
-    /// Creates a new `Swapchain` instance, initializing the swapchain, image views, render pass,
-    /// graphics pipeline, and framebuffers.
+    /// Creates a new `Swapchain` instance, initializing the swapchain and image/depth views.
     /// # Arguments
     /// * `instance` - The Vulkan `Instance` to use for creating the swapchain.
     /// * `device` - The Vulkan logical device to use for creating resources.
@@ -94,26 +96,27 @@ impl Swapchain {
         let handle = unsafe { swapchain_loader.create_swapchain(&create_info, None)? };
 
         let swapchain_images = unsafe { swapchain_loader.get_swapchain_images(handle)? };
-        println!("🖼️ Swapchain created with {} images", swapchain_images.len());
+        let image_count = swapchain_images.len();
+        println!("🖼️ Swapchain created with {} images", image_count);
 
         let depth_images = Self::create_depth_images(device, &swapchain_images, extent)?;
         let depth_memories = Self::create_depth_memories(device, instance, physical_device, &depth_images)?;
         let depth_image_views = Self::create_depth_image_views(device, &depth_images)?;
 
         let swapchain_image_views = Self::create_image_views(device, &swapchain_images, surface_format.format)?;
-        let render_pass = Self::create_render_pass(device, surface_format.format)?;
-
-        let framebuffers = Self::create_framebuffers(device, render_pass, &swapchain_image_views, &depth_image_views, extent)?;
 
         Ok(Self {
             handle,
+            images: swapchain_images,
             swapchain_image_views,
             depth_image_views,
-            framebuffers,
-            render_pass,
             extent,
+            color_format: surface_format.format,
+            depth_format: vk::Format::D32_SFLOAT,
             depth_images,
             depth_memories,
+            image_layouts: vec![vk::ImageLayout::UNDEFINED; image_count],
+            depth_layouts: vec![vk::ImageLayout::UNDEFINED; image_count],
         })
     }
 
@@ -151,7 +154,7 @@ impl Swapchain {
     }
 
     /// Cleans up the swapchain and associated resources.
-    /// This method destroys the swapchain, image views, framebuffers, and render pass.
+    /// This method destroys the swapchain, image views, and depth resources.
     /// It should be called when the swapchain is no longer needed,
     /// such as when the application is shutting down or when the swapchain is being recreated.
     /// # Arguments
@@ -159,10 +162,6 @@ impl Swapchain {
     /// * `device` - The Vulkan logical device to use for destroying resources
     pub fn cleanup(&mut self, instance: &Instance, device: &ash::Device) {
         unsafe {
-            device.destroy_render_pass(self.render_pass, None);
-            for &framebuffer in &self.framebuffers {
-                device.destroy_framebuffer(framebuffer, None);
-            }
             for &view in &self.swapchain_image_views {
                 device.destroy_image_view(view, None);
             }
@@ -386,116 +385,9 @@ impl Swapchain {
         }).collect()
     }
 
-    /// Creates a render pass.
-    /// # Arguments
-    /// * `device` - The Vulkan logical device.
-    /// * `swapchain_format` - The format of the swapchain images.
-    /// # Returns
-    /// * `Result<vk::RenderPass, vk::Result>` - The created render pass on success, or a Vulkan error on failure.
-    fn create_render_pass(
-        device: &ash::Device,
-        swapchain_format: vk::Format,
-    ) -> Result<vk::RenderPass, vk::Result> {
-        let color_attachment = vk::AttachmentDescription {
-            format: swapchain_format,
-            samples: vk::SampleCountFlags::TYPE_1,
-            load_op: vk::AttachmentLoadOp::CLEAR,
-            store_op: vk::AttachmentStoreOp::STORE,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
-            ..Default::default()
-        };
+    // Render passes are no longer needed with dynamic rendering.
 
-        let color_attachment_ref = vk::AttachmentReference {
-            attachment: 0,
-            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        };
-
-        let depth_attachment = vk::AttachmentDescription {
-            format: vk::Format::D32_SFLOAT,
-            samples: vk::SampleCountFlags::TYPE_1,
-            load_op: vk::AttachmentLoadOp::CLEAR,
-            store_op: vk::AttachmentStoreOp::DONT_CARE,
-            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
-            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            ..Default::default()
-        };
-
-        let depth_attachment_ref = vk::AttachmentReference {
-            attachment: 1,
-            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        };
-
-        let attachments = [color_attachment, depth_attachment];
-
-        let subpass = vk::SubpassDescription {
-            pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
-            color_attachment_count: 1,
-            p_color_attachments: &color_attachment_ref,
-            p_depth_stencil_attachment: &depth_attachment_ref,
-            ..Default::default()
-        };
-
-        let dependency = vk::SubpassDependency {
-            src_subpass: vk::SUBPASS_EXTERNAL,
-            dst_subpass: 0,
-            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            src_access_mask: vk::AccessFlags::empty(),
-            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-            ..Default::default()
-        };
-
-        let render_pass_info = vk::RenderPassCreateInfo {
-            attachment_count: attachments.len() as u32,
-            p_attachments: attachments.as_ptr(),
-            subpass_count: 1,
-            p_subpasses: &subpass,
-            dependency_count: 1,
-            p_dependencies: &dependency,
-            ..Default::default()
-        };
-
-        let render_pass = unsafe { device.create_render_pass(&render_pass_info, None)? };
-        println!("🖌️ Render pass created");
-        Ok(render_pass)
-    }
-
-    /// Creates framebuffers for the swapchain.
-    /// # Arguments
-    /// * `device` - The Vulkan logical device.
-    /// * `render_pass` - The render pass.
-    /// * `image_views` - The swapchain image views.
-    /// * `depth_image_views` - The depth image views.
-    /// * `extent` - The extent of the swapchain.
-    /// # Returns
-    /// * `Result<Vec<vk::Framebuffer>, vk::Result>` - A vector of created framebuffers on success, or a Vulkan error on failure.
-    fn create_framebuffers(
-        device: &ash::Device,
-        render_pass: vk::RenderPass,
-        image_views: &[vk::ImageView],
-        depth_image_views: &[vk::ImageView],
-        extent: vk::Extent2D,
-    ) -> Result<Vec<vk::Framebuffer>, vk::Result> {
-        let framebuffers = image_views.iter().zip(depth_image_views.iter())
-            .map(|(&view, &depth_view)| {
-            let attachments = [view, depth_view];
-            let info = vk::FramebufferCreateInfo {
-                render_pass,
-                attachment_count: attachments.len() as u32,
-                p_attachments:    attachments.as_ptr(),
-                width:            extent.width,
-                height:           extent.height,
-                layers:           1,
-                ..Default::default()
-            };
-            unsafe { device.create_framebuffer(&info, None) }
-        }).collect::<Result<Vec<_>, _>>()?;
-        println!("📦 Framebuffers created for each swapchain image view");
-        Ok(framebuffers)
-    }
+    // Framebuffers are no longer needed with dynamic rendering.
 }
 
 /// Represents the details of swapchain support for a physical device.

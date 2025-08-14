@@ -106,7 +106,7 @@ pub struct VulkanBase {
     /// For each swapchain image, tracks which fence (frame slot) currently owns it.
     image_owner_fence: Vec<vk::Fence>,
     // -- Swapchain objects --
-    /// Wrapper containing the swapchain, render pass, and framebuffers.
+    /// Wrapper containing the swapchain and related image resources.
     pub swapchain: Swapchain,
     swapchain_loader: swapchain::Device,
     surface: vk::SurfaceKHR,
@@ -178,28 +178,87 @@ impl VulkanBase {
             self.device.reset_fences(&[self.in_flight_fences[slot]])?;
             self.image_owner_fence[idx] = self.in_flight_fences[slot];
 
-            // Begin recording and open the render pass so the caller can just bind/draw.
+            // Begin recording and open dynamic rendering so the caller can just bind/draw.
             let cmd_buf    = self.command_buffers[idx];
-            let framebuffer = self.swapchain.framebuffers[idx];
-            let render_pass = self.swapchain.render_pass;
             let extent      = self.swapchain.extent;
 
             let begin_info = vk::CommandBufferBeginInfo::default();
-            let clear_values = [
-                vk::ClearValue { color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] } },
-                vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
-            ];
-            let render_pass_info = vk::RenderPassBeginInfo {
-                render_pass,
-                framebuffer,
-                render_area: vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent },
-                clear_value_count: clear_values.len() as u32,
-                p_clear_values: clear_values.as_ptr(),
+            self.device.begin_command_buffer(cmd_buf, &begin_info)?;
+
+            // Transition swapchain image to COLOR_ATTACHMENT_OPTIMAL and depth to DEPTH_ATTACHMENT_OPTIMAL
+            let color_barrier = vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::empty(),
+                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                old_layout: self.swapchain.image_layouts[idx],
+                new_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                image: self.swapchain.images[idx],
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
                 ..Default::default()
             };
+            let depth_barrier = vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::empty(),
+                dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                old_layout: self.swapchain.depth_layouts[idx],
+                new_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                image: self.swapchain.depth_images[idx],
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::DEPTH,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                ..Default::default()
+            };
+            self.device.cmd_pipeline_barrier(
+                cmd_buf,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[color_barrier, depth_barrier],
+            );
+            self.swapchain.image_layouts[idx] = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+            self.swapchain.depth_layouts[idx] = vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL;
 
-            self.device.begin_command_buffer(cmd_buf, &begin_info)?;
-            self.device.cmd_begin_render_pass(cmd_buf, &render_pass_info, vk::SubpassContents::INLINE);
+            let clear_color = vk::ClearValue { color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] } };
+            let clear_depth = vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } };
+            let color_attachment = vk::RenderingAttachmentInfo {
+                image_view: self.swapchain.swapchain_image_views[idx],
+                image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                store_op: vk::AttachmentStoreOp::STORE,
+                clear_value: clear_color,
+                ..Default::default()
+            };
+            let depth_attachment = vk::RenderingAttachmentInfo {
+                image_view: self.swapchain.depth_image_views[idx],
+                image_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                store_op: vk::AttachmentStoreOp::DONT_CARE,
+                clear_value: clear_depth,
+                ..Default::default()
+            };
+            let rendering_info = vk::RenderingInfo {
+                render_area: vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent },
+                layer_count: 1,
+                color_attachment_count: 1,
+                p_color_attachments: &color_attachment,
+                p_depth_attachment: &depth_attachment,
+                ..Default::default()
+            };
+            self.device.cmd_begin_rendering(cmd_buf, &rendering_info);
 
             Ok(Some(FrameCtx { cmd_buf, image_index, frame_slot: slot }))
         }
@@ -214,8 +273,39 @@ impl VulkanBase {
     /// 4. Advance to the next CPU frame-in-flight slot.
     pub fn end_frame(&mut self, frame: FrameCtx) -> Result<(), Box<dyn Error>> {
         unsafe {
-            // Close render pass and command buffer
-            self.device.cmd_end_render_pass(frame.cmd_buf);
+            // Close dynamic rendering and command buffer
+            self.device.cmd_end_rendering(frame.cmd_buf);
+
+            // Transition image back for presentation
+            let idx = frame.image_index as usize;
+            let present_barrier = vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                dst_access_mask: vk::AccessFlags::empty(),
+                old_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                new_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                image: self.swapchain.images[idx],
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                ..Default::default()
+            };
+            self.device.cmd_pipeline_barrier(
+                frame.cmd_buf,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[present_barrier],
+            );
+            self.swapchain.image_layouts[idx] = vk::ImageLayout::PRESENT_SRC_KHR;
+
             self.device.end_command_buffer(frame.cmd_buf)?;
 
             // Submit: wait for image-available (slot), signal render-finished (per-image)
@@ -294,7 +384,7 @@ impl VulkanBase {
             application_version: vk::make_api_version(0, 1, 0, 0),
             p_engine_name: app_name.as_ptr(),
             engine_version: vk::make_api_version(0, 1, 0, 0),
-            api_version: vk::API_VERSION_1_0,
+            api_version: vk::API_VERSION_1_3,
             ..Default::default()
         };
 
@@ -419,11 +509,15 @@ impl VulkanBase {
         let device_extensions = [
             vk::KHR_SWAPCHAIN_NAME.as_ptr(),
             vk::KHR_PORTABILITY_SUBSET_NAME.as_ptr(),
+            vk::KHR_DYNAMIC_RENDERING_NAME.as_ptr(),
         ];
+
+        let mut dynamic_rendering_features = vk::PhysicalDeviceDynamicRenderingFeatures::default();
+        dynamic_rendering_features.dynamic_rendering = vk::TRUE;
 
         let device_create_info = vk::DeviceCreateInfo {
             s_type: vk::StructureType::DEVICE_CREATE_INFO,
-            p_next: std::ptr::null(),
+            p_next: &mut dynamic_rendering_features as *mut _ as *const std::ffi::c_void,
             p_queue_create_infos: &queue_info,
             queue_create_info_count: 1,
             pp_enabled_extension_names: device_extensions.as_ptr(),

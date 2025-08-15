@@ -16,10 +16,10 @@ use crate::graphics::meshmanager::MeshManager;
 use crate::scene::{Scene, SceneObject, Transform as SceneTransform};
 use crate::vulkan::base::VulkanBase;
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
-use cgmath::Vector3;
+use cgmath::{Vector3};
 
+use super::input;
 use super::input::InputState;
-use super::{input, render};
 
 pub struct App {
     pub window: Option<Window>,

@@ -241,7 +241,7 @@ impl Drop for App {
                 let _ = vb.device.device_wait_idle();
             }
 
-            self.material_manager.cleanup(&vb.device);
+            self.material_manager.cleanup(&vb.device, &vb.allocator);
             self.mesh_manager.cleanup(&vb.allocator);
 
             if let Some(renderer) = self.imgui_renderer.take() {

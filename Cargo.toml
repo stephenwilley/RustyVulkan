@@ -20,5 +20,5 @@ gltf = "1.4.1"
 mikktspace = "0.3.0"
 vk-mem = "0.5"
 
-[build-dependencies]
-shaderc = "0.8"
+# Slang shaders are compiled at build time via `slangc` invoked from build.rs,
+# so no explicit build dependencies are required here.

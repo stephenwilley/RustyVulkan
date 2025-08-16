@@ -396,14 +396,23 @@ impl VulkanBase {
         #[cfg(debug_assertions)]
         extension_ptrs.push(ash::ext::debug_utils::NAME.as_ptr());
 
-        // Add portability enumeration so macOS MoltenVK gets picked up:
-        extension_ptrs.push(vk::KHR_PORTABILITY_ENUMERATION_NAME.as_ptr());
-        extension_ptrs.push(vk::KHR_GET_PHYSICAL_DEVICE_PROPERTIES2_NAME.as_ptr());
+        // Query supported instance extensions
+        let supported_instance_exts = unsafe { entry.enumerate_instance_extension_properties(None)? };
+        let supports_portability_enum = supported_instance_exts.iter().any(|e| {
+            let name = unsafe { std::ffi::CStr::from_ptr(e.extension_name.as_ptr()) };
+            name == vk::KHR_PORTABILITY_ENUMERATION_NAME
+        });
 
+        // On MoltenVK we must enable portability enumeration; on Windows it's absent.
+        let mut instance_flags = vk::InstanceCreateFlags::empty();
+        if supports_portability_enum {
+            extension_ptrs.push(vk::KHR_PORTABILITY_ENUMERATION_NAME.as_ptr());
+            instance_flags |= vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR;
+        }
+
+        // Do NOT push KHR_get_physical_device_properties2 (core since Vulkan 1.1+)
         let create_info = vk::InstanceCreateInfo {
-            s_type: vk::StructureType::INSTANCE_CREATE_INFO,
-            p_next: std::ptr::null(),
-            flags: vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR,
+            flags: instance_flags,
             p_application_info: &app_info,
             enabled_layer_count: layers.len() as u32,
             pp_enabled_layer_names: layers.as_ptr(),
@@ -508,18 +517,28 @@ impl VulkanBase {
             ..Default::default()
         };
 
-        let device_extensions = [
-            vk::KHR_SWAPCHAIN_NAME.as_ptr(),
-            vk::KHR_PORTABILITY_SUBSET_NAME.as_ptr(),
-            vk::KHR_DYNAMIC_RENDERING_NAME.as_ptr(),
-        ];
+        // Query device extensions on this adapter
+        let supported_dev_exts =
+            unsafe { instance.enumerate_device_extension_properties(physical_device)? };
+
+        let has_portability_subset = supported_dev_exts.iter().any(|e| {
+            let name = unsafe { std::ffi::CStr::from_ptr(e.extension_name.as_ptr()) };
+            name == vk::KHR_PORTABILITY_SUBSET_NAME
+        });
+
+        let mut device_extensions: Vec<*const i8> = Vec::new();
+        device_extensions.push(vk::KHR_SWAPCHAIN_NAME.as_ptr());
+        device_extensions.push(vk::KHR_DYNAMIC_RENDERING_NAME.as_ptr());
+        if has_portability_subset {
+            // Present on MoltenVK, absent on native Windows/NVIDIA
+            device_extensions.push(vk::KHR_PORTABILITY_SUBSET_NAME.as_ptr());
+        }
 
         let mut dynamic_rendering_features = vk::PhysicalDeviceDynamicRenderingFeatures::default();
         dynamic_rendering_features.dynamic_rendering = vk::TRUE;
 
         let device_create_info = vk::DeviceCreateInfo {
-            s_type: vk::StructureType::DEVICE_CREATE_INFO,
-            p_next: &mut dynamic_rendering_features as *mut _ as *const std::ffi::c_void,
+            p_next: &mut dynamic_rendering_features as *mut _ as *const _,
             p_queue_create_infos: &queue_info,
             queue_create_info_count: 1,
             pp_enabled_extension_names: device_extensions.as_ptr(),

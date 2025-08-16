@@ -30,6 +30,8 @@ use imgui::DrawVert;
 use imgui::DrawData;
 use bytemuck;
 use imgui::DrawIdx;
+use std::sync::Arc;
+use vk_mem::{Alloc, Allocator, Allocation, MemoryUsage};
 
 /// Renders ImGui UI elements using Vulkan.
 pub struct ImGuiRenderer {
@@ -40,16 +42,16 @@ pub struct ImGuiRenderer {
     pub vk_pipeline:       vk::Pipeline,
     pub font_sampler:      Option<vk::Sampler>,
     pub font_image:        Option<vk::Image>,
-    pub font_image_memory: Option<vk::DeviceMemory>,
+    pub font_image_allocation: Option<Allocation>,
     pub font_image_view:   Option<vk::ImageView>,
     pub vertex_buffer:        vk::Buffer,
-    pub vertex_buffer_memory: vk::DeviceMemory,
+    pub vertex_allocation:   Option<Allocation>,
     pub vertex_buffer_size:   vk::DeviceSize,
     pub index_buffer:         vk::Buffer,
-    pub index_buffer_memory:  vk::DeviceMemory,
+    pub index_allocation:    Option<Allocation>,
     pub index_buffer_size:    vk::DeviceSize,
     device:                ash::Device,
-    mem_props:             vk::PhysicalDeviceMemoryProperties,
+    allocator:            Arc<Allocator>,
     vert_stage:            Option<ShaderStageInfo>,
     frag_stage:            Option<ShaderStageInfo>,
 }
@@ -57,16 +59,15 @@ pub struct ImGuiRenderer {
 impl ImGuiRenderer {
     // ----------------------------------------------------------
     // 1 - Font Atlas Upload
-    /// Creates a staging buffer for font atlas data.
+    /// Creates a staging buffer for font atlas data using VMA.
     /// # Arguments
-    /// * `base` - The VulkanBase instance.
+    /// * `allocator` - Global Vulkan memory allocator.
     /// * `atlas` - The ImGui font atlas texture.
     /// # Returns
-    /// * `(vk::Buffer, vk::DeviceMemory)` - The staging buffer and its memory.
-    fn create_staging_buffer(base: &VulkanBase, atlas: &FontAtlasTexture)
-        -> (vk::Buffer, vk::DeviceMemory)
+    /// * `(vk::Buffer, Allocation)` - The staging buffer and its allocation.
+    fn create_staging_buffer(allocator: &Allocator, atlas: &FontAtlasTexture)
+        -> (vk::Buffer, Allocation)
     {
-        let device = &base.device;
         let size = (atlas.width * atlas.height * 4) as vk::DeviceSize;
         let buffer_info = vk::BufferCreateInfo {
             size,
@@ -74,53 +75,36 @@ impl ImGuiRenderer {
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
-        let staging_buffer = unsafe { device.create_buffer(&buffer_info, None).unwrap() };
-        let mem_requirements = unsafe { device.get_buffer_memory_requirements(staging_buffer) };
-        let mem_props = unsafe { base.instance.get_physical_device_memory_properties(base.physical_device) };
-        let mem_type_index = Self::find_memory_type(
-            mem_requirements.memory_type_bits,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            &mem_props,
-        );
-        let alloc_info = vk::MemoryAllocateInfo {
-            allocation_size: mem_requirements.size,
-            memory_type_index: mem_type_index,
+        let alloc_info = vk_mem::AllocationCreateInfo {
+            usage: MemoryUsage::CpuToGpu,
             ..Default::default()
         };
-        let staging_buffer_memory = unsafe { device.allocate_memory(&alloc_info, None).unwrap() };
-        unsafe { device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0).unwrap() };
-
-        (staging_buffer, staging_buffer_memory)
+        unsafe { allocator.create_buffer(&buffer_info, &alloc_info).expect("create staging buffer") }
     }
 
-    /// Maps the staging buffer memory and copies the font atlas data into it.
+    /// Maps the staging buffer memory and copies the font atlas data into it using VMA.
     /// # Arguments
-    /// * `base` - The VulkanBase instance.
-    /// * `staging_mem` - The staging buffer memory.
+    /// * `allocator` - Global Vulkan memory allocator.
+    /// * `staging_alloc` - Allocation for the staging buffer.
     /// * `atlas` - The ImGui font atlas texture.
-    fn fill_staging_buffer(base: &VulkanBase, staging_mem: vk::DeviceMemory, atlas: &FontAtlasTexture) {
-        let device = &base.device;
-        let size = (atlas.width * atlas.height * 4) as vk::DeviceSize;
-        let data_ptr = unsafe {
-            device.map_memory(staging_mem, 0, size, vk::MemoryMapFlags::empty()).unwrap()
-        };
+    fn fill_staging_buffer(allocator: &Allocator, staging_alloc: &mut Allocation, atlas: &FontAtlasTexture) {
         unsafe {
-            std::ptr::copy_nonoverlapping(atlas.data.as_ptr(), data_ptr as *mut u8, atlas.data.len());
-            device.unmap_memory(staging_mem);
+            let data_ptr = allocator.map_memory(staging_alloc).expect("map staging") as *mut u8;
+            std::ptr::copy_nonoverlapping(atlas.data.as_ptr(), data_ptr, atlas.data.len());
+            allocator.unmap_memory(staging_alloc);
         }
     }
 
-    /// Creates an optimal-tiling Vulkan image and device-local memory for the font atlas.
+    /// Creates an optimal-tiling Vulkan image and device-local memory for the font atlas using VMA.
     /// # Arguments
-    /// * `base` - The VulkanBase instance.
+    /// * `allocator` - Global Vulkan memory allocator.
     /// * `width` - The width of the font atlas.
     /// * `height` - The height of the font atlas.
     /// # Returns
-    /// * `(vk::Image, vk::DeviceMemory)` - The font image and its memory.
-    fn create_font_image(base: &VulkanBase, width: u32, height: u32)
-        -> (vk::Image, vk::DeviceMemory)
+    /// * `(vk::Image, Allocation)` - The font image and its allocation.
+    fn create_font_image(allocator: &Allocator, width: u32, height: u32)
+        -> (vk::Image, Allocation)
     {
-        let device = &base.device;
         let image_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::TYPE_2D,
             format: vk::Format::R8G8B8A8_UNORM,
@@ -131,25 +115,14 @@ impl ImGuiRenderer {
             tiling: vk::ImageTiling::OPTIMAL,
             usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
             initial_layout: vk::ImageLayout::UNDEFINED,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
-        let font_image = unsafe { device.create_image(&image_info, None).unwrap() };
-        let font_req = unsafe { device.get_image_memory_requirements(font_image) };
-        let mem_props = unsafe { base.instance.get_physical_device_memory_properties(base.physical_device) };
-        let font_mem_type = Self::find_memory_type(
-            font_req.memory_type_bits,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            &mem_props,
-        );
-        let font_alloc = vk::MemoryAllocateInfo {
-            allocation_size: font_req.size,
-            memory_type_index: font_mem_type,
+        let alloc_info = vk_mem::AllocationCreateInfo {
+            usage: MemoryUsage::GpuOnly,
             ..Default::default()
         };
-        let font_image_memory = unsafe { device.allocate_memory(&font_alloc, None).unwrap() };
-        unsafe { device.bind_image_memory(font_image, font_image_memory, 0).unwrap() };
-
-        (font_image, font_image_memory)
+        unsafe { allocator.create_image(&image_info, &alloc_info).expect("create font image") }
     }
 
     /// Records and submits a one-time command buffer to transition image layouts and copy data from a staging buffer to the image.
@@ -652,74 +625,10 @@ impl ImGuiRenderer {
         Ok(())
     }
 
-    /// Helper to choose memory type
-    /// # Arguments
-    /// * `type_filter` - The memory type filter.
-    /// * `properties` - The memory properties.
-    /// * `mem_props` - The physical device memory properties.
-    /// # Returns
-    /// * `u32` - The index of the suitable memory type.
-    fn find_memory_type(
-        type_filter: u32,
-        properties: vk::MemoryPropertyFlags,
-        mem_props: &vk::PhysicalDeviceMemoryProperties,
-    ) -> u32 {
-        for i in 0..mem_props.memory_type_count {
-            if (type_filter & (1 << i)) != 0
-                && mem_props.memory_types[i as usize].property_flags.contains(properties)
-            {
-                return i;
-            }
-        }
-        panic!("Failed to find suitable memory type!");
-    }
-
-    /// Creates a Vulkan buffer and allocates its memory.
-    /// # Arguments
-    /// * `size` - The size of the buffer.
-    /// * `usage` - The usage flags for the buffer.
-    /// * `properties` - The memory properties for the buffer.
-    /// # Returns
-    /// * `(vk::Buffer, vk::DeviceMemory)` - A tuple containing the created buffer and its memory.
-    fn create_buffer(&self,
-        size: vk::DeviceSize,
-        usage: vk::BufferUsageFlags,
-        properties: vk::MemoryPropertyFlags,
-    ) -> (vk::Buffer, vk::DeviceMemory) {
-        let device = &self.device;
-        // 1) Create the buffer handle
-        let buffer_info = vk::BufferCreateInfo {
-            size,
-            usage,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            ..Default::default()
-        };
-        let buffer = unsafe { device.create_buffer(&buffer_info, None).unwrap() };
-        // 2) Allocate memory for the buffer
-        let mem_requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
-        let mem_type_index = Self::find_memory_type(
-            mem_requirements.memory_type_bits,
-            properties,
-            &self.mem_props,
-        );
-        let alloc_info = vk::MemoryAllocateInfo {
-            allocation_size: mem_requirements.size,
-            memory_type_index: mem_type_index,
-            ..Default::default()
-        };
-        let buffer_memory = unsafe { device.allocate_memory(&alloc_info, None).unwrap() };
-        // 3) Bind buffer and memory together
-        unsafe {
-            device.bind_buffer_memory(buffer, buffer_memory, 0).unwrap();
-        }
-        (buffer, buffer_memory)
-    }
-
-     /// Ensures the vertex and index buffers are large enough and uploads ImGui draw data into them.
+    /// Ensures the vertex and index buffers are large enough and uploads ImGui draw data into them.
     /// # Arguments
     /// * `draw_data` - The ImGui draw data.
     pub fn update_buffers(&mut self, draw_data: &DrawData) {
-        let device = &self.device;
         // Total vertex and index data sizes
         let vertex_size = (draw_data.total_vtx_count as usize * std::mem::size_of::<DrawVert>()) as vk::DeviceSize;
         let index_size  = (draw_data.total_idx_count as usize * std::mem::size_of::<DrawIdx>()) as vk::DeviceSize;
@@ -727,68 +636,83 @@ impl ImGuiRenderer {
         // Resize vertex buffer if needed
         if vertex_size > self.vertex_buffer_size {
             if self.vertex_buffer != vk::Buffer::null() {
-                unsafe {
-                    device.device_wait_idle().expect("Failed to wait device idle");
-                    device.destroy_buffer(self.vertex_buffer, None);
-                    device.free_memory(self.vertex_buffer_memory, None);
+                if let Some(allocation) = &mut self.vertex_allocation {
+                    unsafe { self.allocator.destroy_buffer(self.vertex_buffer, allocation); }
                 }
             }
-            let (buf, mem) = self.create_buffer(vertex_size,
-                vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            );
+            let buffer_info = vk::BufferCreateInfo {
+                size: vertex_size,
+                usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+            let alloc_info = vk_mem::AllocationCreateInfo {
+                usage: MemoryUsage::CpuToGpu,
+                ..Default::default()
+            };
+            let (buf, alloc) = unsafe { self.allocator.create_buffer(&buffer_info, &alloc_info).expect("create vertex buffer") };
             self.vertex_buffer = buf;
-            self.vertex_buffer_memory = mem;
+            self.vertex_allocation = Some(alloc);
             self.vertex_buffer_size = vertex_size;
         }
 
         // Resize index buffer if needed
         if index_size > self.index_buffer_size {
             if self.index_buffer != vk::Buffer::null() {
-                unsafe {
-                    device.destroy_buffer(self.index_buffer, None);
-                    device.free_memory(self.index_buffer_memory, None);
+                if let Some(allocation) = &mut self.index_allocation {
+                    unsafe { self.allocator.destroy_buffer(self.index_buffer, allocation); }
                 }
             }
-            let (buf, mem) = self.create_buffer(index_size,
-                vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            );
+            let buffer_info = vk::BufferCreateInfo {
+                size: index_size,
+                usage: vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+                ..Default::default()
+            };
+            let alloc_info = vk_mem::AllocationCreateInfo {
+                usage: MemoryUsage::CpuToGpu,
+                ..Default::default()
+            };
+            let (buf, alloc) = unsafe { self.allocator.create_buffer(&buffer_info, &alloc_info).expect("create index buffer") };
             self.index_buffer = buf;
-            self.index_buffer_memory = mem;
+            self.index_allocation = Some(alloc);
             self.index_buffer_size = index_size;
         }
 
         // Map and copy vertex data
         unsafe {
-            let vtx_ptr = device.map_memory(self.vertex_buffer_memory, 0, vertex_size, vk::MemoryMapFlags::empty()).unwrap();
-            let mut offset = 0;
-            for draw_list in draw_data.draw_lists() {
-                let src = draw_list.vtx_buffer();
-                let byte_len = std::mem::size_of_val(src);
-                std::ptr::copy_nonoverlapping(
-                    src.as_ptr() as *const u8,
-                    (vtx_ptr as *mut u8).add(offset),
-                    byte_len,
-                );
-                offset += byte_len;
+            if let Some(allocation) = &mut self.vertex_allocation {
+                let vtx_ptr = self.allocator.map_memory(allocation).expect("map vertex") as *mut u8;
+                let mut offset = 0;
+                for draw_list in draw_data.draw_lists() {
+                    let src = draw_list.vtx_buffer();
+                    let byte_len = std::mem::size_of_val(src);
+                    std::ptr::copy_nonoverlapping(
+                        src.as_ptr() as *const u8,
+                        vtx_ptr.add(offset),
+                        byte_len,
+                    );
+                    offset += byte_len;
+                }
+                self.allocator.unmap_memory(allocation);
             }
-            device.unmap_memory(self.vertex_buffer_memory);
 
             // Map and copy index data
-            let idx_ptr = device.map_memory(self.index_buffer_memory, 0, index_size, vk::MemoryMapFlags::empty()).unwrap();
-            let mut idx_offset = 0;
-            for draw_list in draw_data.draw_lists() {
-                let src = draw_list.idx_buffer();
-                let byte_len = std::mem::size_of_val(src);
-                std::ptr::copy_nonoverlapping(
-                    src.as_ptr() as *const u8,
-                    (idx_ptr as *mut u8).add(idx_offset),
-                    byte_len,
-                );
-                idx_offset += byte_len;
+            if let Some(allocation) = &mut self.index_allocation {
+                let idx_ptr = self.allocator.map_memory(allocation).expect("map index") as *mut u8;
+                let mut idx_offset = 0;
+                for draw_list in draw_data.draw_lists() {
+                    let src = draw_list.idx_buffer();
+                    let byte_len = std::mem::size_of_val(src);
+                    std::ptr::copy_nonoverlapping(
+                        src.as_ptr() as *const u8,
+                        idx_ptr.add(idx_offset),
+                        byte_len,
+                    );
+                    idx_offset += byte_len;
+                }
+                self.allocator.unmap_memory(allocation);
             }
-            device.unmap_memory(self.index_buffer_memory);
         }
     }
 
@@ -831,12 +755,8 @@ impl ImGuiRenderer {
     /// # Returns
     /// A new ImGuiRenderer instance with all resources initialized.
     pub fn new(base: &mut VulkanBase, imgui: &mut ImGuiContext) -> Self {
-        let instance        = base.instance.clone();
-        let physical_device = base.physical_device;
-        let device          = base.device.clone();
-        let mem_props = unsafe {
-            instance.get_physical_device_memory_properties(physical_device)
-        };
+        let device     = base.device.clone();
+        let allocator  = base.allocator.clone();
 
         // 0) Load default font atlas
         imgui.fonts().add_font(&[FontSource::DefaultFontData {
@@ -847,17 +767,16 @@ impl ImGuiRenderer {
         }]);
         let atlas = imgui.fonts().build_rgba32_texture();
         // 1) Create staging buffer for font atlas
-        let (staging_buffer, staging_buffer_memory) = Self::create_staging_buffer(base, &atlas);
+        let (staging_buffer, mut staging_alloc) = Self::create_staging_buffer(&allocator, &atlas);
         // 2) Map memory and copy font atlas data into it
-        Self::fill_staging_buffer(base, staging_buffer_memory, &atlas);
+        Self::fill_staging_buffer(&allocator, &mut staging_alloc, &atlas);
         // 3) Create font image with device-local memory
-        let (font_image, font_image_memory) = Self::create_font_image(base, atlas.width, atlas.height);
-        // 4) Bind the staging buffer memory to the font image
+        let (font_image, font_allocation) = Self::create_font_image(&allocator, atlas.width, atlas.height);
+        // 4) Copy from staging to the font image
         Self::copy_buffer_to_image(base, staging_buffer, font_image, atlas.width, atlas.height);
-        // 5) Clean up staging buffer memory
+        // 5) Clean up staging buffer
         unsafe {
-            base.device.free_memory(staging_buffer_memory, None);
-            base.device.destroy_buffer(staging_buffer, None);
+            allocator.destroy_buffer(staging_buffer, &mut staging_alloc);
         }
         // 6) Create an ImageView for the font atlas
         let font_image_view = Self::create_image_view(base, font_image);
@@ -872,16 +791,16 @@ impl ImGuiRenderer {
             vk_pipeline: vk::Pipeline::null(),
             font_sampler: Some(font_sampler),
             font_image: Some(font_image),
-            font_image_memory: Some(font_image_memory),
+            font_image_allocation: Some(font_allocation),
             font_image_view: Some(font_image_view),
             vertex_buffer: vk::Buffer::null(),
-            vertex_buffer_memory: vk::DeviceMemory::null(),
+            vertex_allocation: None,
             vertex_buffer_size: 0,
             index_buffer: vk::Buffer::null(),
-            index_buffer_memory: vk::DeviceMemory::null(),
+            index_allocation: None,
             index_buffer_size: 0,
             device,
-            mem_props,
+            allocator,
             vert_stage: None,
             frag_stage: None,
         };
@@ -899,50 +818,50 @@ impl ImGuiRenderer {
     }
     
     /// Cleans up ImGui Vulkan resources created by this renderer.
-    /// # Arguments
-    /// * `base` - The VulkanBase instance to use for resource cleanup.
-    ///   This function destroys all Vulkan resources associated with the ImGui renderer,
-    ///   including the font image, sampler, descriptor set layout, descriptor pool, and pipeline.
-    ///   It should be called when the ImGui renderer is no longer needed.
-    pub fn cleanup(&self, base: VulkanBase) {
+    /// This destroys all Vulkan objects owned by the renderer.
+    pub fn cleanup(&mut self) {
         unsafe {
-            // Destroy dynamic ImGui vertex/index buffers
+            // Destroy dynamic buffers
             if self.vertex_buffer != vk::Buffer::null() {
-                base.device.destroy_buffer(self.vertex_buffer, None);
-            }
-            if self.vertex_buffer_memory != vk::DeviceMemory::null() {
-                base.device.free_memory(self.vertex_buffer_memory, None);
+                if let Some(allocation) = &mut self.vertex_allocation {
+                    self.allocator.destroy_buffer(self.vertex_buffer, allocation);
+                }
             }
             if self.index_buffer != vk::Buffer::null() {
-                base.device.destroy_buffer(self.index_buffer, None);
+                if let Some(allocation) = &mut self.index_allocation {
+                    self.allocator.destroy_buffer(self.index_buffer, allocation);
+                }
             }
-            if self.index_buffer_memory != vk::DeviceMemory::null() {
-                base.device.free_memory(self.index_buffer_memory, None);
+
+            // Destroy font resources
+            if let Some(view) = self.font_image_view.take() {
+                self.device.destroy_image_view(view, None);
             }
-            // Destroy sampler, view, image, and free memory
-            if let Some(sampler) = self.font_sampler {
-                base.device.destroy_sampler(sampler, None);
+            if let Some(sampler) = self.font_sampler.take() {
+                self.device.destroy_sampler(sampler, None);
             }
-            if let Some(view) = self.font_image_view {
-                base.device.destroy_image_view(view, None);
+            if let Some(image) = self.font_image.take() {
+                if let Some(allocation) = &mut self.font_image_allocation {
+                    self.allocator.destroy_image(image, allocation);
+                }
             }
-            if let Some(image) = self.font_image {
-                base.device.destroy_image(image, None);
+
+            // Shader modules
+            if let Some(stage) = &self.vert_stage {
+                stage.shader_module.cleanup();
             }
-            if let Some(mem) = self.font_image_memory {
-                base.device.free_memory(mem, None);
+            if let Some(stage) = &self.frag_stage {
+                stage.shader_module.cleanup();
             }
-            self.vert_stage.as_ref().unwrap().shader_module.cleanup();
-            self.frag_stage.as_ref().unwrap().shader_module.cleanup();
-            // Destroy descriptor pool and layout
-            base.device.destroy_descriptor_pool(self.descriptor_pool, None);
-            base.device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            // Destroy pipeline and layout when created (skip if null)
+
+            // Descriptor resources and pipeline
+            self.device.destroy_descriptor_pool(self.descriptor_pool, None);
+            self.device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             if self.vk_pipeline != vk::Pipeline::null() {
-                base.device.destroy_pipeline(self.vk_pipeline, None);
+                self.device.destroy_pipeline(self.vk_pipeline, None);
             }
             if self.pipeline_layout != vk::PipelineLayout::null() {
-                base.device.destroy_pipeline_layout(self.pipeline_layout, None);
+                self.device.destroy_pipeline_layout(self.pipeline_layout, None);
             }
         }
     }

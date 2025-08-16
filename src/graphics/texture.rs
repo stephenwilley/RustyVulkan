@@ -11,31 +11,30 @@
 //! --------------------------------------------------------------------------------------
 
 use ash::vk;
+use vk_mem::{Alloc, Allocator, Allocation, MemoryUsage};
 
-/// Holds a GPU texture: image, its memory, view, and sampler.
+/// Holds a GPU texture: image, its allocation, view, and sampler.
 pub struct Texture {
-    pub image:        vk::Image,
-    pub image_memory: vk::DeviceMemory,
-    pub image_view:   vk::ImageView,
-    pub sampler:      vk::Sampler,
+    pub image:      vk::Image,
+    pub allocation: Allocation,
+    pub image_view: vk::ImageView,
+    pub sampler:    vk::Sampler,
 }
 
 impl Texture {
     /// Creates a new `Texture` by loading image data from the given path,
     /// uploading via a staging buffer, and setting up the image, view, and sampler.
     /// # Arguments
-    /// * `instance` - The Vulkan instance.
     /// * `device` - The Vulkan device.
-    /// * `physical_device` - The physical device.
+    /// * `allocator` - The global VMA allocator.
     /// * `command_pool` - The command pool to use for creating the texture.
     /// * `queue` - The queue to use for submitting the texture creation commands.
     /// * `image_path` - The path to the image file.
     /// # Returns
     /// * `Result<Self, Box<dyn std::error::Error>>` - Returns the initialized `Texture` on success, or an error on failure.
     pub fn new(
-        instance: &ash::Instance,
         device: &ash::Device,
-        physical_device: vk::PhysicalDevice,
+        allocator: &Allocator,
         command_pool: vk::CommandPool,
         queue: vk::Queue,
         image_path: &str,
@@ -46,46 +45,28 @@ impl Texture {
         let pixels = img.into_raw(); // Vec<u8> with RGBA8 data
         let image_size = (width as vk::DeviceSize) * (height as vk::DeviceSize) * 4;
 
-        // Create the staging buffer
+        // Create the staging buffer using VMA
         let buffer_info = vk::BufferCreateInfo {
             size: image_size,
             usage: vk::BufferUsageFlags::TRANSFER_SRC,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
-        let staging_buffer = unsafe { device.create_buffer(&buffer_info, None)? };
-        let mem_requirements = unsafe { device.get_buffer_memory_requirements(staging_buffer) };
-        // Select memory type with HOST_VISIBLE | HOST_COHERENT
-        let mem_props = unsafe { instance.get_physical_device_memory_properties(physical_device) };
-        let memory_type_index = (0..mem_props.memory_type_count)
-            .find(|&i| {
-                (mem_requirements.memory_type_bits & (1 << i)) != 0 &&
-                mem_props.memory_types[i as usize]
-                    .property_flags
-                    .contains(vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
-            })
-            .ok_or("No suitable memory type for staging buffer")?;
-        let alloc_info = vk::MemoryAllocateInfo {
-            allocation_size: mem_requirements.size,
-            memory_type_index,
+        let alloc_info = vk_mem::AllocationCreateInfo {
+            usage: MemoryUsage::CpuToGpu,
             ..Default::default()
         };
-        let staging_buffer_memory = unsafe { device.allocate_memory(&alloc_info, None)? };
-        unsafe { device.bind_buffer_memory(staging_buffer, staging_buffer_memory, 0)? };
+        let (staging_buffer, mut staging_allocation) =
+            unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
 
         // Copy pixel data into the staging buffer
         unsafe {
-            let data_ptr = device.map_memory(
-                staging_buffer_memory,
-                0,
-                image_size,
-                vk::MemoryMapFlags::empty(),
-            )? as *mut u8;
+            let data_ptr = allocator.map_memory(&mut staging_allocation)? as *mut u8;
             std::ptr::copy_nonoverlapping(pixels.as_ptr(), data_ptr, pixels.len());
-            device.unmap_memory(staging_buffer_memory);
+            allocator.unmap_memory(&mut staging_allocation);
         }
 
-        // Create the GPU image in device-local memory
+        // Create the GPU image in device-local memory using VMA
         let image_create_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::TYPE_2D,
             format: vk::Format::R8G8B8A8_UNORM,
@@ -99,23 +80,12 @@ impl Texture {
             initial_layout: vk::ImageLayout::UNDEFINED,
             ..Default::default()
         };
-        let image = unsafe { device.create_image(&image_create_info, None)? };
-        let mem_req = unsafe { device.get_image_memory_requirements(image) };
-        let mem_type_index = (0..mem_props.memory_type_count)
-            .find(|&i| {
-                (mem_req.memory_type_bits & (1 << i)) != 0 &&
-                mem_props.memory_types[i as usize]
-                    .property_flags
-                    .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
-            })
-            .ok_or("No suitable memory type for image")?;
-        let alloc_info = vk::MemoryAllocateInfo {
-            allocation_size: mem_req.size,
-            memory_type_index: mem_type_index,
+        let image_alloc_info = vk_mem::AllocationCreateInfo {
+            usage: MemoryUsage::GpuOnly,
             ..Default::default()
         };
-        let image_memory = unsafe { device.allocate_memory(&alloc_info, None)? };
-        unsafe { device.bind_image_memory(image, image_memory, 0)? };
+        let (image, image_allocation) =
+            unsafe { allocator.create_image(&image_create_info, &image_alloc_info)? };
 
         // Begin one-time command buffer for layout transitions and copy
         let alloc_info = vk::CommandBufferAllocateInfo {
@@ -216,8 +186,7 @@ impl Texture {
 
         // Cleanup staging resources
         unsafe {
-            device.destroy_buffer(staging_buffer, None);
-            device.free_memory(staging_buffer_memory, None);
+            allocator.destroy_buffer(staging_buffer, &mut staging_allocation);
         }
 
         // Create image view
@@ -259,7 +228,7 @@ impl Texture {
 
         Ok(Texture {
             image,
-            image_memory,
+            allocation: image_allocation,
             image_view,
             sampler,
         })
@@ -268,12 +237,12 @@ impl Texture {
     /// Cleans up Vulkan resources associated with this texture.
     /// # Arguments
     /// * `device` - The Vulkan device to use for cleanup.
-    pub fn cleanup(&self, device: &ash::Device) {
+    /// * `allocator` - The global VMA allocator.
+    pub fn cleanup(&mut self, device: &ash::Device, allocator: &Allocator) {
         unsafe {
             device.destroy_sampler(self.sampler, None);
             device.destroy_image_view(self.image_view, None);
-            device.destroy_image(self.image, None);
-            device.free_memory(self.image_memory, None);
+            allocator.destroy_image(self.image, &mut self.allocation);
         }
     }
 }

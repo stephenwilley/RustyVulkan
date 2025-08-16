@@ -13,6 +13,7 @@
 use ash::Device;
 use crate::graphics::material::Material;
 use crate::vulkan::base::VulkanBase;
+use vk_mem::Allocator;
 
 /// Manages materials, ensuring that each material is only created once.
 pub struct MaterialManager {
@@ -86,10 +87,11 @@ impl MaterialManager {
     /// Cleans up all materials.
     /// # Arguments
     /// * `device` - The Vulkan device.
-    pub fn cleanup(&mut self, device: &Device) {
+    /// * `allocator` - The global VMA allocator.
+    pub fn cleanup(&mut self, device: &Device, allocator: &Allocator) {
         for material in &mut self.materials {
             println!("🗑️ Cleaning up material {}", material.name);
-            material.cleanup(device);
+            material.cleanup(device, allocator);
         }
         self.materials.clear();
         println!("🗑️ MaterialManager cleaned up");

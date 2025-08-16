@@ -17,6 +17,7 @@ use crate::graphics::texture::Texture;
 use crate::graphics::shaders::{ShaderModule,ShaderStageInfo};
 use std::error::Error;
 use std::fmt;
+use vk_mem::Allocator;
 
 /// The Material struct holds the information required to create a material
 pub struct Material {
@@ -171,9 +172,8 @@ impl Material {
         let mut textures = None;
         if texturing_enabled {
             textures = Some(LoadedTextures::load(
-                &vb.instance,
                 &vb.device,
-                vb.physical_device,
+                &vb.allocator,
                 vb.command_pool,
                 vb.graphics_queue,
                 diffuse_texture_path.unwrap(),
@@ -249,10 +249,11 @@ impl Material {
     /// This should be called when the material is no longer needed.
     /// # Arguments
     /// * `device` - The Vulkan device to use for cleanup.
-    pub fn cleanup(&mut self, device: &Device) {
+    /// * `allocator` - The global VMA allocator.
+    pub fn cleanup(&mut self, device: &Device, allocator: &Allocator) {
         self.shaders.cleanup();
-        if self.textures.is_some() {
-            self.textures.as_ref().unwrap().cleanup(device);
+        if let Some(textures) = self.textures.as_mut() {
+            textures.cleanup(device, allocator);
             unsafe {
                 device.free_descriptor_sets(
                     self.texture_descriptor_pool,
@@ -317,9 +318,8 @@ pub struct LoadedTextures {
 impl LoadedTextures {
     /// Loads the diffuse PNG into a GPU-backed Texture.
     /// # Arguments
-    /// * `instance` - The Vulkan instance.
     /// * `device` - The Vulkan device.
-    /// * `physical_device` - The physical device.
+    /// * `allocator` - The global VMA allocator.
     /// * `command_pool` - The command pool to use for creating the texture.
     /// * `queue` - The queue to use for submitting the texture creation commands.
     /// * `diffuse_texture_path` - The path to the diffuse texture.
@@ -327,26 +327,23 @@ impl LoadedTextures {
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the loaded textures on success, or an error on failure.
     pub fn load(
-        instance: &ash::Instance,
         device: &Device,
-        physical_device: vk::PhysicalDevice,
+        allocator: &Allocator,
         command_pool: vk::CommandPool,
         queue: vk::Queue,
         diffuse_texture_path: String,
         normalmap_texture_path: String,
     ) -> Result<Self, Box<dyn Error>> {
         let diffuse = Texture::new(
-            instance,
             device,
-            physical_device,
+            allocator,
             command_pool,
             queue,
             diffuse_texture_path.as_str(),
         )?;
         let normalmap = Texture::new(
-            instance,
             device,
-            physical_device,
+            allocator,
             command_pool,
             queue,
             normalmap_texture_path.as_str(),
@@ -357,8 +354,9 @@ impl LoadedTextures {
     /// Cleans up Vulkan resources for the texture.
     /// # Arguments
     /// * `device` - The Vulkan device to use for cleanup.
-    pub fn cleanup(&self, device: &Device) {
-        self.diffuse.cleanup(device);
-        self.normalmap.cleanup(device);
+    /// * `allocator` - The global VMA allocator.
+    pub fn cleanup(&mut self, device: &Device, allocator: &Allocator) {
+        self.diffuse.cleanup(device, allocator);
+        self.normalmap.cleanup(device, allocator);
     }
 }

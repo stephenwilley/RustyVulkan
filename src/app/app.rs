@@ -242,7 +242,7 @@ impl Drop for App {
             }
 
             self.material_manager.cleanup(&vb.device);
-            self.mesh_manager.cleanup(&vb.device);
+            self.mesh_manager.cleanup(&vb.allocator);
 
             if let Some(renderer) = self.imgui_renderer.take() {
                 println!("🗑️ Cleaning up ImGui renderer");

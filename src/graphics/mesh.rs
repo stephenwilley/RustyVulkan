@@ -10,7 +10,8 @@
 //! --------------------------------------------------------------------------------------
 
 use ash::vk;
-use ash::{Instance, Device};
+use ash::Device;
+use vk_mem::{Alloc, Allocator, Allocation, MemoryUsage};
 use std::error::Error;
 use bytemuck::{Pod, Zeroable, offset_of};
 
@@ -83,182 +84,95 @@ impl Vertex {
 /// A GPU-resident vertex buffer holding one mesh’s vertices.
 pub struct VertexBuffer {
     pub buffer: vk::Buffer,
-    pub memory: vk::DeviceMemory,
+    pub allocation: Allocation,
 }
 
 impl VertexBuffer {
     /// Create a new vertex buffer, upload `data` (slice of Vertex)
     /// using HOST_VISIBLE | HOST_COHERENT memory properties.
     /// # Arguments
-    /// * `instance` - The Vulkan instance.
-    /// * `device` - The Vulkan device.
-    /// * `physical_device` - The physical device.
+    /// * `allocator` - Global Vulkan memory allocator.
     /// * `data` - The vertex data to upload.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `VertexBuffer` on success, or an error on failure.
     pub fn new(
-        instance: &Instance,
-        device: &Device,
-        physical_device: vk::PhysicalDevice,
+        allocator: &Allocator,
         data: &[Vertex],
     ) -> Result<Self, Box<dyn Error>> {
         let size = std::mem::size_of_val(data) as vk::DeviceSize;
 
-        // 1) Create the buffer
         let buffer_info = vk::BufferCreateInfo {
             size,
             usage: vk::BufferUsageFlags::VERTEX_BUFFER,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
-        let buffer = unsafe { device.create_buffer(&buffer_info, None)? };
-
-        // 2) Allocate memory
-        let mem_req = unsafe { device.get_buffer_memory_requirements(buffer) };
-        let mem_type_index = find_memory_type(
-            instance,
-            physical_device,
-            mem_req.memory_type_bits,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-        );
-        let alloc_info = vk::MemoryAllocateInfo {
-            allocation_size: mem_req.size,
-            memory_type_index: mem_type_index,
+        let alloc_info = vk_mem::AllocationCreateInfo {
+            usage: MemoryUsage::CpuToGpu,
             ..Default::default()
         };
-        let memory = unsafe { device.allocate_memory(&alloc_info, None)? };
+        let (buffer, mut allocation) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
 
-        // 3) Bind and copy data
         unsafe {
-            device.bind_buffer_memory(buffer, memory, 0)?;
-            let ptr = device.map_memory(memory, 0, size, Default::default())?;
-            std::ptr::copy_nonoverlapping(
-                data.as_ptr() as *const _,
-                ptr.cast(),
-                data.len(),
-            );
-            device.unmap_memory(memory);
+            let ptr = allocator.map_memory(&mut allocation)? as *mut Vertex;
+            std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+            allocator.unmap_memory(&mut allocation);
         }
 
-        Ok(VertexBuffer { buffer, memory })
+        Ok(VertexBuffer { buffer, allocation })
     }
 
-    /// Frees the Vulkan buffer and its backing memory.
-    /// # Arguments
-    /// * `device` - The Vulkan device to use for cleanup.
-    pub fn cleanup(&self, device: &Device) {
-        unsafe {
-            device.destroy_buffer(self.buffer, None);
-            device.free_memory(self.memory, None);
-        }
+    /// Frees the Vulkan buffer and its backing allocation.
+    pub fn cleanup(&mut self, allocator: &Allocator) {
+        unsafe { allocator.destroy_buffer(self.buffer, &mut self.allocation); }
     }
 }
 
 /// A GPU-resident index buffer for indexed drawing.
 pub struct IndexBuffer {
     pub buffer: vk::Buffer,
-    pub memory: vk::DeviceMemory,
+    pub allocation: Allocation,
     pub count:  u32,
 }
 
 impl IndexBuffer {
     /// Create a new index buffer, uploading `indices` (slice of u32).
     /// # Arguments
-    /// * `instance` - The Vulkan instance.
-    /// * `device` - The Vulkan device to use for creating the buffer.
-    /// * `physical_device` - The physical device to query memory properties from.
+    /// * `allocator` - Global Vulkan memory allocator.
     /// * `data` - The index data to upload.
     /// # Returns
     /// * `Result<Self, vk::Result>` - Returns the initialized `IndexBuffer` on success, or an error on failure.
     pub fn new(
-        instance: &Instance,
-        device: &ash::Device,
-        physical_device: vk::PhysicalDevice,
+        allocator: &Allocator,
         data: &[u32],
     ) -> Result<Self, vk::Result> {
         let size = std::mem::size_of_val(data) as vk::DeviceSize;
 
-        // 1) create buffer with usage INDEX_BUFFER
         let buffer_info = vk::BufferCreateInfo {
             size,
             usage: vk::BufferUsageFlags::INDEX_BUFFER,
             sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
-        let buffer = unsafe { device.create_buffer(&buffer_info, None)? };
-
-        // 2) Allocate memory
-        let mem_req = unsafe { device.get_buffer_memory_requirements(buffer) };
-        let mem_type_index = find_memory_type(
-            instance,
-            physical_device,
-            mem_req.memory_type_bits,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-        );
-        let alloc_info = vk::MemoryAllocateInfo {
-            allocation_size: mem_req.size,
-            memory_type_index: mem_type_index,
+        let alloc_info = vk_mem::AllocationCreateInfo {
+            usage: MemoryUsage::CpuToGpu,
             ..Default::default()
         };
-        let memory = unsafe { device.allocate_memory(&alloc_info, None)? };
+        let (buffer, mut allocation) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
 
-        // 3) Bind and copy data
         unsafe {
-            device.bind_buffer_memory(buffer, memory, 0)?;
-            let ptr = device.map_memory(memory, 0, size, Default::default())?;
-            std::ptr::copy_nonoverlapping(
-                data.as_ptr() as *const _,
-                ptr.cast(),
-                data.len(),
-            );
-            device.unmap_memory(memory);
+            let ptr = allocator.map_memory(&mut allocation)? as *mut u32;
+            std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+            allocator.unmap_memory(&mut allocation);
         }
 
-        Ok(IndexBuffer { buffer, memory, count: data.len() as u32 })
+        Ok(IndexBuffer { buffer, allocation, count: data.len() as u32 })
     }
 
-    /// Frees the Vulkan buffer and its backing memory.
-    /// # Arguments
-    /// * `device` - The Vulkan device to use for cleanup.
-    pub fn cleanup(&self, device: &ash::Device) {
-        unsafe {
-            device.destroy_buffer(self.buffer, None);
-            device.free_memory(self.memory, None);
-        }
+    /// Frees the Vulkan buffer and its backing allocation.
+    pub fn cleanup(&mut self, allocator: &Allocator) {
+        unsafe { allocator.destroy_buffer(self.buffer, &mut self.allocation); }
     }
-}
-
-/// Helper to find a memory type index on the GPU.
-/// 
-/// # Arguments
-/// * `instance`     – your Vulkan `Instance` (so you can query properties)
-/// * `phys_device`  – the `PhysicalDevice` you picked earlier
-/// * `type_filter`  – bitmask from `vkGetBufferMemoryRequirements(...).memoryTypeBits`
-/// * `properties`   – desired flags, e.g. HOST_VISIBLE | HOST_COHERENT
-pub fn find_memory_type(
-    instance: &ash::Instance,
-    phys_device: vk::PhysicalDevice,
-    type_filter: u32,
-    properties: vk::MemoryPropertyFlags,
-) -> u32 {
-    // Query all memory types & heaps on this GPU:
-    let mem_props = unsafe {
-        instance.get_physical_device_memory_properties(phys_device)
-    };
-
-    // Scan through each memory type index:
-    for (i, mem_type) in mem_props.memory_types.iter().enumerate() {
-        let bit = 1 << i;
-        // 1) Is this type allowed by the bitmask?
-        // 2) Does it include *all* the flags we asked for?
-        if (type_filter & bit) != 0 
-            && mem_type.property_flags.contains(properties)
-        {
-            return i as u32;
-        }
-    }
-
-    panic!("Failed to find suitable memory type!");
 }
 
 /// A CPU-side representation of a mesh, containing vertices and indices.
@@ -545,36 +459,20 @@ impl LoadedMesh {
     /// Uploads the vertices and indices into a GPU buffer.
     /// # Arguments
     /// * `name` - The name of the mesh.
-    /// * `instance` - The Vulkan instance.
-    /// * `device` - The Vulkan device.
-    /// * `phys` - The physical device.
+    /// * `allocator` - Global Vulkan memory allocator.
     /// * `mesh` - The CPU-side mesh data.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `LoadedMesh` on success, or an error on failure.
     pub fn load(
         name: String,
-        instance: &ash::Instance,
-        device:   &Device,
-        phys:     vk::PhysicalDevice,
-        mesh:     &Mesh,
+        allocator: &Allocator,
+        mesh: &Mesh,
     ) -> Result<Self, Box<dyn Error>> {
-        // Grab the raw vertex array from the pure data:
         let verts = &mesh.vertices;
         let indices = &mesh.indices;
 
-        // Use the mesh helper to allocate & fill a VertexBuffer
-        let vb = VertexBuffer::new(
-            instance,
-            device,
-            phys,
-            verts,
-        )?;
-         let ib = IndexBuffer::new(
-            instance,
-            device,
-            phys,
-            indices,
-        )?;
+        let vb = VertexBuffer::new(allocator, verts)?;
+        let ib = IndexBuffer::new(allocator, indices)?;
 
         Ok(LoadedMesh { name, v_buffer: vb, i_buffer: ib })
     }
@@ -582,37 +480,29 @@ impl LoadedMesh {
     /// Creates a unit plane mesh and uploads it to the GPU.
     /// # Arguments
     /// * `name` - The name of the mesh.
-    /// * `instance` - The Vulkan instance.
-    /// * `device` - The Vulkan device.
-    /// * `phys` - The physical device.
+    /// * `allocator` - Global Vulkan memory allocator.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `LoadedMesh` on success, or an error on failure.
     pub fn unit_plane(
         name: String,
-        instance: &ash::Instance,
-        device:   &Device,
-        phys:     vk::PhysicalDevice,
+        allocator: &Allocator,
     ) -> Result<Self, Box<dyn Error>> {
         let mesh = Mesh::unit_plane();
-        Self::load(name, instance, device, phys, &mesh)
+        Self::load(name, allocator, &mesh)
     }
 
     /// Creates a unit cube mesh and uploads it to the GPU.
     /// # Arguments
     /// * `name` - The name of the mesh.
-    /// * `instance` - The Vulkan instance.
-    /// * `device` - The Vulkan device.
-    /// * `phys` - The physical device.
+    /// * `allocator` - Global Vulkan memory allocator.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `LoadedMesh` on success, or an error on failure.
     pub fn cube(
         name: String,
-        instance: &ash::Instance,
-        device:   &Device,
-        phys:     vk::PhysicalDevice,
+        allocator: &Allocator,
     ) -> Result<Self, Box<dyn Error>> {
         let mesh = Mesh::cube();
-        Self::load(name, instance, device, phys, &mesh)
+        Self::load(name, allocator, &mesh)
     }
 
     /// Record only the indexed draw commands into the given secondary CB
@@ -630,9 +520,9 @@ impl LoadedMesh {
 
     /// Frees the GPU buffer and its memory.
     /// # Arguments
-    /// * `device` - The Vulkan device to use for cleanup.
-    pub fn cleanup(&self, device: &Device) {
-        self.v_buffer.cleanup(device);
-        self.i_buffer.cleanup(device);
+    /// * `allocator` - Global Vulkan memory allocator.
+    pub fn cleanup(&mut self, allocator: &Allocator) {
+        self.v_buffer.cleanup(allocator);
+        self.i_buffer.cleanup(allocator);
     }
 }

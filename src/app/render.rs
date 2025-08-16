@@ -19,7 +19,7 @@ pub fn prepare_imgui_draw_data<'a>(
     imgui: &'a mut ImGuiContext,
     window: &Window,
     show_ms_per_frame: bool,
-    world_controls: &mut WorldControls,
+    _world_controls: &mut WorldControls,
 ) -> &'a imgui::DrawData {
     platform
         .prepare_frame(imgui.io_mut(), window)
@@ -88,7 +88,7 @@ pub fn compute_push_constant_per_obj(
 }
 
 pub fn update_ubo(
-    base: &VulkanBase,
+    base: &mut VulkanBase,
     image_index: usize,
     world: &mut WorldControls,
     camera: &Camera,
@@ -135,19 +135,18 @@ pub fn update_ubo(
     }
 
     // Upload (same mapping pattern you already use)
-    let mem = base.ubo_memory[image_index];
-    let size = std::mem::size_of::<GlobalUbo>() as vk::DeviceSize;
+    let allocation = &mut base.ubo_allocations[image_index];
     unsafe {
         let ptr = base
-            .device
-            .map_memory(mem, 0, size, vk::MemoryMapFlags::empty())
-            .expect("Map UBO");
+            .allocator
+            .map_memory(allocation)
+            .expect("Map UBO") as *mut u8;
         std::ptr::copy_nonoverlapping(
             &ubo as *const GlobalUbo as *const u8,
-            ptr as *mut u8,
+            ptr,
             std::mem::size_of::<GlobalUbo>(),
         );
-        base.device.unmap_memory(mem);
+        base.allocator.unmap_memory(allocation);
     }
 }
 
@@ -181,9 +180,9 @@ pub fn draw_frame(app: &mut App) -> Result<(), Box<dyn Error>> {
 
         if let Some(frame) = vb.begin_frame()? {
             let image_index = frame.image_index as usize;
-            let device = &vb.device;
 
-            update_ubo(&vb, image_index, &mut app.world_controls, &app.camera);
+            update_ubo(vb, image_index, &mut app.world_controls, &app.camera);
+            let device = &vb.device;
 
             let mut current_pipeline_id = usize::MAX;
             for obj in &app.scene.objects {

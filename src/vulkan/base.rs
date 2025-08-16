@@ -43,6 +43,7 @@ use std::ffi::CStr;
 use std::error::Error;
 
 use super::swapchain::Swapchain;
+use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
 
 /// The debug callback function that prints validation layer messages.
 #[cfg(debug_assertions)]
@@ -87,6 +88,8 @@ pub struct VulkanBase {
     pub physical_device: vk::PhysicalDevice,
     /// Logical device used for all Vulkan calls.
     pub device: ash::Device,
+    /// Global Vulkan memory allocator (VMA).
+    pub allocator: Allocator,
     /// Graphics queue from the selected family.
     pub graphics_queue: vk::Queue,
     // -- Global set 0 related --
@@ -96,8 +99,8 @@ pub struct VulkanBase {
     /// One descriptor set per swapchain image for set 0.
     pub set0_descriptor_sets: Vec<vk::DescriptorSet>,
     ubo_buffers: Vec<vk::Buffer>,
-    /// Device memory backing each per-image UBO buffer.
-    pub ubo_memory: Vec<vk::DeviceMemory>,
+    /// Allocations backing each per-image UBO buffer.
+    pub ubo_allocations: Vec<Allocation>,
     // -- Synchronization objects --
     image_available_semaphores: Vec<vk::Semaphore>,
     render_finished_semaphores: Vec<vk::Semaphore>,
@@ -353,22 +356,6 @@ impl VulkanBase {
         Ok(())
     }
     /// Helper: find a suitable memory type on the physical device.
-    fn find_memory_type(
-        instance: &ash::Instance,
-        physical_device: vk::PhysicalDevice,
-        type_filter: u32,
-        properties: vk::MemoryPropertyFlags,
-    ) -> u32 {
-        let mem_props = unsafe { instance.get_physical_device_memory_properties(physical_device) };
-        for i in 0..mem_props.memory_type_count {
-            let mt = mem_props.memory_types[i as usize];
-            if (type_filter & (1 << i)) != 0 && mt.property_flags.contains(properties) {
-                return i;
-            }
-        }
-        panic!("Failed to find suitable memory type");
-    }
-
     /// Creates a Vulkan instance.
     /// # Arguments
     /// * `entry` - The Ash Entry point.
@@ -624,48 +611,35 @@ impl VulkanBase {
 
     /// Create N host-visible, coherent uniform buffers sized for `GlobalUbo`.
     fn create_uniform_buffers(
-        instance: &ash::Instance,
-        device: &ash::Device,
-        physical_device: vk::PhysicalDevice,
+        allocator: &Allocator,
         count: usize,
-    ) -> (Vec<vk::Buffer>, Vec<vk::DeviceMemory>) {
+    ) -> (Vec<vk::Buffer>, Vec<Allocation>) {
         let mut buffers = Vec::with_capacity(count);
-        let mut memories = Vec::with_capacity(count);
+        let mut allocations = Vec::with_capacity(count);
 
         let buffer_size = std::mem::size_of::<GlobalUbo>() as vk::DeviceSize;
 
         for _ in 0..count {
-            // Buffer
             let buffer_info = vk::BufferCreateInfo {
                 size: buffer_size,
                 usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 ..Default::default()
             };
-            let buffer = unsafe { device.create_buffer(&buffer_info, None).expect("create uniform buffer") };
-
-            // Memory
-            let reqs = unsafe { device.get_buffer_memory_requirements(buffer) };
-            let mem_type = Self::find_memory_type(
-                instance,
-                physical_device,
-                reqs.memory_type_bits,
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            );
-            let alloc_info = vk::MemoryAllocateInfo {
-                allocation_size: reqs.size,
-                memory_type_index: mem_type,
+            let alloc_info = vk_mem::AllocationCreateInfo {
+                usage: MemoryUsage::CpuToGpu,
                 ..Default::default()
             };
-            let memory = unsafe { device.allocate_memory(&alloc_info, None).expect("alloc uniform memory") };
-
-            unsafe { device.bind_buffer_memory(buffer, memory, 0).expect("bind uniform memory"); }
-
+            let (buffer, allocation) = unsafe {
+                allocator
+                    .create_buffer(&buffer_info, &alloc_info)
+                    .expect("create uniform buffer")
+            };
             buffers.push(buffer);
-            memories.push(memory);
+            allocations.push(allocation);
         }
 
-        (buffers, memories)
+        (buffers, allocations)
     }
 
     /// Build a descriptor pool and one set=0 descriptor set per swapchain image, then write binding 0 to each UBO.
@@ -763,22 +737,19 @@ impl VulkanBase {
         // Reset per-image fence tracking
         self.image_owner_fence = vec![vk::Fence::null(); new_image_count];
         // Tear down old UBO buffers and descriptor pool
-        for &buf in &self.ubo_buffers {
-            unsafe { self.device.destroy_buffer(buf, None); }
-        }
-        for &mem in &self.ubo_memory {
-            unsafe { self.device.free_memory(mem, None); }
+        for (buf, alloc) in self.ubo_buffers.iter().zip(self.ubo_allocations.iter_mut()) {
+            unsafe { self.allocator.destroy_buffer(*buf, alloc); }
         }
         unsafe { self.device.destroy_descriptor_pool(self.set0_descriptor_pool, None); }
 
         // Recreate UBO buffers and set0 descriptor sets for the new image count
-        let (new_ubo_buffers, new_ubo_memory) =
-            Self::create_uniform_buffers(&self.instance, &self.device, self.physical_device, new_image_count);
+        let (new_ubo_buffers, new_ubo_allocations) =
+            Self::create_uniform_buffers(&self.allocator, new_image_count);
         let (new_pool, new_sets) =
             Self::create_set0_descriptor_pool_and_sets(&self.device, self.set0_global_layout, &new_ubo_buffers);
 
         self.ubo_buffers = new_ubo_buffers;
-        self.ubo_memory = new_ubo_memory;
+        self.ubo_allocations = new_ubo_allocations;
         self.set0_descriptor_pool = new_pool;
         self.set0_descriptor_sets = new_sets;
 
@@ -860,6 +831,10 @@ impl VulkanBase {
 
         let command_pool = Self::create_command_pool(&device, graphics_queue_family_index)?;
 
+        // Create a Vulkan Memory Allocator (VMA) instance.
+        let allocator_info = vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
+        let allocator = unsafe { Allocator::new(allocator_info)? };
+
         // --- Global set-0 layout: reserve binding 0 for a per-frame/per-image UBO ---
         let ubo_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
@@ -888,8 +863,8 @@ impl VulkanBase {
 
         // Create sync objects: N frames-in-flight worth of semaphores/fences
         let image_count = swapchain.swapchain_image_views.len();
-        let (ubo_buffers, ubo_memory) =
-            Self::create_uniform_buffers(&instance, &device, physical_device, image_count);
+        let (ubo_buffers, ubo_allocations) =
+            Self::create_uniform_buffers(&allocator, image_count);
         let (set0_descriptor_pool, set0_descriptor_sets) =
             Self::create_set0_descriptor_pool_and_sets(&device, set0_global_layout, &ubo_buffers);
         let mut image_available_semaphores = Vec::with_capacity(INFLIGHT_FRAMES);
@@ -924,13 +899,14 @@ impl VulkanBase {
             instance,
             physical_device,
             device,
+            allocator,
             graphics_queue,
             // set 0
             set0_global_layout,
             set0_descriptor_pool,
             set0_descriptor_sets,
             ubo_buffers,
-            ubo_memory,
+            ubo_allocations,
             // sync
             image_available_semaphores,
             render_finished_semaphores,
@@ -1009,11 +985,8 @@ impl Drop for VulkanBase {
                 self.device.free_command_buffers(self.command_pool, &[buffer]);
             }
             // UBO and descriptor resources
-            for &buf in &self.ubo_buffers {
-                self.device.destroy_buffer(buf, None);
-            }
-            for &mem in &self.ubo_memory {
-                self.device.free_memory(mem, None);
+            for (buf, alloc) in self.ubo_buffers.iter().zip(self.ubo_allocations.iter_mut()) {
+                self.allocator.destroy_buffer(*buf, alloc);
             }
             self.device.destroy_descriptor_pool(self.set0_descriptor_pool, None);
             self.device.destroy_command_pool(self.command_pool, None);

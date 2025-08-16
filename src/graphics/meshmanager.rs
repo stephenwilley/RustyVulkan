@@ -10,11 +10,11 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use ash::Device;
 use crate::vulkan::base::VulkanBase;
 use crate::graphics::mesh::LoadedMesh;
 use crate::graphics::mesh::Mesh;
 use std::error::Error;
+use vk_mem::Allocator;
 
 /// Manages meshes, ensuring that each mesh is only created once.
 pub struct MeshManager {
@@ -45,9 +45,7 @@ impl MeshManager {
         } else {
             let mesh = LoadedMesh::cube(
                 "Cube".into(),
-                &vb.instance,
-                &vb.device,
-                vb.physical_device,
+                &vb.allocator,
             )?;
             self.meshes.push(mesh);
             Ok(self.meshes.len() - 1)
@@ -70,9 +68,7 @@ impl MeshManager {
         } else {
             let mesh = LoadedMesh::unit_plane(
                 "UnitPlane".into(),
-                &vb.instance,
-                &vb.device,
-                vb.physical_device,
+                &vb.allocator,
             )?;
             self.meshes.push(mesh);
             Ok(self.meshes.len() - 1)
@@ -99,9 +95,7 @@ impl MeshManager {
         // Otherwise upload to GPU...
         let loaded = crate::graphics::mesh::LoadedMesh::load(
             name.clone(),
-            &vb.instance,
-            &vb.device,
-            vb.physical_device,
+            &vb.allocator,
             &mesh,
         )?;
         self.meshes.push(loaded);
@@ -111,10 +105,10 @@ impl MeshManager {
     /// Cleans up all meshes.
     /// # Arguments
     /// * `device` - The Vulkan device.
-    pub fn cleanup(&mut self, device: &Device) {
+    pub fn cleanup(&mut self, allocator: &Allocator) {
         for mesh in &mut self.meshes {
             println!("🗑️ Cleaning up mesh {}", mesh.name);
-            mesh.cleanup(device);
+            mesh.cleanup(allocator);
         }
         self.meshes.clear();
         println!("🗑️ MeshManager cleaned up");

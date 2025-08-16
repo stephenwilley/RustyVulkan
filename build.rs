@@ -3,88 +3,77 @@
 //
 // Created: July 2025
 // Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
-// Updated: August 2025
 //
-// This build script now uses the `slangc` command line compiler to translate
-// Slang shader files located in `assets/shaders/` into SPIR-V binaries.  Any
-// file with the extension `.slang` is parsed.  The expected naming convention is
-// `<name>.<stage>.slang` where `<stage>` is one of `vert`, `frag`, `comp`,
-// `geom`, `tesc`, or `tese`.  The compiled binaries are written to
-// `assets/shaders/spv/<name>.<stage>.spv`.
+// This build script runs automatically before compilation. It looks in `assets/shaders/`
+// and compiles any `.vert`, `.frag`, `.comp`, `.geom`, `.tesc`, or `.tese` GLSL files
+// into SPIR-V binaries using the `shaderc` crate.
 //
-// The script preserves the auto-build behaviour: shaders are rebuilt whenever
-// their source changes and a friendly warning is printed if `slangc` is not
-// available on the build machine.
+// The output `.spv` files are written alongside the originals for later loading by Vulkan.
+//
+// Note:
+//   • Only files with recognized shader extensions are compiled
+//   • Each file is recompiled only if it's changed (via cargo:rerun-if-changed)
+//   • This runs automatically during `cargo build`
+//
+// This script ensures that all shaders are ready to go before linking the final binary.
 // --------------------------------------------------------------------------------------
 
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
 fn compile_shaders() {
     let shader_dir = Path::new("assets/shaders");
+    let compiler = shaderc::Compiler::new().unwrap();
 
-    // Ensure the slang compiler exists.  If not, emit a warning and bail out so
-    // that builds can continue (precompiled shaders may already exist).
-    if Command::new("slangc").arg("--version").status().is_err() {
-        println!("cargo:warning=slangc not found - skipping shader compilation");
-        return;
-    }
-
-    for entry in fs::read_dir(shader_dir).expect("Unable to read shader dir") {
-        let path = entry.expect("Invalid dir entry").path();
-        if path.extension().and_then(|s| s.to_str()) != Some("slang") {
-            continue; // only compile .slang files
-        }
-
+    for entry in fs::read_dir(shader_dir).unwrap() {
+        let path = entry.unwrap().path();
         println!("📝 Compiling shader: {:?}", path);
 
-        // File naming convention: <name>.<stage>.slang
-        let file_name = path.file_name().unwrap().to_string_lossy();
-        let parts: Vec<&str> = file_name.split('.').collect();
-        if parts.len() < 3 {
-            println!("cargo:warning=unrecognised shader filename format: {}", file_name);
-            continue;
-        }
-        let name = parts[0];
-        let stage = parts[1];
-
-        let profile = match stage {
-            "vert" => "vs_6_0",
-            "frag" => "ps_6_0",
-            "comp" => "cs_6_0",
-            "geom" => "gs_6_0",
-            "tesc" => "hs_6_0",
-            "tese" => "ds_6_0",
-            _ => {
-                println!("cargo:warning=unknown shader stage in {}", file_name);
-                continue;
-            }
+        let shader_kind = match path.extension().and_then(|s| s.to_str()) {
+            Some("vert") => Some(shaderc::ShaderKind::Vertex),
+            Some("frag") => Some(shaderc::ShaderKind::Fragment),
+            Some("geom") => Some(shaderc::ShaderKind::Geometry),
+            Some("comp") => Some(shaderc::ShaderKind::Compute),
+            Some("tesc") => Some(shaderc::ShaderKind::TessControl),
+            Some("tese") => Some(shaderc::ShaderKind::TessEvaluation),
+            _ => None,
         };
+
+        let Some(shader_kind) = shader_kind else {
+            continue; // Skip unsupported extensions
+        };
+
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("📝 Failed to read shader source: {:?}", path));
+
+        let mut options = shaderc::CompileOptions::new().unwrap();
+        options.set_target_env(shaderc::TargetEnv::Vulkan, 0);
+
+        let binary_result = compiler.compile_into_spirv(
+            &source,
+            shader_kind,
+            path.file_name().unwrap().to_str().unwrap(),
+            "main",
+            Some(&options),
+        ).expect("📝 Shader compilation failed");
 
         let spv_dir = shader_dir.join("spv");
         fs::create_dir_all(&spv_dir).unwrap();
-        let spv_path = spv_dir.join(format!("{}.{}.spv", name, stage));
 
-        let status = Command::new("slangc")
-            .arg(&path)
-            .arg("-target").arg("spirv")
-            .arg("-profile").arg(profile)
-            .arg("-entry").arg("main")
-            .arg("-o").arg(&spv_path)
-            .status()
-            .expect("failed to run slangc");
-
-        if !status.success() {
-            panic!("slangc failed to compile {:?}", path);
-        }
-
+        // Grab the full filename (e.g. "lambert.frag"):
+        let shader_name = path.file_name().unwrap().to_string_lossy();
+        // Append ".spv" to it, giving "lambert.frag.spv":
+        let spv_file_name = format!("{}.spv", shader_name);
+        // Build the final path:
+        let spv_path = spv_dir.join(spv_file_name);
+        fs::write(&spv_path, binary_result.as_binary_u8()).unwrap();
         println!("cargo:rerun-if-changed={}", path.display());
     }
 }
 
 fn main() {
+    // Tell Cargo when to rerun this build script:
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=assets/shaders");
     compile_shaders();
-    println!("📝 Shader compilation step complete");
+    println!("📝 Shader compilation completed successfully!");
 }
-

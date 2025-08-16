@@ -44,6 +44,7 @@ use winit::window::Window;
 
 use super::swapchain::Swapchain;
 use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
+use std::sync::Arc;
 
 /// The debug callback function that prints validation layer messages.
 #[cfg(debug_assertions)]
@@ -88,7 +89,7 @@ pub struct VulkanBase {
     /// Logical device used for all Vulkan calls.
     pub device: ash::Device,
     /// Global Vulkan memory allocator (VMA).
-    pub allocator: Allocator,
+    pub allocator: Arc<Allocator>,
     /// Graphics queue from the selected family.
     pub graphics_queue: vk::Queue,
     // -- Global set 0 related --
@@ -899,7 +900,7 @@ impl VulkanBase {
 
         // Create a Vulkan Memory Allocator (VMA) instance.
         let allocator_info = vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
-        let allocator = unsafe { Allocator::new(allocator_info)? };
+        let allocator = Arc::new(unsafe { Allocator::new(allocator_info)? });
 
         // --- Global set-0 layout: reserve binding 0 for a per-frame/per-image UBO ---
         let ubo_binding = vk::DescriptorSetLayoutBinding {

@@ -657,7 +657,9 @@ impl VulkanBase {
                 ..Default::default()
             };
             let alloc_info = vk_mem::AllocationCreateInfo {
-                usage: MemoryUsage::CpuToGpu,
+                usage: MemoryUsage::AutoPreferHost,
+                flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
+                    | vk_mem::AllocationCreateFlags::MAPPED,
                 ..Default::default()
             };
             let (buffer, allocation) = unsafe {

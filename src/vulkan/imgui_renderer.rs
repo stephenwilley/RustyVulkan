@@ -76,7 +76,8 @@ impl ImGuiRenderer {
             ..Default::default()
         };
         let alloc_info = vk_mem::AllocationCreateInfo {
-            usage: MemoryUsage::CpuToGpu,
+            usage: MemoryUsage::AutoPreferHost,
+            flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
             ..Default::default()
         };
         unsafe { allocator.create_buffer(&buffer_info, &alloc_info).expect("create staging buffer") }
@@ -119,7 +120,7 @@ impl ImGuiRenderer {
             ..Default::default()
         };
         let alloc_info = vk_mem::AllocationCreateInfo {
-            usage: MemoryUsage::GpuOnly,
+            usage: MemoryUsage::AutoPreferDevice,
             ..Default::default()
         };
         unsafe { allocator.create_image(&image_info, &alloc_info).expect("create font image") }
@@ -647,7 +648,8 @@ impl ImGuiRenderer {
                 ..Default::default()
             };
             let alloc_info = vk_mem::AllocationCreateInfo {
-                usage: MemoryUsage::CpuToGpu,
+                usage: MemoryUsage::AutoPreferHost,
+                flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                 ..Default::default()
             };
             let (buf, alloc) = unsafe { self.allocator.create_buffer(&buffer_info, &alloc_info).expect("create vertex buffer") };
@@ -670,7 +672,8 @@ impl ImGuiRenderer {
                 ..Default::default()
             };
             let alloc_info = vk_mem::AllocationCreateInfo {
-                usage: MemoryUsage::CpuToGpu,
+                usage: MemoryUsage::AutoPreferHost,
+                flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                 ..Default::default()
             };
             let (buf, alloc) = unsafe { self.allocator.create_buffer(&buffer_info, &alloc_info).expect("create index buffer") };

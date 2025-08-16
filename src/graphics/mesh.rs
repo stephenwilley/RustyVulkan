@@ -108,7 +108,9 @@ impl VertexBuffer {
             ..Default::default()
         };
         let alloc_info = vk_mem::AllocationCreateInfo {
-            usage: MemoryUsage::CpuToGpu,
+            usage: MemoryUsage::AutoPreferHost,
+            flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
+                | vk_mem::AllocationCreateFlags::MAPPED,
             ..Default::default()
         };
         let (buffer, mut allocation) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
@@ -155,7 +157,9 @@ impl IndexBuffer {
             ..Default::default()
         };
         let alloc_info = vk_mem::AllocationCreateInfo {
-            usage: MemoryUsage::CpuToGpu,
+            usage: MemoryUsage::AutoPreferHost,
+            flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
+                | vk_mem::AllocationCreateFlags::MAPPED,
             ..Default::default()
         };
         let (buffer, mut allocation) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };

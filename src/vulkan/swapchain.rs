@@ -287,7 +287,7 @@ impl Swapchain {
             ..Default::default()
         };
         let alloc_info = vk_mem::AllocationCreateInfo {
-            usage: MemoryUsage::GpuOnly,
+            usage: MemoryUsage::AutoPreferDevice,
             ..Default::default()
         };
 

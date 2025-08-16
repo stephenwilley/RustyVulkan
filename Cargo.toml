@@ -1,5 +1,5 @@
 [package]
-name = "Specular"
+name = "RustyVulkan"
 version = "0.1.0"
 edition = "2024"
 
@@ -21,4 +21,4 @@ mikktspace = "0.3.0"
 vk-mem = "0.5"
 
 [build-dependencies]
-shaderc = "0.8"
+shaderc = "0.9.1"

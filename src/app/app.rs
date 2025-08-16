@@ -66,7 +66,7 @@ impl App {
     }
 
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Window {
-        let window_attributes = WindowAttributes::default().with_title("Rust Vulkan 51 - Refactor");
+        let window_attributes = WindowAttributes::default().with_title("Rusty Vulkan");
         let window = event_loop
             .create_window(window_attributes)
             .expect("Failed to create window");

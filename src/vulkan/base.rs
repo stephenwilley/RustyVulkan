@@ -30,17 +30,17 @@
 /// Number of CPU frames-in-flight (slots) for synchronization.
 const INFLIGHT_FRAMES: usize = 2;
 
-use ash::{Entry, Instance};
-use ash::vk;
-use ash_window::enumerate_required_extensions;
 use ash::khr::surface;
-use ash_window::create_surface;
 use ash::khr::swapchain;
-use winit::event_loop::{ActiveEventLoop};
-use winit::window::Window;
+use ash::vk;
+use ash::{Entry, Instance};
+use ash_window::create_surface;
+use ash_window::enumerate_required_extensions;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use std::ffi::CStr;
 use std::error::Error;
+use std::ffi::CStr;
+use winit::event_loop::ActiveEventLoop;
+use winit::window::Window;
 
 use super::swapchain::Swapchain;
 use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
@@ -71,15 +71,14 @@ unsafe extern "system" fn vulkan_debug_callback(
         eprintln!("{} {} {:?}", severity, ty, message);
     }
     vk::FALSE
-
 }
 
 /// Represents the Vulkan backend, encapsulating all Vulkan-related state and operations
 /// and acts as the parent for the swapchain and rendering pipeline.
-/// 
+///
 /// It handles initialization, resource management, and rendering logic.
 /// This includes creating the Vulkan instance, physical device selection,
-/// logical device creation, command pools, command buffers, synchronization objects, 
+/// logical device creation, command pools, command buffers, synchronization objects,
 /// and hands off swapchain management to the `Swapchain` struct.
 pub struct VulkanBase {
     /// Owning Vulkan instance (created in `new`, destroyed in `Drop`).
@@ -156,7 +155,8 @@ impl VulkanBase {
             let slot = self.frame_slot;
 
             // Wait for the previous work submitted on this CPU slot.
-            self.device.wait_for_fences(&[self.in_flight_fences[slot]], true, u64::MAX)?;
+            self.device
+                .wait_for_fences(&[self.in_flight_fences[slot]], true, u64::MAX)?;
 
             // Acquire an image; signal when it's ready via the per-slot image-available semaphore.
             let (image_index, _is_suboptimal) = match self.swapchain_loader.acquire_next_image(
@@ -174,7 +174,8 @@ impl VulkanBase {
 
             // If this image is still tied to an older in-flight slot, wait for that slot to finish first.
             if self.image_owner_fence[idx] != vk::Fence::null() {
-                self.device.wait_for_fences(&[self.image_owner_fence[idx]], true, u64::MAX)?;
+                self.device
+                    .wait_for_fences(&[self.image_owner_fence[idx]], true, u64::MAX)?;
             }
 
             // Reuse this slot's fence for the new submit and associate it with this image.
@@ -182,8 +183,8 @@ impl VulkanBase {
             self.image_owner_fence[idx] = self.in_flight_fences[slot];
 
             // Begin recording and open dynamic rendering so the caller can just bind/draw.
-            let cmd_buf    = self.command_buffers[idx];
-            let extent      = self.swapchain.extent;
+            let cmd_buf = self.command_buffers[idx];
+            let extent = self.swapchain.extent;
 
             let begin_info = vk::CommandBufferBeginInfo::default();
             self.device.begin_command_buffer(cmd_buf, &begin_info)?;
@@ -237,8 +238,17 @@ impl VulkanBase {
             self.swapchain.image_layouts[idx] = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
             self.swapchain.depth_layouts[idx] = vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL;
 
-            let clear_color = vk::ClearValue { color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 1.0] } };
-            let clear_depth = vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } };
+            let clear_color = vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: [0.0, 0.0, 0.0, 1.0],
+                },
+            };
+            let clear_depth = vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 1.0,
+                    stencil: 0,
+                },
+            };
             let color_attachment = vk::RenderingAttachmentInfo {
                 image_view: self.swapchain.swapchain_image_views[idx],
                 image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
@@ -256,7 +266,10 @@ impl VulkanBase {
                 ..Default::default()
             };
             let rendering_info = vk::RenderingInfo {
-                render_area: vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent },
+                render_area: vk::Rect2D {
+                    offset: vk::Offset2D { x: 0, y: 0 },
+                    extent,
+                },
                 layer_count: 1,
                 color_attachment_count: 1,
                 p_color_attachments: &color_attachment,
@@ -265,7 +278,11 @@ impl VulkanBase {
             };
             self.device.cmd_begin_rendering(cmd_buf, &rendering_info);
 
-            Ok(Some(FrameCtx { cmd_buf, image_index, frame_slot: slot }))
+            Ok(Some(FrameCtx {
+                cmd_buf,
+                image_index,
+                frame_slot: slot,
+            }))
         }
     }
 
@@ -315,7 +332,7 @@ impl VulkanBase {
 
             // Submit: wait for image-available (slot), signal render-finished (per-image)
             let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-            let wait_sems   = [self.image_available_semaphores[frame.frame_slot]];
+            let wait_sems = [self.image_available_semaphores[frame.frame_slot]];
             let signal_sems = [self.render_finished_semaphores[frame.image_index as usize]];
             let submit_info = vk::SubmitInfo {
                 wait_semaphore_count: 1,
@@ -344,8 +361,12 @@ impl VulkanBase {
                 p_image_indices: &image_index,
                 ..Default::default()
             };
-            match self.swapchain_loader.queue_present(self.graphics_queue, &present_info) {
-                Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => { /* caller will recreate if needed */ }
+            match self
+                .swapchain_loader
+                .queue_present(self.graphics_queue, &present_info)
+            {
+                Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => { /* caller will recreate if needed */
+                }
                 Err(e) => return Err(e.into()),
                 _ => {}
             }
@@ -364,7 +385,9 @@ impl VulkanBase {
     /// # Returns
     /// * `Result<Instance, Box<dyn Error>>` - The created Vulkan instance on success, or an error on failure.
     fn create_instance(
-        entry: &Entry, event_loop: &ActiveEventLoop, layers: &[*const i8]
+        entry: &Entry,
+        event_loop: &ActiveEventLoop,
+        layers: &[*const i8],
     ) -> Result<Instance, Box<dyn Error>> {
         let app_name = std::ffi::CString::new("Ash Vulkan Tutorial")?;
 
@@ -377,14 +400,16 @@ impl VulkanBase {
             ..Default::default()
         };
 
-        let ext_names = enumerate_required_extensions(event_loop.display_handle().unwrap().as_raw())?;
+        let ext_names =
+            enumerate_required_extensions(event_loop.display_handle().unwrap().as_raw())?;
         let mut extension_ptrs: Vec<*const i8> = ext_names.to_vec();
 
         #[cfg(debug_assertions)]
         extension_ptrs.push(ash::ext::debug_utils::NAME.as_ptr());
 
         // Query supported instance extensions
-        let supported_instance_exts = unsafe { entry.enumerate_instance_extension_properties(None)? };
+        let supported_instance_exts =
+            unsafe { entry.enumerate_instance_extension_properties(None)? };
         let supports_portability_enum = supported_instance_exts.iter().any(|e| {
             let name = unsafe { std::ffi::CStr::from_ptr(e.extension_name.as_ptr()) };
             name == vk::KHR_PORTABILITY_ENUMERATION_NAME
@@ -416,9 +441,7 @@ impl VulkanBase {
         println!("Detected {} physical device(s):", physical_devices.len());
 
         for device in physical_devices.iter() {
-            let props = unsafe {
-                instance.get_physical_device_properties(*device)
-            };
+            let props = unsafe { instance.get_physical_device_properties(*device) };
             let name_cstr = unsafe { CStr::from_ptr(props.device_name.as_ptr()) };
             let name = name_cstr.to_str().unwrap_or("<invalid utf-8>");
             println!(
@@ -439,7 +462,10 @@ impl VulkanBase {
     /// * `physical_devices` - A slice of available physical devices.
     /// # Returns
     /// * `vk::PhysicalDevice` - The chosen physical device.
-    fn choose_device(instance: &Instance, physical_devices: &[vk::PhysicalDevice]) -> vk::PhysicalDevice {
+    fn choose_device(
+        instance: &Instance,
+        physical_devices: &[vk::PhysicalDevice],
+    ) -> vk::PhysicalDevice {
         physical_devices
             .iter()
             .find(|&d| {
@@ -456,10 +482,12 @@ impl VulkanBase {
     /// * `physical_device` - The physical device to query.
     /// # Returns
     /// * `Result<u32, String>` - The queue family index on success, or an error string if not found.
-    fn find_graphics_queue_family_index(instance: &Instance, physical_device: vk::PhysicalDevice) -> Result<u32, String> {
-        let queue_family_properties = unsafe {
-            instance.get_physical_device_queue_family_properties(physical_device)
-        };
+    fn find_graphics_queue_family_index(
+        instance: &Instance,
+        physical_device: vk::PhysicalDevice,
+    ) -> Result<u32, String> {
+        let queue_family_properties =
+            unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
 
         let index = queue_family_properties
             .iter()
@@ -491,9 +519,7 @@ impl VulkanBase {
         let queue_priority = [1.0_f32];
 
         // Query and enable device features, including sampler anisotropy
-        let mut device_features = unsafe {
-            instance.get_physical_device_features(physical_device)
-        };
+        let mut device_features = unsafe { instance.get_physical_device_features(physical_device) };
         device_features.sampler_anisotropy = vk::TRUE;
 
         let queue_info = vk::DeviceQueueCreateInfo {
@@ -573,7 +599,10 @@ impl VulkanBase {
     /// * `queue_family_index` - The index of the queue family to associate with the command pool.
     /// # Returns
     /// * `Result<vk::CommandPool, vk::Result>` - The created command pool on success, or a Vulkan error on failure.
-    fn create_command_pool(device: &ash::Device, queue_family_index: u32) -> Result<vk::CommandPool, vk::Result> {
+    fn create_command_pool(
+        device: &ash::Device,
+        queue_family_index: u32,
+    ) -> Result<vk::CommandPool, vk::Result> {
         let info = vk::CommandPoolCreateInfo {
             queue_family_index,
             flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
@@ -661,7 +690,11 @@ impl VulkanBase {
             max_sets: count,
             ..Default::default()
         };
-        let pool = unsafe { device.create_descriptor_pool(&pool_info, None).expect("create set0 pool") };
+        let pool = unsafe {
+            device
+                .create_descriptor_pool(&pool_info, None)
+                .expect("create set0 pool")
+        };
 
         // Allocate
         let layouts = vec![layout; count as usize];
@@ -671,13 +704,21 @@ impl VulkanBase {
             p_set_layouts: layouts.as_ptr(),
             ..Default::default()
         };
-        let sets = unsafe { device.allocate_descriptor_sets(&alloc_info).expect("alloc set0 sets") };
+        let sets = unsafe {
+            device
+                .allocate_descriptor_sets(&alloc_info)
+                .expect("alloc set0 sets")
+        };
 
         // Write binding 0
         let range = std::mem::size_of::<GlobalUbo>() as vk::DeviceSize;
         let mut buf_infos: Vec<vk::DescriptorBufferInfo> = Vec::with_capacity(count as usize);
         for &b in ubo_buffers {
-            buf_infos.push(vk::DescriptorBufferInfo { buffer: b, offset: 0, range });
+            buf_infos.push(vk::DescriptorBufferInfo {
+                buffer: b,
+                offset: 0,
+                range,
+            });
         }
 
         let mut writes: Vec<vk::WriteDescriptorSet> = Vec::with_capacity(count as usize);
@@ -692,7 +733,9 @@ impl VulkanBase {
                 ..Default::default()
             });
         }
-        unsafe { device.update_descriptor_sets(&writes, &[]); }
+        unsafe {
+            device.update_descriptor_sets(&writes, &[]);
+        }
 
         (pool, sets)
     }
@@ -704,7 +747,9 @@ impl VulkanBase {
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error if the swapchain could not be recreated.
     pub fn recreate_swapchain(&mut self, window: &Window) -> Result<(), Box<dyn Error>> {
         unsafe {
-            self.device.device_wait_idle().expect("Failed to wait device idle before recreating swapchain");
+            self.device
+                .device_wait_idle()
+                .expect("Failed to wait device idle before recreating swapchain");
         }
         self.swapchain.recreate(
             &self.instance,
@@ -712,10 +757,12 @@ impl VulkanBase {
             self.physical_device,
             &self.surface,
             &self.surface_loader,
-            window
+            window,
+            &self.allocator,
         )?;
         unsafe {
-            self.device.free_command_buffers(self.command_pool, &self.command_buffers);
+            self.device
+                .free_command_buffers(self.command_pool, &self.command_buffers);
         }
         self.command_buffers = Self::allocate_command_buffers(
             &self.device,
@@ -725,28 +772,41 @@ impl VulkanBase {
         )?;
         // Destroy old per-image present semaphores
         for &sem in &self.render_finished_semaphores {
-            unsafe { self.device.destroy_semaphore(sem, None); }
+            unsafe {
+                self.device.destroy_semaphore(sem, None);
+            }
         }
         // Recreate to match new image count
         let new_image_count = self.swapchain.swapchain_image_views.len();
         let semaphore_info = vk::SemaphoreCreateInfo::default();
         self.render_finished_semaphores = Vec::with_capacity(new_image_count);
         for _ in 0..new_image_count {
-            unsafe { self.render_finished_semaphores.push(self.device.create_semaphore(&semaphore_info, None)?); }
+            unsafe {
+                self.render_finished_semaphores
+                    .push(self.device.create_semaphore(&semaphore_info, None)?);
+            }
         }
         // Reset per-image fence tracking
         self.image_owner_fence = vec![vk::Fence::null(); new_image_count];
         // Tear down old UBO buffers and descriptor pool
         for (buf, alloc) in self.ubo_buffers.iter().zip(self.ubo_allocations.iter_mut()) {
-            unsafe { self.allocator.destroy_buffer(*buf, alloc); }
+            unsafe {
+                self.allocator.destroy_buffer(*buf, alloc);
+            }
         }
-        unsafe { self.device.destroy_descriptor_pool(self.set0_descriptor_pool, None); }
+        unsafe {
+            self.device
+                .destroy_descriptor_pool(self.set0_descriptor_pool, None);
+        }
 
         // Recreate UBO buffers and set0 descriptor sets for the new image count
         let (new_ubo_buffers, new_ubo_allocations) =
             Self::create_uniform_buffers(&self.allocator, new_image_count);
-        let (new_pool, new_sets) =
-            Self::create_set0_descriptor_pool_and_sets(&self.device, self.set0_global_layout, &new_ubo_buffers);
+        let (new_pool, new_sets) = Self::create_set0_descriptor_pool_and_sets(
+            &self.device,
+            self.set0_global_layout,
+            &new_ubo_buffers,
+        );
 
         self.ubo_buffers = new_ubo_buffers;
         self.ubo_allocations = new_ubo_allocations;
@@ -817,14 +877,20 @@ impl VulkanBase {
         let physical_device = Self::choose_device(&instance, &physical_devices);
         let chosen_props = unsafe { instance.get_physical_device_properties(physical_device) };
         let chosen_name = unsafe {
-            CStr::from_ptr(chosen_props.device_name.as_ptr()).to_str().unwrap_or("<invalid utf-8>")
+            CStr::from_ptr(chosen_props.device_name.as_ptr())
+                .to_str()
+                .unwrap_or("<invalid utf-8>")
         };
         println!("👉 Selected device for next steps: '{}'", chosen_name);
 
-        let graphics_queue_family_index = Self::find_graphics_queue_family_index(&instance, physical_device)?;
+        let graphics_queue_family_index =
+            Self::find_graphics_queue_family_index(&instance, physical_device)?;
 
-        let (device, graphics_queue) =
-            Self::create_logical_device_and_queue(&instance, physical_device, graphics_queue_family_index)?;
+        let (device, graphics_queue) = Self::create_logical_device_and_queue(
+            &instance,
+            physical_device,
+            graphics_queue_family_index,
+        )?;
 
         let surface = Self::create_surface(&entry, &instance, window, event_loop)?;
         let surface_loader = surface::Instance::new(&entry, &instance);
@@ -858,13 +924,14 @@ impl VulkanBase {
             physical_device,
             &surface,
             &surface_loader,
-            window)?;
-        let swapchain_loader= swapchain::Device::new(&instance, &device);
+            window,
+            &allocator,
+        )?;
+        let swapchain_loader = swapchain::Device::new(&instance, &device);
 
         // Create sync objects: N frames-in-flight worth of semaphores/fences
         let image_count = swapchain.swapchain_image_views.len();
-        let (ubo_buffers, ubo_allocations) =
-            Self::create_uniform_buffers(&allocator, image_count);
+        let (ubo_buffers, ubo_allocations) = Self::create_uniform_buffers(&allocator, image_count);
         let (set0_descriptor_pool, set0_descriptor_sets) =
             Self::create_set0_descriptor_pool_and_sets(&device, set0_global_layout, &ubo_buffers);
         let mut image_available_semaphores = Vec::with_capacity(INFLIGHT_FRAMES);
@@ -883,7 +950,9 @@ impl VulkanBase {
 
         let mut render_finished_semaphores = Vec::with_capacity(image_count);
         for _ in 0..image_count {
-            unsafe { render_finished_semaphores.push(device.create_semaphore(&semaphore_info, None)?); }
+            unsafe {
+                render_finished_semaphores.push(device.create_semaphore(&semaphore_info, None)?);
+            }
         }
 
         // Per-swapchain-image tracker: which fence currently owns each image (or null)
@@ -893,7 +962,8 @@ impl VulkanBase {
             &device,
             command_pool,
             vk::CommandBufferLevel::PRIMARY,
-            swapchain.swapchain_image_views.len())?;
+            swapchain.swapchain_image_views.len(),
+        )?;
 
         let vulkan_base = Self {
             instance,
@@ -949,10 +1019,7 @@ impl VulkanBase {
             pfn_user_callback: Some(vulkan_debug_callback),
             ..Default::default()
         };
-        let messenger = unsafe {
-            loader
-                .create_debug_utils_messenger(&create_info, None)?
-        };
+        let messenger = unsafe { loader.create_debug_utils_messenger(&create_info, None)? };
         println!("🔍 Debug messenger created");
         Ok((loader, messenger))
     }
@@ -966,10 +1033,14 @@ impl Drop for VulkanBase {
     fn drop(&mut self) {
         println!("💧 Dropping VulkanBase");
         unsafe {
-            self.device.device_wait_idle().expect("Failed to wait device idle");
+            self.device
+                .device_wait_idle()
+                .expect("Failed to wait device idle");
 
-            self.swapchain.cleanup(&self.instance, &self.device);
-            self.device.destroy_descriptor_set_layout(self.set0_global_layout, None);
+            self.swapchain
+                .cleanup(&self.instance, &self.device, &self.allocator);
+            self.device
+                .destroy_descriptor_set_layout(self.set0_global_layout, None);
 
             // Then destroy the rest of the resources
             for &sem in &self.image_available_semaphores {
@@ -982,18 +1053,21 @@ impl Drop for VulkanBase {
                 self.device.destroy_fence(fence, None);
             }
             for &buffer in &self.command_buffers {
-                self.device.free_command_buffers(self.command_pool, &[buffer]);
+                self.device
+                    .free_command_buffers(self.command_pool, &[buffer]);
             }
             // UBO and descriptor resources
             for (buf, alloc) in self.ubo_buffers.iter().zip(self.ubo_allocations.iter_mut()) {
                 self.allocator.destroy_buffer(*buf, alloc);
             }
-            self.device.destroy_descriptor_pool(self.set0_descriptor_pool, None);
+            self.device
+                .destroy_descriptor_pool(self.set0_descriptor_pool, None);
             self.device.destroy_command_pool(self.command_pool, None);
             self.device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
             #[cfg(debug_assertions)]
-            self.debug_utils_loader.destroy_debug_utils_messenger(self.debug_messenger, None);
+            self.debug_utils_loader
+                .destroy_debug_utils_messenger(self.debug_messenger, None);
             self.instance.destroy_instance(None);
         }
     }
@@ -1009,9 +1083,9 @@ pub struct EngineDebugSettings {
 #[derive(Clone, Copy, Default)]
 pub struct GpuLight {
     pub position: [f32; 3],
-    pub intensity: f32,   // packs with position to 16 bytes
+    pub intensity: f32, // packs with position to 16 bytes
     pub color: [f32; 3],
-    pub _pad: f32,        // pad to 16 bytes
+    pub _pad: f32, // pad to 16 bytes
 }
 
 /// Global (per-frame/per-image) uniform buffer object shared across all pipelines via **descriptor set 0, binding 0**.
@@ -1021,7 +1095,7 @@ pub struct GpuLight {
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Default)]
 pub struct GlobalUbo {
-    pub lights: [GpuLight; crate::app::app::MAX_LIGHTS],      // array of structs (std140: 16-byte aligned/strided)
-    pub light_count: u32,                                     // scalar after array
-    pub _pad0: [u32; 3],                                      // pad to 16B multiple (std140)
+    pub lights: [GpuLight; crate::app::app::MAX_LIGHTS], // array of structs (std140: 16-byte aligned/strided)
+    pub light_count: u32,                                // scalar after array
+    pub _pad0: [u32; 3],                                 // pad to 16B multiple (std140)
 }

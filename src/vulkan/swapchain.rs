@@ -19,11 +19,12 @@
 //! --------------------------------------------------------------------------------------
 
 use ash::Instance;
-use ash::vk;
 use ash::khr::surface;
 use ash::khr::swapchain;
-use winit::window::Window;
+use ash::vk;
 use std::error::Error;
+use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
+use winit::window::Window;
 
 /// Represents the Vulkan swapchain and associated resources
 /// including image views and depth images.
@@ -37,7 +38,7 @@ pub struct Swapchain {
     pub color_format: vk::Format,
     pub depth_format: vk::Format,
     pub depth_images: Vec<vk::Image>,
-    pub depth_memories: Vec<vk::DeviceMemory>,
+    pub depth_allocations: Vec<Allocation>,
     pub image_layouts: Vec<vk::ImageLayout>,
     pub depth_layouts: Vec<vk::ImageLayout>,
 }
@@ -60,8 +61,10 @@ impl Swapchain {
         surface: &vk::SurfaceKHR,
         surface_loader: &surface::Instance,
         window: &Window,
+        allocator: &Allocator,
     ) -> Result<Self, Box<dyn Error>> {
-        let swapchain_support = SwapchainSupportDetails::query(physical_device, *surface, surface_loader)?;
+        let swapchain_support =
+            SwapchainSupportDetails::query(physical_device, *surface, surface_loader)?;
 
         let surface_format = Self::choose_swap_surface_format(&swapchain_support.formats);
         let present_mode = Self::choose_swap_present_mode(&swapchain_support.present_modes);
@@ -71,7 +74,9 @@ impl Swapchain {
         if image_count < swapchain_support.capabilities.min_image_count {
             image_count = swapchain_support.capabilities.min_image_count;
         }
-        if swapchain_support.capabilities.max_image_count > 0 && image_count > swapchain_support.capabilities.max_image_count {
+        if swapchain_support.capabilities.max_image_count > 0
+            && image_count > swapchain_support.capabilities.max_image_count
+        {
             image_count = swapchain_support.capabilities.max_image_count;
         }
 
@@ -99,11 +104,12 @@ impl Swapchain {
         let image_count = swapchain_images.len();
         println!("🖼️ Swapchain created with {} images", image_count);
 
-        let depth_images = Self::create_depth_images(device, &swapchain_images, extent)?;
-        let depth_memories = Self::create_depth_memories(device, instance, physical_device, &depth_images)?;
+        let (depth_images, depth_allocations) =
+            Self::create_depth_images(allocator, &swapchain_images, extent)?;
         let depth_image_views = Self::create_depth_image_views(device, &depth_images)?;
 
-        let swapchain_image_views = Self::create_image_views(device, &swapchain_images, surface_format.format)?;
+        let swapchain_image_views =
+            Self::create_image_views(device, &swapchain_images, surface_format.format)?;
 
         Ok(Self {
             handle,
@@ -114,7 +120,7 @@ impl Swapchain {
             color_format: surface_format.format,
             depth_format: vk::Format::D32_SFLOAT,
             depth_images,
-            depth_memories,
+            depth_allocations,
             image_layouts: vec![vk::ImageLayout::UNDEFINED; image_count],
             depth_layouts: vec![vk::ImageLayout::UNDEFINED; image_count],
         })
@@ -140,13 +146,23 @@ impl Swapchain {
         physical_device: vk::PhysicalDevice,
         surface: &vk::SurfaceKHR,
         surface_loader: &surface::Instance,
-        window: &Window) -> Result<(), Box<dyn Error>> {
+        window: &Window,
+        allocator: &Allocator,
+    ) -> Result<(), Box<dyn Error>> {
         unsafe {
             device.device_wait_idle()?;
         }
-        self.cleanup(instance, device);
+        self.cleanup(instance, device, allocator);
 
-        let new_swapchain = Swapchain::new(instance, device, physical_device, surface, surface_loader, window)?;
+        let new_swapchain = Swapchain::new(
+            instance,
+            device,
+            physical_device,
+            surface,
+            surface_loader,
+            window,
+            allocator,
+        )?;
         *self = new_swapchain;
 
         println!("🔄 Swapchain recreated successfully");
@@ -160,7 +176,7 @@ impl Swapchain {
     /// # Arguments
     /// * `instance` - The Vulkan `Instance` to use for destroying the swapchain
     /// * `device` - The Vulkan logical device to use for destroying resources
-    pub fn cleanup(&mut self, instance: &Instance, device: &ash::Device) {
+    pub fn cleanup(&mut self, instance: &Instance, device: &ash::Device, allocator: &Allocator) {
         unsafe {
             for &view in &self.swapchain_image_views {
                 device.destroy_image_view(view, None);
@@ -168,11 +184,12 @@ impl Swapchain {
             for &dv in &self.depth_image_views {
                 device.destroy_image_view(dv, None);
             }
-            for &image in &self.depth_images {
-                device.destroy_image(image, None);
-            }
-            for &memory in &self.depth_memories {
-                device.free_memory(memory, None);
+            for (image, allocation) in self
+                .depth_images
+                .iter()
+                .zip(self.depth_allocations.iter_mut())
+            {
+                allocator.destroy_image(*image, allocation);
             }
             let swapchain_loader = swapchain::Device::new(instance, device);
             swapchain_loader.destroy_swapchain(self.handle, None);
@@ -185,13 +202,15 @@ impl Swapchain {
     /// # Returns
     /// * `vk::SurfaceFormatKHR` - The chosen surface format.
     fn choose_swap_surface_format(
-        available_formats: &[vk::SurfaceFormatKHR]
+        available_formats: &[vk::SurfaceFormatKHR],
     ) -> vk::SurfaceFormatKHR {
         available_formats
             .iter()
             .cloned()
-            .find(|f| f.format == vk::Format::B8G8R8A8_UNORM
-                    && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR)
+            .find(|f| {
+                f.format == vk::Format::B8G8R8A8_UNORM
+                    && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+            })
             .unwrap_or_else(|| available_formats[0])
     }
 
@@ -202,7 +221,7 @@ impl Swapchain {
     /// # Returns
     /// * `vk::PresentModeKHR` - The chosen present mode.
     fn choose_swap_present_mode(
-        available_present_modes: &[vk::PresentModeKHR]
+        available_present_modes: &[vk::PresentModeKHR],
     ) -> vk::PresentModeKHR {
         if available_present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
             vk::PresentModeKHR::MAILBOX
@@ -220,7 +239,7 @@ impl Swapchain {
     /// * `vk::Extent2D` - The chosen swap extent.
     fn choose_swap_extent(
         capabilities: &vk::SurfaceCapabilitiesKHR,
-        window: &Window
+        window: &Window,
     ) -> vk::Extent2D {
         if capabilities.current_extent.width != u32::MAX {
             capabilities.current_extent
@@ -247,10 +266,10 @@ impl Swapchain {
     /// # Returns
     /// * `Result<Vec<vk::Image>, vk::Result>` - A vector of created depth images on success, or a Vulkan error on failure.
     fn create_depth_images(
-        device: &ash::Device,
+        allocator: &Allocator,
         swapchain_images: &[vk::Image],
         extent: vk::Extent2D,
-    ) -> Result<Vec<vk::Image>, vk::Result> {
+    ) -> Result<(Vec<vk::Image>, Vec<Allocation>), Box<dyn Error>> {
         let depth_image_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::TYPE_2D,
             format: vk::Format::D32_SFLOAT,
@@ -267,58 +286,22 @@ impl Swapchain {
             initial_layout: vk::ImageLayout::UNDEFINED,
             ..Default::default()
         };
+        let alloc_info = vk_mem::AllocationCreateInfo {
+            usage: MemoryUsage::GpuOnly,
+            ..Default::default()
+        };
 
         let mut depth_images = Vec::new();
+        let mut depth_allocations = Vec::new();
         for _ in swapchain_images {
-            let depth_image = unsafe { device.create_image(&depth_image_info, None)? };
-            depth_images.push(depth_image);
+            let (image, allocation) =
+                unsafe { allocator.create_image(&depth_image_info, &alloc_info)? };
+            depth_images.push(image);
+            depth_allocations.push(allocation);
         }
 
         println!("🖼️ Depth images created for swapchain");
-        Ok(depth_images)
-    }
-
-    /// Creates device memory for depth images.
-    /// # Arguments
-    /// * `device` - The Vulkan logical device.
-    /// * `instance` - The Vulkan instance.
-    /// * `physical_device` - The physical device.
-    /// * `depth_images` - The depth images to allocate memory for.
-    /// # Returns
-    /// * `Result<Vec<vk::DeviceMemory>, vk::Result>` - A vector of allocated device memories on success, or a Vulkan error on failure.
-    fn create_depth_memories(
-        device: &ash::Device,
-        instance: &Instance,
-        physical_device: vk::PhysicalDevice,
-        depth_images: &[vk::Image],
-    ) -> Result<Vec<vk::DeviceMemory>, vk::Result> {
-        let mut depth_memories = Vec::new();
-        let mem_props = unsafe { instance.get_physical_device_memory_properties(physical_device) };
-
-        for &image in depth_images {
-            let memory_requirements = unsafe { device.get_image_memory_requirements(image) };
-            let mem_type_index = (0 .. mem_props.memory_type_count)
-                .find(|&i| {
-                    (memory_requirements.memory_type_bits & (1 << i)) != 0 &&
-                    mem_props.memory_types[i as usize]
-                        .property_flags
-                        .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
-                })
-                .expect("No suitable memory type!");
-
-            let allocate_info = vk::MemoryAllocateInfo {
-                allocation_size: memory_requirements.size,
-                memory_type_index: mem_type_index,
-                ..Default::default()
-            };
-
-            let memory = unsafe { device.allocate_memory(&allocate_info, None)? };
-            unsafe { device.bind_image_memory(image, memory, 0)? };
-            depth_memories.push(memory);
-        }
-
-        println!("🖼️ Depth memories allocated for swapchain images");
-        Ok(depth_memories)
+        Ok((depth_images, depth_allocations))
     }
 
     /// Creates image views for depth images.
@@ -365,24 +348,27 @@ impl Swapchain {
         swapchain_images: &[vk::Image],
         swapchain_format: vk::Format,
     ) -> Result<Vec<vk::ImageView>, vk::Result> {
-        swapchain_images.iter().map(|&image| {
-            let create_info = vk::ImageViewCreateInfo {
-                image,
-                view_type: vk::ImageViewType::TYPE_2D,
-                format: swapchain_format,
-                components: vk::ComponentMapping::default(),
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                },
-                ..Default::default()
-            };
+        swapchain_images
+            .iter()
+            .map(|&image| {
+                let create_info = vk::ImageViewCreateInfo {
+                    image,
+                    view_type: vk::ImageViewType::TYPE_2D,
+                    format: swapchain_format,
+                    components: vk::ComponentMapping::default(),
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                    ..Default::default()
+                };
 
-            unsafe { device.create_image_view(&create_info, None) }
-        }).collect()
+                unsafe { device.create_image_view(&create_info, None) }
+            })
+            .collect()
     }
 
     // Render passes are no longer needed with dynamic rendering.
@@ -416,18 +402,15 @@ impl SwapchainSupportDetails {
         surface_loader: &surface::Instance,
     ) -> Result<Self, vk::Result> {
         let capabilities = unsafe {
-            surface_loader
-                .get_physical_device_surface_capabilities(physical_device, surface)?
+            surface_loader.get_physical_device_surface_capabilities(physical_device, surface)?
         };
 
         let formats = unsafe {
-            surface_loader
-                .get_physical_device_surface_formats(physical_device, surface)?
+            surface_loader.get_physical_device_surface_formats(physical_device, surface)?
         };
 
         let present_modes = unsafe {
-            surface_loader
-                .get_physical_device_surface_present_modes(physical_device, surface)?
+            surface_loader.get_physical_device_surface_present_modes(physical_device, surface)?
         };
 
         println!(

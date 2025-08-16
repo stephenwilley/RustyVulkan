@@ -16,7 +16,6 @@ use crate::graphics::meshmanager::MeshManager;
 use crate::scene::{Scene, SceneObject, Transform as SceneTransform};
 use crate::vulkan::base::VulkanBase;
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
-use cgmath::{Vector3};
 
 use super::input;
 use super::input::InputState;
@@ -67,7 +66,7 @@ impl App {
     }
 
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Window {
-        let window_attributes = WindowAttributes::default().with_title("Rust Vulkan 48 - UBO");
+        let window_attributes = WindowAttributes::default().with_title("Rust Vulkan 51 - Refactor");
         let window = event_loop
             .create_window(window_attributes)
             .expect("Failed to create window");
@@ -253,21 +252,40 @@ impl Drop for App {
     }
 }
 
+pub const MAX_LIGHTS: usize = 8;
+
+#[derive(Clone, Copy)]
+pub struct LightCtrl {
+    pub radius: f32,
+    pub height: f32,
+    pub intensity: f32,
+    pub color: [f32; 3],
+    pub phase: f32,   // per-light offset around the circle (0..2π)
+}
+
 #[derive(Clone, Copy)]
 pub struct WorldControls {
-    pub light_pos: Vector3<f32>,
-    pub light_intensity: f32,
-    pub light_rotation: f32,
-    pub light_radius: f32,
+    pub lights: [LightCtrl; MAX_LIGHTS],
+    pub light_count: usize,
+    pub lights_rotation: f32,
 }
 
 impl Default for WorldControls {
     fn default() -> Self {
-        Self {
-            light_pos: Vector3::new(0.0, 0.5, 0.0),
-            light_intensity: 1.0,
-            light_rotation: 0.0,
-            light_radius: 5.0,
-        }
+        let light_count = 8;
+        use std::f32::consts::TAU;
+        let base = LightCtrl {
+            radius: 8.0, height: 4.0, intensity: 0.5,
+            color: [1.0, 1.0, 1.0], phase: 0.0,
+        };
+        let lights = std::array::from_fn(|i| {
+            let mut l = base;
+            l.phase = (i as f32) * (TAU / light_count as f32);
+            // (optional) tint each light a bit:
+            let hue = i as f32 / light_count as f32;
+            l.color = [hue, 1.0 - hue, hue * hue];
+            l
+        });
+        Self { lights, light_count, lights_rotation: 0.0 }
     }
 }

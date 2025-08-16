@@ -2,13 +2,14 @@ use std::error::Error;
 
 use ash::vk;
 use cgmath::{prelude::*};
-use cgmath::{Matrix4, Rad, Vector4};
+use cgmath::{Matrix4, Vector4};
 use imgui::{Context as ImGuiContext, Condition, WindowFlags};
 use imgui_winit_support::WinitPlatform;
 use winit::window::Window;
+use std::f32::consts::TAU;
 
 use crate::camera::Camera;
-use crate::vulkan::base::{GlobalUbo, VulkanBase};
+use crate::vulkan::base::{GlobalUbo, VulkanBase, GpuLight};
 
 use super::{App, WorldControls};
 
@@ -40,11 +41,11 @@ pub fn prepare_imgui_draw_data<'a>(
                 ui.text(format!("Redraw ms: {:.2}", ms_per_frame));
             });
     }
-    ui.window("Controls")
+    /*ui.window("Controls")
         .size([300.0, 180.0], Condition::FirstUseEver)
         .build(|| {
             ui.text("Light Position");
-            ui.slider("Y", -100.0, 100.0, &mut world_controls.light_pos[1]);
+            ui.slider("Y", -100.0, 100.0, &mut world_controls.lights.height);
             ui.text("Light Intensity");
             ui.slider("LI", 0.0, 10.0, &mut world_controls.light_intensity);
             ui.text("Light Radius");
@@ -55,7 +56,7 @@ pub fn prepare_imgui_draw_data<'a>(
                 world_controls.light_pos[1],
                 world_controls.light_pos[2]
             ));
-        });
+        });*/
     platform.prepare_render(ui, window);
     imgui.render()
 }
@@ -89,31 +90,58 @@ pub fn compute_push_constant_per_obj(
 pub fn update_ubo(
     base: &VulkanBase,
     image_index: usize,
-    world_controls: &mut WorldControls,
+    world: &mut WorldControls,
     camera: &Camera,
 ) {
-    let angle = Rad(world_controls.light_rotation);
-    world_controls.light_pos.x = Rad::sin(angle) * world_controls.light_radius;
-    world_controls.light_pos.z = Rad::cos(angle) * world_controls.light_radius;
+    world.lights_rotation = (world.lights_rotation + 0.01) % TAU;
 
-    let v = camera.get_view();
-    let lp_world = world_controls.light_pos;
-    let lp_view4 = v * Vector4::new(lp_world.x, lp_world.y, lp_world.z, 1.0);
-    let lp_view = lp_view4.truncate();
+    // Build CPU-side UBO
+    let mut ubo = GlobalUbo::default();
+    ubo.light_count = world.light_count as u32;
 
-    let ubo = GlobalUbo {
-        light_pos: [lp_view.x, lp_view.y, lp_view.z],
-        light_intensity: world_controls.light_intensity,
-    };
+    let view: Matrix4<f32> = *camera.get_view();
 
+    // Evenly distribute *active* lights around the circle so they don't bunch up
+    let active = world.light_count.min(crate::app::app::MAX_LIGHTS);
+    let n = active.max(1) as f32;
+    for i in 0..active {
+        let lc = world.lights[i];
+        // Spread the active lights evenly (ignore the stored phase so N lights are 2π/N apart)
+        let base_phase = (i as f32) * (TAU / n);
+        let angle = base_phase + world.lights_rotation;
+
+        let x = angle.sin() * lc.radius;
+        let z = angle.cos() * lc.radius;
+
+        let p_view4 = view * Vector4::new(x, lc.height, z, 1.0);
+        let p_view = p_view4.truncate();
+
+        ubo.lights[i] = GpuLight {
+            position: [p_view.x, p_view.y, p_view.z],
+            intensity: lc.intensity,
+            color: lc.color,
+            _pad: 0.0,
+        };
+    }
+
+    // Clear any remaining (inactive) light slots to avoid stale data
+    for i in active..crate::app::app::MAX_LIGHTS {
+        ubo.lights[i] = GpuLight {
+            position: [0.0, 0.0, 0.0],
+            intensity: 0.0,
+            color: [0.0, 0.0, 0.0],
+            _pad: 0.0,
+        };
+    }
+
+    // Upload (same mapping pattern you already use)
     let mem = base.ubo_memory[image_index];
     let size = std::mem::size_of::<GlobalUbo>() as vk::DeviceSize;
-
     unsafe {
         let ptr = base
             .device
             .map_memory(mem, 0, size, vk::MemoryMapFlags::empty())
-            .expect("Map UBO memory");
+            .expect("Map UBO");
         std::ptr::copy_nonoverlapping(
             &ubo as *const GlobalUbo as *const u8,
             ptr as *mut u8,
@@ -139,11 +167,6 @@ pub fn draw_frame(app: &mut App) -> Result<(), Box<dyn Error>> {
         }
         if app.input.moving_right {
             app.camera.translate(0.0, s)
-        }
-
-        app.world_controls.light_rotation += 0.01;
-        if app.world_controls.light_rotation >= 360.0 {
-            app.world_controls.light_rotation = 0.0;
         }
 
         let window = app.window.as_ref().unwrap();

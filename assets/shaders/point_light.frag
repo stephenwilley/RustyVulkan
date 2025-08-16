@@ -1,56 +1,78 @@
 // --------------------------------------------------------------------------------------
 // point_light.frag – Fragment Shader
 //
-// Blinn-Phong shading with a point light source.
+// Blinn-Phong shading with multiple point lights, computed per-fragment.
+// Uses tangent-space normal mapping.
 //
-// Shader stage: Fragment  
-// GLSL version: 450
+// GLSL 450
 // --------------------------------------------------------------------------------------
-
 #version 450
+#define MAX_LIGHTS 8
 
 layout(push_constant) uniform Push { mat4 mvp; mat4 mv; } pc;
+
+struct Light {
+    vec3 position;
+    float intensity;
+    vec3 color;
+    float _pad;    // keep 16-byte stride
+};
+
 layout(set = 0, binding = 0) uniform GlobalUBO {
-    vec3 lightPos;
-    float lightIntensity;
+    // Keep padding at the end: array is naturally 16-byte aligned in std140
+    Light lights[MAX_LIGHTS];
+    uint  light_count;
+    uvec3 _pad0;
 } ubo;
 
 layout(set = 1, binding = 0) uniform sampler2D diffuseMap;
 layout(set = 1, binding = 1) uniform sampler2D normalMap;
 
-layout(location = 0) in vec3 vHalfwayDirTangent;
-layout(location = 1) in vec3 vColor;
-layout(location = 2) in vec2 uv;
-layout(location = 3) in vec3 vLightTangent;
-layout(location = 4) in vec3 fragPosView;
+layout(location = 0) in vec2 UV;
+layout(location = 1) in vec3 vT;
+layout(location = 2) in vec3 vB;
+layout(location = 3) in vec3 vN;
+layout(location = 4) in vec3 vFragPosView;
 
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    // Get the texture color
-    vec4 texColor = texture(diffuseMap, uv);
+    // Albedo
+    vec3 albedo = texture(diffuseMap, UV).rgb;
 
-    // Compute the normal
-    // Sample the normal map (RGB in [0,1]) and remap to [-1,1]
-    vec3 normalSample = texture(normalMap, uv).rgb;
-    vec3 normalTangent = normalize(normalSample * 2.0 - 1.0);
+    // Tangent-space normal from normal map
+    vec3 normalTangent = normalize(texture(normalMap, UV).rgb * 2.0 - 1.0);
 
-    // Calculate attenuation
-    vec3 lightDir = ubo.lightPos - fragPosView;
-    float dist = length(lightDir);
-    float attenuation = ubo.lightIntensity / (1.0 + 0.001 * dist * dist);
+    // Build TBN and view dir in tangent space
+    mat3 TBN = transpose(mat3(vT, vB, vN));
+    vec3 V = normalize(TBN * (-vFragPosView));
 
-    // Compute diffuse term
-    float diff = max(dot(normalTangent, normalize(vLightTangent)), 0.0);
-
-    // Compute specular term
     float shininess = 64.0;
-    float spec = pow(max(dot(normalTangent, vHalfwayDirTangent), 0.0), shininess);      
+    vec3 ambient = 0.1 * albedo;
+    vec3 lighting = ambient;
 
-    vec3 ambient = 0.1 * texColor.rgb;
-    vec3 diffuse = diff * texColor.rgb;
-    vec3 specular = spec * vec3(1.0);
-    vec3 litColor = attenuation * (diffuse + specular) + ambient;
+    for (uint i = 0; i < ubo.light_count; ++i) {
+        // Light vector in view space and tangent space
+        vec3 Lview = ubo.lights[i].position - vFragPosView;
+        float dist = length(Lview);
+        vec3 L = normalize(TBN * Lview);
 
-    outColor = vec4(clamp(litColor, 0.0, 1.0), 1.0);
+        // Half vector (per-fragment)
+        vec3 H = normalize(L + V);
+
+        // Lambert + Blinn-Phong
+        float diff = max(dot(normalTangent, L), 0.0);
+        float spec = pow(max(dot(normalTangent, H), 0.0), shininess);
+
+        // Quadratic attenuation (tweak as desired)
+        float attenuation = ubo.lights[i].intensity / (1.0 + 0.001 * dist * dist);
+
+        vec3 lightColor = ubo.lights[i].color;
+        vec3 diffuse  = diff * albedo;
+        vec3 specular = spec * vec3(1.0);
+
+        lighting += attenuation * lightColor * (diffuse + specular);
+    }
+
+    outColor = vec4(clamp(lighting, 0.0, 1.0), 1.0);
 }

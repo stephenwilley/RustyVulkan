@@ -1013,17 +1013,23 @@ pub struct EngineDebugSettings {
     pub show_ms_per_frame: bool,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct GpuLight {
+    pub position: [f32; 3],
+    pub intensity: f32,   // packs with position to 16 bytes
+    pub color: [f32; 3],
+    pub _pad: f32,        // pad to 16 bytes
+}
+
 /// Global (per-frame/per-image) uniform buffer object shared across all pipelines via **descriptor set 0, binding 0**.
 /// There is **one buffer per swapchain image** so the CPU can update the UBO while another image is still in-flight.
-/// Keep fields 16-byte aligned for std140-like layouts.
+/// Keep fields 16-byte aligned for std140-like layouts. The order here must match the GLSL:
+///     Light lights[MAX_LIGHTS]; uint light_count; uvec3 _pad0;
 #[repr(C, align(16))]
+#[derive(Clone, Copy, Default)]
 pub struct GlobalUbo {
-    /*
-    pub view: [[f32; 4]; 4],
-    pub proj: [[f32; 4]; 4],
-    pub time: f32,
-    _pad: [f32; 3], // pad to 16-byte multiple
-    */
-    pub light_pos: [f32; 3],
-    pub light_intensity: f32,
+    pub lights: [GpuLight; crate::app::app::MAX_LIGHTS],      // array of structs (std140: 16-byte aligned/strided)
+    pub light_count: u32,                                     // scalar after array
+    pub _pad0: [u32; 3],                                      // pad to 16B multiple (std140)
 }

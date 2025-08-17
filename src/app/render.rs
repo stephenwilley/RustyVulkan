@@ -185,7 +185,7 @@ pub fn draw_frame(app: &mut App) -> Result<(), Box<dyn Error>> {
             app.platform.as_mut().unwrap(),
             app.imgui.as_mut().unwrap(),
             window,
-            vb.debug_settings.show_ms_per_frame,
+            vb.engine_settings.show_ms_per_frame,
             &mut app.world_controls,
         );
 

@@ -23,6 +23,8 @@
 use ash::vk;
 use std::error::Error;
 
+use crate::vulkan::base::EngineSettings;
+
 use super::shaders::ShaderStageInfo;
 use super::mesh::Vertex;
 
@@ -101,7 +103,7 @@ impl Pipeline {
         color_format: vk::Format,
         depth_format: vk::Format,
         shader_infos: &[&ShaderStageInfo],
-        wireframe: bool,
+        engine_settings: &EngineSettings,
     ) -> Result<(), Box<dyn Error>> {
         let binding_descs   = [Vertex::binding_description()];
         let attribute_descs = Vertex::attribute_descriptions();
@@ -142,7 +144,7 @@ impl Pipeline {
         let rasterizer = vk::PipelineRasterizationStateCreateInfo {
             depth_clamp_enable: vk::FALSE,
             rasterizer_discard_enable: vk::FALSE,
-            polygon_mode: if wireframe {
+            polygon_mode: if engine_settings.wireframe {
                 vk::PolygonMode::LINE
             } else {
                 vk::PolygonMode::FILL
@@ -154,7 +156,7 @@ impl Pipeline {
             ..Default::default()
         };
         let multisampling = vk::PipelineMultisampleStateCreateInfo {
-            rasterization_samples: vk::SampleCountFlags::TYPE_1,
+            rasterization_samples: vk::SampleCountFlags::from_raw(engine_settings.msaa_samples),
             sample_shading_enable: vk::FALSE,
             ..Default::default()
         };
@@ -250,7 +252,7 @@ impl Pipeline {
         color_format: vk::Format,
         depth_format: vk::Format,
         shader_infos: &[&ShaderStageInfo],
-        wireframe: bool
+        engine_settings: &EngineSettings
     ) -> Result<(), Box<dyn Error>> {
         unsafe {
             device.device_wait_idle().expect("Failed to wait device idle");
@@ -262,7 +264,7 @@ impl Pipeline {
             color_format,
             depth_format,
             shader_infos,
-            wireframe
+            engine_settings
         )?;
         Ok(())
     }

@@ -44,7 +44,7 @@ impl Material {
             vb.swapchain.depth_format,
             &[ &self.shaders.vertex,
                &self.shaders.fragment ],
-            vb.debug_settings.wireframe,
+            &vb.engine_settings,
         )?;
         println!("🛠️ Recreated pipeline for material {}", self.name);
         Ok(())
@@ -239,7 +239,7 @@ impl Material {
             vb.swapchain.depth_format,
             &[ &material.shaders.vertex,
                &material.shaders.fragment ],
-            vb.debug_settings.wireframe
+            &vb.engine_settings
         )?;
 
         Ok(material)

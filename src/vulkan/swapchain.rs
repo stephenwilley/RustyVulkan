@@ -33,14 +33,18 @@ pub struct Swapchain {
     pub handle: vk::SwapchainKHR,
     pub images: Vec<vk::Image>,
     pub swapchain_image_views: Vec<vk::ImageView>,
-    pub depth_image_views: Vec<vk::ImageView>,
     pub extent: vk::Extent2D,
     pub color_format: vk::Format,
     pub depth_format: vk::Format,
-    pub depth_images: Vec<vk::Image>,
-    pub depth_allocations: Vec<Allocation>,
     pub image_layouts: Vec<vk::ImageLayout>,
-    pub depth_layouts: Vec<vk::ImageLayout>,
+    pub color_msaa_image: vk::Image,
+    pub color_msaa_image_view: vk::ImageView,
+    pub color_msaa_allocation: Allocation,
+    pub color_msaa_layout: vk::ImageLayout,
+    pub depth_msaa_image: vk::Image,
+    pub depth_msaa_image_view: vk::ImageView,
+    pub depth_msaa_allocation: Allocation,
+    pub depth_msaa_layout: vk::ImageLayout,
 }
 
 impl Swapchain {
@@ -62,6 +66,7 @@ impl Swapchain {
         surface_loader: &surface::Instance,
         window: &Window,
         allocator: &Allocator,
+        msaa_samples: u32,
     ) -> Result<Self, Box<dyn Error>> {
         let swapchain_support =
             SwapchainSupportDetails::query(physical_device, *surface, surface_loader)?;
@@ -69,6 +74,8 @@ impl Swapchain {
         let surface_format = Self::choose_swap_surface_format(&swapchain_support.formats);
         let present_mode = Self::choose_swap_present_mode(&swapchain_support.present_modes);
         let extent = Self::choose_swap_extent(&swapchain_support.capabilities, window);
+        let depth_format = vk::Format::D32_SFLOAT;
+
 
         let mut image_count = 3;
         if image_count < swapchain_support.capabilities.min_image_count {
@@ -104,9 +111,12 @@ impl Swapchain {
         let image_count = swapchain_images.len();
         println!("🖼️ Swapchain created with {} images", image_count);
 
-        let (depth_images, depth_allocations) =
-            Self::create_depth_images(allocator, &swapchain_images, extent)?;
-        let depth_image_views = Self::create_depth_image_views(device, &depth_images)?;
+        let (color_msaa_image, color_msaa_allocation) =
+            Self::create_color_msaa_image(allocator, extent, surface_format, msaa_samples)?;
+        let color_msaa_image_view = Self::create_color_msaa_image_views(device, &color_msaa_image, surface_format)?;
+        let (depth_msaa_image, depth_msaa_allocation) =
+            Self::create_depth_msaa_image(allocator, extent, depth_format, msaa_samples)?;
+        let depth_msaa_image_view = Self::create_depth_msaa_image_views(device, &depth_msaa_image, depth_format)?;
 
         let swapchain_image_views =
             Self::create_image_views(device, &swapchain_images, surface_format.format)?;
@@ -115,14 +125,18 @@ impl Swapchain {
             handle,
             images: swapchain_images,
             swapchain_image_views,
-            depth_image_views,
             extent,
             color_format: surface_format.format,
-            depth_format: vk::Format::D32_SFLOAT,
-            depth_images,
-            depth_allocations,
+            depth_format,
             image_layouts: vec![vk::ImageLayout::UNDEFINED; image_count],
-            depth_layouts: vec![vk::ImageLayout::UNDEFINED; image_count],
+            color_msaa_image,
+            color_msaa_image_view,
+            color_msaa_allocation,
+            color_msaa_layout: vk::ImageLayout::UNDEFINED,
+            depth_msaa_image,
+            depth_msaa_image_view,
+            depth_msaa_allocation,
+            depth_msaa_layout: vk::ImageLayout::UNDEFINED,
         })
     }
 
@@ -148,6 +162,7 @@ impl Swapchain {
         surface_loader: &surface::Instance,
         window: &Window,
         allocator: &Allocator,
+        msaa_samples: u32,
     ) -> Result<(), Box<dyn Error>> {
         unsafe {
             device.device_wait_idle()?;
@@ -162,6 +177,7 @@ impl Swapchain {
             surface_loader,
             window,
             allocator,
+            msaa_samples
         )?;
         *self = new_swapchain;
 
@@ -181,16 +197,10 @@ impl Swapchain {
             for &view in &self.swapchain_image_views {
                 device.destroy_image_view(view, None);
             }
-            for &dv in &self.depth_image_views {
-                device.destroy_image_view(dv, None);
-            }
-            for (image, allocation) in self
-                .depth_images
-                .iter()
-                .zip(self.depth_allocations.iter_mut())
-            {
-                allocator.destroy_image(*image, allocation);
-            }
+            device.destroy_image_view(self.color_msaa_image_view, None);
+            allocator.destroy_image(self.color_msaa_image, &mut self.color_msaa_allocation);
+            device.destroy_image_view(self.depth_msaa_image_view, None);
+            allocator.destroy_image(self.depth_msaa_image, &mut self.depth_msaa_allocation);
             let swapchain_loader = swapchain::Device::new(instance, device);
             swapchain_loader.destroy_swapchain(self.handle, None);
         }
@@ -258,21 +268,22 @@ impl Swapchain {
         }
     }
 
-    /// Creates depth images for the swapchain.
+    /// Creates color MSAA image.
     /// # Arguments
     /// * `device` - The Vulkan logical device.
     /// * `swapchain_images` - The swapchain images.
     /// * `extent` - The extent of the swapchain.
     /// # Returns
-    /// * `Result<Vec<vk::Image>, vk::Result>` - A vector of created depth images on success, or a Vulkan error on failure.
-    fn create_depth_images(
+    /// * `Result<(vk::Image, Allocation), vk::Result>` - A color_msaa_image on success, or a Vulkan error on failure.
+    fn create_color_msaa_image(
         allocator: &Allocator,
-        swapchain_images: &[vk::Image],
         extent: vk::Extent2D,
-    ) -> Result<(Vec<vk::Image>, Vec<Allocation>), Box<dyn Error>> {
-        let depth_image_info = vk::ImageCreateInfo {
+        surface_format: vk::SurfaceFormatKHR,
+        msaa_samples: u32,
+    ) -> Result<(vk::Image, Allocation), Box<dyn Error>> {
+        let color_msaa_image_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::TYPE_2D,
-            format: vk::Format::D32_SFLOAT,
+            format: surface_format.format,
             extent: vk::Extent3D {
                 width: extent.width,
                 height: extent.height,
@@ -280,9 +291,9 @@ impl Swapchain {
             },
             mip_levels: 1,
             array_layers: 1,
-            samples: vk::SampleCountFlags::TYPE_1,
+            samples: vk::SampleCountFlags::from_raw(msaa_samples),
             tiling: vk::ImageTiling::OPTIMAL,
-            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
             initial_layout: vk::ImageLayout::UNDEFINED,
             ..Default::default()
         };
@@ -291,49 +302,96 @@ impl Swapchain {
             ..Default::default()
         };
 
-        let mut depth_images = Vec::new();
-        let mut depth_allocations = Vec::new();
-        for _ in swapchain_images {
-            let (image, allocation) =
-                unsafe { allocator.create_image(&depth_image_info, &alloc_info)? };
-            depth_images.push(image);
-            depth_allocations.push(allocation);
-        }
+        let (image, allocation) =
+                unsafe { allocator.create_image(&color_msaa_image_info, &alloc_info)? };
 
-        println!("🖼️ Depth images created for swapchain");
-        Ok((depth_images, depth_allocations))
+        println!("🖼️ Color MSAA image created");
+        Ok((image, allocation))
     }
 
-    /// Creates image views for depth images.
+    fn create_color_msaa_image_views(
+        device: &ash::Device,
+        color_msaa_image: &vk::Image,
+        surface_format: vk::SurfaceFormatKHR,
+        ) -> Result<vk::ImageView, vk::Result> {
+        let create_info = vk::ImageViewCreateInfo {
+            image: *color_msaa_image,
+            view_type: vk::ImageViewType::TYPE_2D,
+            format: surface_format.format,
+            components: vk::ComponentMapping::default(),
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+            ..Default::default()
+        };
+        unsafe { device.create_image_view(&create_info, None) }
+    }
+
+    /// Creates depth MSAA image.
     /// # Arguments
     /// * `device` - The Vulkan logical device.
-    /// * `depth_images` - The depth images to create views for.
+    /// * `swapchain_images` - The swapchain images.
+    /// * `extent` - The extent of the swapchain.
     /// # Returns
-    /// * `Result<Vec<vk::ImageView>, vk::Result>` - A vector of created depth image views on success, or a Vulkan error on failure.
-    fn create_depth_image_views(
+    /// * `Result<(vk::Image, Allocation), vk::Result>` - A color_msaa_image on success, or a Vulkan error on failure.
+    fn create_depth_msaa_image(
+        allocator: &Allocator,
+        extent: vk::Extent2D,
+        depth_format: vk::Format,
+        msaa_samples: u32,
+    ) -> Result<(vk::Image, Allocation), Box<dyn Error>> {
+        let depth_msaa_image_info = vk::ImageCreateInfo {
+            image_type: vk::ImageType::TYPE_2D,
+            format: depth_format,
+            extent: vk::Extent3D {
+                width: extent.width,
+                height: extent.height,
+                depth: 1,
+            },
+            mip_levels: 1,
+            array_layers: 1,
+            samples: vk::SampleCountFlags::from_raw(msaa_samples),
+            tiling: vk::ImageTiling::OPTIMAL,
+            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+            initial_layout: vk::ImageLayout::UNDEFINED,
+            ..Default::default()
+        };
+        let alloc_info = vk_mem::AllocationCreateInfo {
+            usage: MemoryUsage::AutoPreferDevice,
+            ..Default::default()
+        };
+
+        let (image, allocation) =
+                unsafe { allocator.create_image(&depth_msaa_image_info, &alloc_info)? };
+
+        println!("🖼️ Depth MSAA image created");
+        Ok((image, allocation))
+    }
+
+    fn create_depth_msaa_image_views(
         device: &ash::Device,
-        depth_images: &[vk::Image],
-    ) -> Result<Vec<vk::ImageView>, vk::Result> {
-        let mut depth_image_views = Vec::new();
-        for &image in depth_images {
-            let view_info = vk::ImageViewCreateInfo {
-                image,
-                view_type: vk::ImageViewType::TYPE_2D,
-                format: vk::Format::D32_SFLOAT,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::DEPTH,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                },
-                ..Default::default()
-            };
-            let view = unsafe { device.create_image_view(&view_info, None)? };
-            depth_image_views.push(view);
-        }
-        println!("🖼️ Depth image views created for swapchain images");
-        Ok(depth_image_views)
+        depth_msaa_image: &vk::Image,
+        depth_format: vk::Format,
+        ) -> Result<vk::ImageView, vk::Result> {
+        let create_info = vk::ImageViewCreateInfo {
+            image: *depth_msaa_image,
+            view_type: vk::ImageViewType::TYPE_2D,
+            format: depth_format,
+            components: vk::ComponentMapping::default(),
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::DEPTH,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+            ..Default::default()
+        };
+        unsafe { device.create_image_view(&create_info, None) }
     }
 
     /// Creates image views for swapchain images.

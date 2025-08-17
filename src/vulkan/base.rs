@@ -33,6 +33,7 @@ const INFLIGHT_FRAMES: usize = 2;
 use ash::khr::surface;
 use ash::khr::swapchain;
 use ash::vk;
+use ash::vk::PhysicalDeviceProperties;
 use ash::{Entry, Instance};
 use ash_window::create_surface;
 use ash_window::enumerate_required_extensions;
@@ -120,12 +121,13 @@ pub struct VulkanBase {
     pub command_buffers: Vec<vk::CommandBuffer>,
     // -- Misc --
     /// Runtime toggles (wireframe, ms/frame overlay).
-    pub debug_settings: EngineDebugSettings,
+    pub engine_settings: EngineSettings,
     #[cfg(debug_assertions)]
     debug_messenger: vk::DebugUtilsMessengerEXT,
     #[cfg(debug_assertions)]
     debug_utils_loader: ash::ext::debug_utils::Instance,
     frame_slot: usize,
+    max_msaa_samples: vk::SampleCountFlags,
 }
 
 /// Frame context returned by `begin_frame` and consumed by `end_frame`.
@@ -207,14 +209,31 @@ impl VulkanBase {
                 },
                 ..Default::default()
             };
+            let color_msaa_barrier = vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::empty(),
+                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                old_layout: self.swapchain.color_msaa_layout,
+                new_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                image: self.swapchain.color_msaa_image,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                ..Default::default()
+            };
             let depth_barrier = vk::ImageMemoryBarrier {
                 src_access_mask: vk::AccessFlags::empty(),
                 dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                old_layout: self.swapchain.depth_layouts[idx],
+                old_layout: self.swapchain.depth_msaa_layout,
                 new_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
                 src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
                 dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                image: self.swapchain.depth_images[idx],
+                image: self.swapchain.depth_msaa_image,
                 subresource_range: vk::ImageSubresourceRange {
                     aspect_mask: vk::ImageAspectFlags::DEPTH,
                     base_mip_level: 0,
@@ -233,10 +252,11 @@ impl VulkanBase {
                 vk::DependencyFlags::empty(),
                 &[],
                 &[],
-                &[color_barrier, depth_barrier],
+                &[color_barrier, color_msaa_barrier, depth_barrier],
             );
             self.swapchain.image_layouts[idx] = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
-            self.swapchain.depth_layouts[idx] = vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL;
+            self.swapchain.color_msaa_layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+            self.swapchain.depth_msaa_layout = vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL;
 
             let clear_color = vk::ClearValue {
                 color: vk::ClearColorValue {
@@ -249,16 +269,31 @@ impl VulkanBase {
                     stencil: 0,
                 },
             };
-            let color_attachment = vk::RenderingAttachmentInfo {
-                image_view: self.swapchain.swapchain_image_views[idx],
-                image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                load_op: vk::AttachmentLoadOp::CLEAR,
-                store_op: vk::AttachmentStoreOp::STORE,
-                clear_value: clear_color,
-                ..Default::default()
+            let resolve_mode = vk::ResolveModeFlags::AVERAGE;
+            let color_attachment = if self.engine_settings.msaa_samples > 1 {
+                vk::RenderingAttachmentInfo {
+                    image_view: self.swapchain.color_msaa_image_view,
+                    image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    load_op: vk::AttachmentLoadOp::CLEAR,
+                    store_op: vk::AttachmentStoreOp::DONT_CARE,
+                    clear_value: clear_color,
+                    resolve_mode,
+                    resolve_image_view: self.swapchain.swapchain_image_views[idx],
+                    resolve_image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    ..Default::default()
+                }
+            } else {
+                vk::RenderingAttachmentInfo {
+                    image_view: self.swapchain.swapchain_image_views[idx],
+                    image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    load_op: vk::AttachmentLoadOp::CLEAR,
+                    store_op: vk::AttachmentStoreOp::STORE,
+                    clear_value: clear_color,
+                    ..Default::default()
+                }
             };
             let depth_attachment = vk::RenderingAttachmentInfo {
-                image_view: self.swapchain.depth_image_views[idx],
+                image_view: self.swapchain.depth_msaa_image_view,
                 image_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
                 load_op: vk::AttachmentLoadOp::CLEAR,
                 store_op: vk::AttachmentStoreOp::DONT_CARE,
@@ -761,6 +796,7 @@ impl VulkanBase {
             &self.surface_loader,
             window,
             self.allocator.as_ref().unwrap(),
+            self.engine_settings.msaa_samples,
         )?;
         unsafe {
             self.device
@@ -818,13 +854,49 @@ impl VulkanBase {
         Ok(())
     }
 
+    fn pick_msaa(props: &PhysicalDeviceProperties) -> vk::SampleCountFlags {
+        let counts = props.limits.framebuffer_color_sample_counts
+            & props.limits.framebuffer_depth_sample_counts;
+
+        // Try highest to lowest
+        for &c in &[
+            vk::SampleCountFlags::TYPE_64,
+            vk::SampleCountFlags::TYPE_32,
+            vk::SampleCountFlags::TYPE_16,
+            vk::SampleCountFlags::TYPE_8,
+            vk::SampleCountFlags::TYPE_4,
+            vk::SampleCountFlags::TYPE_2,
+        ] {
+            if counts.contains(c) { return c; }
+        }
+        vk::SampleCountFlags::TYPE_1
+    }
+
+    fn clamp_msaa(self, desired: u32, supported: vk::SampleCountFlags) -> vk::SampleCountFlags {
+        // Map u32 → flag (invalid → TYPE_1)
+        let want = match desired {
+            64 => vk::SampleCountFlags::TYPE_64,
+            32 => vk::SampleCountFlags::TYPE_32,
+            16 => vk::SampleCountFlags::TYPE_16,
+            8  => vk::SampleCountFlags::TYPE_8,
+            4  => vk::SampleCountFlags::TYPE_4,
+            2  => vk::SampleCountFlags::TYPE_2,
+            _  => vk::SampleCountFlags::TYPE_1,
+        };
+        if supported.contains(want) { want } else {
+            // fallback highest supported (same loop you already wrote)
+            let chosen_props = unsafe { self.instance.get_physical_device_properties(self.physical_device) };
+            VulkanBase::pick_msaa(&chosen_props)
+        }
+    }
+
     /// Toggles the wireframe mode in the debug settings.
     pub fn toggle_wireframe(&mut self) {
-        self.debug_settings.wireframe = !self.debug_settings.wireframe;
+        self.engine_settings.wireframe = !self.engine_settings.wireframe;
     }
     /// Toggles the FPS display
     pub fn toggle_ms_per_frame(&mut self) {
-        self.debug_settings.show_ms_per_frame = !self.debug_settings.show_ms_per_frame;
+        self.engine_settings.show_ms_per_frame = !self.engine_settings.show_ms_per_frame;
     }
 
     /// Creates a new `VulkanBase` instance, initializing Vulkan resources and setting up the swapchain.
@@ -834,9 +906,10 @@ impl VulkanBase {
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `VulkanBase` on success, or an error on failure.
     pub fn new(window: &Window, event_loop: &ActiveEventLoop) -> Result<Self, Box<dyn Error>> {
-        let debug_settings = EngineDebugSettings {
+        let engine_settings = EngineSettings {
             wireframe: false,
             show_ms_per_frame: false,
+            msaa_samples: 4,
         };
 
         let entry = Entry::linked();
@@ -883,6 +956,7 @@ impl VulkanBase {
                 .to_str()
                 .unwrap_or("<invalid utf-8>")
         };
+        let max_msaa_samples = Self::pick_msaa(&chosen_props);
         println!("👉 Selected device for next steps: '{}'", chosen_name);
 
         let graphics_queue_family_index =
@@ -929,6 +1003,7 @@ impl VulkanBase {
             &surface_loader,
             window,
             &allocator,
+            engine_settings.msaa_samples,
         )?;
         let swapchain_loader = swapchain::Device::new(&instance, &device);
 
@@ -994,12 +1069,13 @@ impl VulkanBase {
             command_pool,
             command_buffers,
             // misc
-            debug_settings,
+            engine_settings,
             #[cfg(debug_assertions)]
             debug_messenger,
             #[cfg(debug_assertions)]
             debug_utils_loader,
             frame_slot: 0,
+            max_msaa_samples,
         };
 
         println!("✅ VulkanBase initialized successfully");
@@ -1071,10 +1147,10 @@ impl Drop for VulkanBase {
                 // (optional) quick summary before it goes away
                 if let Ok(stats) = alloc.calculate_statistics() {
                     let s = stats.total.statistics;
-                    println!("VMA total before drop: allocs={} blocks={} allocBytes={} blockBytes={}",
+                    println!("🗑️ VMA total before drop: allocs={} blocks={} allocBytes={} blockBytes={}",
                             s.allocationCount, s.blockCount, s.allocationBytes, s.blockBytes);
                 }
-                drop(alloc); // frees VMA internal blocks now
+                drop(alloc);
             }
             self.device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
@@ -1087,9 +1163,10 @@ impl Drop for VulkanBase {
 }
 
 /// Debug settings for the Vulkan engine
-pub struct EngineDebugSettings {
+pub struct EngineSettings {
     pub wireframe: bool,
     pub show_ms_per_frame: bool,
+    pub msaa_samples: u32,
 }
 
 #[repr(C)]

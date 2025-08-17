@@ -1,4 +1,12 @@
-//! Camera module.
+//! --------------------------------------------------------------------------------------
+//! Camera Module (camera.rs)
+//!
+//! Created: August 2025
+//! Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
+//!
+//! Provides a simple perspective camera used by the renderer.
+//!
+//! --------------------------------------------------------------------------------------
 
 use cgmath::{Matrix4, Point3, Vector3, Deg, Rad, perspective};
 use cgmath::prelude::*;

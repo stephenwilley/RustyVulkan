@@ -1,3 +1,13 @@
+//! --------------------------------------------------------------------------------------
+//! Application Core (app.rs)
+//!
+//! Created: August 2025
+//! Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
+//!
+//! Main application logic that wires together windowing, rendering, and state management.
+//!
+//! --------------------------------------------------------------------------------------
+
 use std::error::Error;
 use std::time::Instant;
 

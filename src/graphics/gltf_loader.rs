@@ -1,3 +1,13 @@
+//! --------------------------------------------------------------------------------------
+//! glTF Loader (gltf_loader.rs)
+//!
+//! Created: August 2025
+//! Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
+//!
+//! Utilities for importing glTF scenes and converting them into meshes and materials.
+//!
+//! --------------------------------------------------------------------------------------
+
 use std::error::Error;
 use gltf::import;
 use gltf::image::Source;

@@ -1,7 +1,7 @@
 // --------------------------------------------------------------------------------------
 // build.rs – Shader Compilation Step
 //
-// Created: July 2025
+// Created: August 2025
 // Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
 //
 // This build script runs automatically before compilation. It looks in `assets/shaders/`

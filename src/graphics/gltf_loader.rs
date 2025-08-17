@@ -11,7 +11,7 @@ use mikktspace;
 use mikktspace::Geometry;
 
 
-// Inline MikkTSpace Geometry adapter for CPU-side mesh
+/// Inline MikkTSpace Geometry adapter for CPU-side mesh.
 struct MikkGeom<'a> {
     verts: &'a mut [MeshVertex],
     idxs:  &'a [u32],

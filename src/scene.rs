@@ -1,4 +1,4 @@
-// src/scene.rs
+//! Scene module.
 
 use cgmath::{Matrix4, Vector3, Quaternion, Deg, Rotation3};
 

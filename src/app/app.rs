@@ -241,12 +241,12 @@ impl Drop for App {
                 let _ = vb.device.device_wait_idle();
             }
 
-            self.material_manager.cleanup(&vb.device, &vb.allocator.as_ref().unwrap());
-            self.mesh_manager.cleanup(&vb.allocator.as_ref().unwrap());
+            self.material_manager.cleanup(&vb.device, vb.allocator.as_ref().unwrap());
+            self.mesh_manager.cleanup(vb.allocator.as_ref().unwrap());
 
             if let Some(mut renderer) = self.imgui_renderer.take() {
                 println!("🗑️ Cleaning up ImGui renderer");
-                renderer.cleanup();
+                renderer.cleanup(vb.allocator.as_ref().unwrap());
             }
         }
     }

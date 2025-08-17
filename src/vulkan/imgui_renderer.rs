@@ -13,9 +13,9 @@
 //!   • Cleaning up all ImGui-related Vulkan resources on teardown
 //!
 //! Usage:
-//!   1. `ImGuiRenderer::new(base: &mut VulkanBase, atlas: &FontAtlasTexture) -> Self`  
-//!   2. `renderer.render(base: &VulkanBase, cmd_buf: vk::CommandBuffer, draw_data: &imgui::DrawData)`  
-//!   3. `renderer.cleanup(base: &mut VulkanBase)`
+//!   1. `ImGuiRenderer::new(base: &mut VulkanBase, atlas: &FontAtlasTexture) -> Self`
+//!   2. `renderer.render(device, allocator, cmd_buf: vk::CommandBuffer, draw_data: &imgui::DrawData)`
+//!   3. `renderer.cleanup(allocator)`
 //!
 //! --------------------------------------------------------------------------------------
 
@@ -30,7 +30,6 @@ use imgui::DrawVert;
 use imgui::DrawData;
 use bytemuck;
 use imgui::DrawIdx;
-use std::sync::Arc;
 use vk_mem::{Alloc, Allocator, Allocation, MemoryUsage};
 
 /// Renders ImGui UI elements using Vulkan.
@@ -51,7 +50,6 @@ pub struct ImGuiRenderer {
     pub index_allocation:    Option<Allocation>,
     pub index_buffer_size:    vk::DeviceSize,
     device:                ash::Device,
-    allocator:            Arc<Allocator>,
     vert_stage:            Option<ShaderStageInfo>,
     frag_stage:            Option<ShaderStageInfo>,
 }
@@ -629,7 +627,7 @@ impl ImGuiRenderer {
     /// Ensures the vertex and index buffers are large enough and uploads ImGui draw data into them.
     /// # Arguments
     /// * `draw_data` - The ImGui draw data.
-    pub fn update_buffers(&mut self, draw_data: &DrawData) {
+    pub fn update_buffers(&mut self, allocator: &Allocator, draw_data: &DrawData) {
         // Total vertex and index data sizes
         let vertex_size = (draw_data.total_vtx_count as usize * std::mem::size_of::<DrawVert>()) as vk::DeviceSize;
         let index_size  = (draw_data.total_idx_count as usize * std::mem::size_of::<DrawIdx>()) as vk::DeviceSize;
@@ -638,7 +636,7 @@ impl ImGuiRenderer {
         if vertex_size > self.vertex_buffer_size {
             if self.vertex_buffer != vk::Buffer::null() {
                 if let Some(allocation) = &mut self.vertex_allocation {
-                    unsafe { self.allocator.destroy_buffer(self.vertex_buffer, allocation); }
+                    unsafe { allocator.destroy_buffer(self.vertex_buffer, allocation); }
                 }
             }
             let buffer_info = vk::BufferCreateInfo {
@@ -652,7 +650,7 @@ impl ImGuiRenderer {
                 flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                 ..Default::default()
             };
-            let (buf, alloc) = unsafe { self.allocator.create_buffer(&buffer_info, &alloc_info).expect("create vertex buffer") };
+            let (buf, alloc) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info).expect("create vertex buffer") };
             self.vertex_buffer = buf;
             self.vertex_allocation = Some(alloc);
             self.vertex_buffer_size = vertex_size;
@@ -662,7 +660,7 @@ impl ImGuiRenderer {
         if index_size > self.index_buffer_size {
             if self.index_buffer != vk::Buffer::null() {
                 if let Some(allocation) = &mut self.index_allocation {
-                    unsafe { self.allocator.destroy_buffer(self.index_buffer, allocation); }
+                    unsafe { allocator.destroy_buffer(self.index_buffer, allocation); }
                 }
             }
             let buffer_info = vk::BufferCreateInfo {
@@ -676,7 +674,7 @@ impl ImGuiRenderer {
                 flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
                 ..Default::default()
             };
-            let (buf, alloc) = unsafe { self.allocator.create_buffer(&buffer_info, &alloc_info).expect("create index buffer") };
+            let (buf, alloc) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info).expect("create index buffer") };
             self.index_buffer = buf;
             self.index_allocation = Some(alloc);
             self.index_buffer_size = index_size;
@@ -685,7 +683,7 @@ impl ImGuiRenderer {
         // Map and copy vertex data
         unsafe {
             if let Some(allocation) = &mut self.vertex_allocation {
-                let vtx_ptr = self.allocator.map_memory(allocation).expect("map vertex") as *mut u8;
+                let vtx_ptr = allocator.map_memory(allocation).expect("map vertex") as *mut u8;
                 let mut offset = 0;
                 for draw_list in draw_data.draw_lists() {
                     let src = draw_list.vtx_buffer();
@@ -697,12 +695,12 @@ impl ImGuiRenderer {
                     );
                     offset += byte_len;
                 }
-                self.allocator.unmap_memory(allocation);
+                allocator.unmap_memory(allocation);
             }
 
             // Map and copy index data
             if let Some(allocation) = &mut self.index_allocation {
-                let idx_ptr = self.allocator.map_memory(allocation).expect("map index") as *mut u8;
+                let idx_ptr = allocator.map_memory(allocation).expect("map index") as *mut u8;
                 let mut idx_offset = 0;
                 for draw_list in draw_data.draw_lists() {
                     let src = draw_list.idx_buffer();
@@ -714,7 +712,7 @@ impl ImGuiRenderer {
                     );
                     idx_offset += byte_len;
                 }
-                self.allocator.unmap_memory(allocation);
+                allocator.unmap_memory(allocation);
             }
         }
     }
@@ -759,7 +757,7 @@ impl ImGuiRenderer {
     /// A new ImGuiRenderer instance with all resources initialized.
     pub fn new(base: &mut VulkanBase, imgui: &mut ImGuiContext) -> Self {
         let device     = base.device.clone();
-        let allocator  = base.allocator.as_ref().expect("Allocator not initialized").clone();
+        let allocator  = base.allocator.as_ref().expect("Allocator not initialized");
 
         // 0) Load default font atlas
         imgui.fonts().add_font(&[FontSource::DefaultFontData {
@@ -770,11 +768,11 @@ impl ImGuiRenderer {
         }]);
         let atlas = imgui.fonts().build_rgba32_texture();
         // 1) Create staging buffer for font atlas
-        let (staging_buffer, mut staging_alloc) = Self::create_staging_buffer(&allocator, &atlas);
+        let (staging_buffer, mut staging_alloc) = Self::create_staging_buffer(allocator, &atlas);
         // 2) Map memory and copy font atlas data into it
-        Self::fill_staging_buffer(&allocator, &mut staging_alloc, &atlas);
+        Self::fill_staging_buffer(allocator, &mut staging_alloc, &atlas);
         // 3) Create font image with device-local memory
-        let (font_image, font_allocation) = Self::create_font_image(&allocator, atlas.width, atlas.height);
+        let (font_image, font_allocation) = Self::create_font_image(allocator, atlas.width, atlas.height);
         // 4) Copy from staging to the font image
         Self::copy_buffer_to_image(base, staging_buffer, font_image, atlas.width, atlas.height);
         // 5) Clean up staging buffer
@@ -803,7 +801,6 @@ impl ImGuiRenderer {
             index_allocation: None,
             index_buffer_size: 0,
             device,
-            allocator,
             vert_stage: None,
             frag_stage: None,
         };
@@ -822,17 +819,17 @@ impl ImGuiRenderer {
     
     /// Cleans up ImGui Vulkan resources created by this renderer.
     /// This destroys all Vulkan objects owned by the renderer.
-    pub fn cleanup(&mut self) {
+    pub fn cleanup(&mut self, allocator: &Allocator) {
         unsafe {
             // Destroy dynamic buffers
             if self.vertex_buffer != vk::Buffer::null() {
                 if let Some(allocation) = &mut self.vertex_allocation {
-                    self.allocator.destroy_buffer(self.vertex_buffer, allocation);
+                    allocator.destroy_buffer(self.vertex_buffer, allocation);
                 }
             }
             if self.index_buffer != vk::Buffer::null() {
                 if let Some(allocation) = &mut self.index_allocation {
-                    self.allocator.destroy_buffer(self.index_buffer, allocation);
+                    allocator.destroy_buffer(self.index_buffer, allocation);
                 }
             }
 
@@ -845,7 +842,7 @@ impl ImGuiRenderer {
             }
             if let Some(image) = self.font_image.take() {
                 if let Some(allocation) = &mut self.font_image_allocation {
-                    self.allocator.destroy_image(image, allocation);
+                    allocator.destroy_image(image, allocation);
                 }
             }
 
@@ -888,6 +885,7 @@ impl ImGuiRenderer {
     pub fn render(
         &mut self,
         device: &ash::Device,
+        allocator: &Allocator,
         cmd_buf: vk::CommandBuffer,
         draw_data: &DrawData,
     ) {
@@ -898,7 +896,7 @@ impl ImGuiRenderer {
         // Account for HiDPI: logical→physical scale
         let fb_scale = draw_data.framebuffer_scale;
         // 1) Ensure buffers are up-to-date with ImGui draw data
-        self.update_buffers(draw_data);
+        self.update_buffers(allocator, draw_data);
 
         // 2) Bind vertex and index buffers
         unsafe {

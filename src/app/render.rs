@@ -237,7 +237,7 @@ pub fn draw_frame(app: &mut App) -> Result<(), Box<dyn Error>> {
                     imgui_renderer.vk_pipeline,
                 );
             }
-            imgui_renderer.render(device, frame.cmd_buf, draw_data);
+            imgui_renderer.render(device, vb.allocator.as_ref().unwrap(), frame.cmd_buf, draw_data);
             vb.end_frame(frame)?;
         }
     }

@@ -44,7 +44,6 @@ use winit::window::Window;
 
 use super::swapchain::Swapchain;
 use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
-use std::sync::Arc;
 
 /// The debug callback function that prints validation layer messages.
 #[cfg(debug_assertions)]
@@ -89,7 +88,7 @@ pub struct VulkanBase {
     /// Logical device used for all Vulkan calls.
     pub device: ash::Device,
     /// Global Vulkan memory allocator (VMA).
-    pub allocator: Option<Arc<vk_mem::Allocator>>,
+    pub allocator: Option<vk_mem::Allocator>,
     /// Graphics queue from the selected family.
     pub graphics_queue: vk::Queue,
     // -- Global set 0 related --
@@ -761,7 +760,7 @@ impl VulkanBase {
             &self.surface,
             &self.surface_loader,
             window,
-            &self.allocator.as_ref().unwrap(),
+            self.allocator.as_ref().unwrap(),
         )?;
         unsafe {
             self.device
@@ -804,7 +803,7 @@ impl VulkanBase {
 
         // Recreate UBO buffers and set0 descriptor sets for the new image count
         let (new_ubo_buffers, new_ubo_allocations) =
-            Self::create_uniform_buffers(&self.allocator.as_ref().unwrap(), new_image_count);
+            Self::create_uniform_buffers(self.allocator.as_ref().unwrap(), new_image_count);
         let (new_pool, new_sets) = Self::create_set0_descriptor_pool_and_sets(
             &self.device,
             self.set0_global_layout,
@@ -903,7 +902,7 @@ impl VulkanBase {
         // Create a Vulkan Memory Allocator (VMA) instance.
         let mut allocator_info = vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
         allocator_info.flags |= vk_mem::AllocatorCreateFlags::EXT_MEMORY_BUDGET;
-        let allocator = Arc::new(unsafe { Allocator::new(allocator_info)? });
+        let allocator = unsafe { Allocator::new(allocator_info)? };
 
         // --- Global set-0 layout: reserve binding 0 for a per-frame/per-image UBO ---
         let ubo_binding = vk::DescriptorSetLayoutBinding {
@@ -1042,7 +1041,7 @@ impl Drop for VulkanBase {
                 .expect("Failed to wait device idle");
 
             self.swapchain
-                .cleanup(&self.instance, &self.device, &self.allocator.as_ref().unwrap());
+                .cleanup(&self.instance, &self.device, self.allocator.as_ref().unwrap());
             self.device
                 .destroy_descriptor_set_layout(self.set0_global_layout, None);
 

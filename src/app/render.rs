@@ -1,3 +1,13 @@
+//! --------------------------------------------------------------------------------------
+//! Rendering Helpers (render.rs)
+//!
+//! Created: August 2025
+//! Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
+//!
+//! Utility functions for rendering per-frame data and ImGui windows.
+//!
+//! --------------------------------------------------------------------------------------
+
 use std::error::Error;
 
 use ash::vk;

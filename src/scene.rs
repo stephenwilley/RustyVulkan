@@ -1,4 +1,12 @@
-//! Scene module.
+//! --------------------------------------------------------------------------------------
+//! Scene Module (scene.rs)
+//!
+//! Created: August 2025
+//! Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
+//!
+//! Defines basic scene graph structures and transformations for objects.
+//!
+//! --------------------------------------------------------------------------------------
 
 use cgmath::{Matrix4, Vector3, Quaternion, Deg, Rotation3};
 

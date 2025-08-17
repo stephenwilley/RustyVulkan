@@ -1,4 +1,4 @@
-// src/camera.rs
+//! Camera module.
 
 use cgmath::{Matrix4, Point3, Vector3, Deg, Rad, perspective};
 use cgmath::prelude::*;

@@ -643,7 +643,7 @@ impl ImGuiRenderer {
             }
             let buffer_info = vk::BufferCreateInfo {
                 size: vertex_size,
-                usage: vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                usage: vk::BufferUsageFlags::VERTEX_BUFFER,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 ..Default::default()
             };
@@ -667,7 +667,7 @@ impl ImGuiRenderer {
             }
             let buffer_info = vk::BufferCreateInfo {
                 size: index_size,
-                usage: vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                usage: vk::BufferUsageFlags::INDEX_BUFFER,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 ..Default::default()
             };
@@ -759,7 +759,7 @@ impl ImGuiRenderer {
     /// A new ImGuiRenderer instance with all resources initialized.
     pub fn new(base: &mut VulkanBase, imgui: &mut ImGuiContext) -> Self {
         let device     = base.device.clone();
-        let allocator  = base.allocator.clone();
+        let allocator  = base.allocator.as_ref().expect("Allocator not initialized").clone();
 
         // 0) Load default font atlas
         imgui.fonts().add_font(&[FontSource::DefaultFontData {

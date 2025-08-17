@@ -89,7 +89,7 @@ pub struct VulkanBase {
     /// Logical device used for all Vulkan calls.
     pub device: ash::Device,
     /// Global Vulkan memory allocator (VMA).
-    pub allocator: Arc<Allocator>,
+    pub allocator: Option<Arc<vk_mem::Allocator>>,
     /// Graphics queue from the selected family.
     pub graphics_queue: vk::Queue,
     // -- Global set 0 related --
@@ -761,7 +761,7 @@ impl VulkanBase {
             &self.surface,
             &self.surface_loader,
             window,
-            &self.allocator,
+            &self.allocator.as_ref().unwrap(),
         )?;
         unsafe {
             self.device
@@ -794,7 +794,7 @@ impl VulkanBase {
         // Tear down old UBO buffers and descriptor pool
         for (buf, alloc) in self.ubo_buffers.iter().zip(self.ubo_allocations.iter_mut()) {
             unsafe {
-                self.allocator.destroy_buffer(*buf, alloc);
+                self.allocator.as_ref().unwrap().destroy_buffer(*buf, alloc);
             }
         }
         unsafe {
@@ -804,7 +804,7 @@ impl VulkanBase {
 
         // Recreate UBO buffers and set0 descriptor sets for the new image count
         let (new_ubo_buffers, new_ubo_allocations) =
-            Self::create_uniform_buffers(&self.allocator, new_image_count);
+            Self::create_uniform_buffers(&self.allocator.as_ref().unwrap(), new_image_count);
         let (new_pool, new_sets) = Self::create_set0_descriptor_pool_and_sets(
             &self.device,
             self.set0_global_layout,
@@ -901,7 +901,8 @@ impl VulkanBase {
         let command_pool = Self::create_command_pool(&device, graphics_queue_family_index)?;
 
         // Create a Vulkan Memory Allocator (VMA) instance.
-        let allocator_info = vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
+        let mut allocator_info = vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
+        allocator_info.flags |= vk_mem::AllocatorCreateFlags::EXT_MEMORY_BUDGET;
         let allocator = Arc::new(unsafe { Allocator::new(allocator_info)? });
 
         // --- Global set-0 layout: reserve binding 0 for a per-frame/per-image UBO ---
@@ -972,7 +973,7 @@ impl VulkanBase {
             instance,
             physical_device,
             device,
-            allocator,
+            allocator: Some(allocator),
             graphics_queue,
             // set 0
             set0_global_layout,
@@ -1041,7 +1042,7 @@ impl Drop for VulkanBase {
                 .expect("Failed to wait device idle");
 
             self.swapchain
-                .cleanup(&self.instance, &self.device, &self.allocator);
+                .cleanup(&self.instance, &self.device, &self.allocator.as_ref().unwrap());
             self.device
                 .destroy_descriptor_set_layout(self.set0_global_layout, None);
 
@@ -1061,11 +1062,21 @@ impl Drop for VulkanBase {
             }
             // UBO and descriptor resources
             for (buf, alloc) in self.ubo_buffers.iter().zip(self.ubo_allocations.iter_mut()) {
-                self.allocator.destroy_buffer(*buf, alloc);
+                self.allocator.as_ref().unwrap().destroy_buffer(*buf, alloc);
             }
             self.device
                 .destroy_descriptor_pool(self.set0_descriptor_pool, None);
             self.device.destroy_command_pool(self.command_pool, None);
+            // 👉 ensure VMA frees its VkDeviceMemory blocks before we destroy the device
+            if let Some(alloc) = self.allocator.take() {
+                // (optional) quick summary before it goes away
+                if let Ok(stats) = alloc.calculate_statistics() {
+                    let s = stats.total.statistics;
+                    println!("VMA total before drop: allocs={} blocks={} allocBytes={} blockBytes={}",
+                            s.allocationCount, s.blockCount, s.allocationBytes, s.blockBytes);
+                }
+                drop(alloc); // frees VMA internal blocks now
+            }
             self.device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
             #[cfg(debug_assertions)]

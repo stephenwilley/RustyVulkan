@@ -45,7 +45,7 @@ impl MeshManager {
         } else {
             let mesh = LoadedMesh::cube(
                 "Cube".into(),
-                &vb.allocator,
+                &vb.allocator.as_ref().unwrap(),
             )?;
             self.meshes.push(mesh);
             Ok(self.meshes.len() - 1)
@@ -68,7 +68,7 @@ impl MeshManager {
         } else {
             let mesh = LoadedMesh::unit_plane(
                 "UnitPlane".into(),
-                &vb.allocator,
+                &vb.allocator.as_ref().unwrap(),
             )?;
             self.meshes.push(mesh);
             Ok(self.meshes.len() - 1)
@@ -95,7 +95,7 @@ impl MeshManager {
         // Otherwise upload to GPU...
         let loaded = crate::graphics::mesh::LoadedMesh::load(
             name.clone(),
-            &vb.allocator,
+            &vb.allocator.as_ref().unwrap(),
             &mesh,
         )?;
         self.meshes.push(loaded);

@@ -173,7 +173,7 @@ impl Material {
         if texturing_enabled {
             textures = Some(LoadedTextures::load(
                 &vb.device,
-                &vb.allocator,
+                &vb.allocator.as_ref().unwrap(),
                 vb.command_pool,
                 vb.graphics_queue,
                 diffuse_texture_path.unwrap(),

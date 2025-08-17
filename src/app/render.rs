@@ -139,6 +139,7 @@ pub fn update_ubo(
     unsafe {
         let ptr = base
             .allocator
+            .as_ref().unwrap()
             .map_memory(allocation)
             .expect("Map UBO") as *mut u8;
         std::ptr::copy_nonoverlapping(
@@ -146,7 +147,7 @@ pub fn update_ubo(
             ptr,
             std::mem::size_of::<GlobalUbo>(),
         );
-        base.allocator.unmap_memory(allocation);
+        base.allocator.as_ref().unwrap().unmap_memory(allocation);
     }
 }
 

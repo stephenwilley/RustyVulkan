@@ -253,4 +253,3 @@ pub fn draw_frame(app: &mut App) -> Result<(), Box<dyn Error>> {
     }
     Ok(())
 }
-

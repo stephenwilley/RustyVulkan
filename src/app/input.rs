@@ -171,4 +171,3 @@ pub fn handle_window_event(
         }
     }
 }
-

@@ -21,7 +21,7 @@ use std::f32::consts::TAU;
 use crate::graphics::camera::Camera;
 use crate::vulkan::base::{GlobalUbo, VulkanBase, GpuLight};
 
-use super::{App, WorldControls};
+use crate::app::app::{App, WorldControls};
 
 pub fn prepare_imgui_draw_data<'a>(
     ms_per_frame: f32,

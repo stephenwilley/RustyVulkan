@@ -16,8 +16,7 @@ use winit::keyboard::PhysicalKey::Code;
 use winit::keyboard::KeyCode;
 use winit::window::WindowId;
 
-use super::render;
-use super::App;
+use crate::app::app::App;
 
 #[derive(Default, Clone, Copy)]
 pub struct InputState {
@@ -158,9 +157,11 @@ pub fn handle_window_event(
                 WindowEvent::RedrawRequested => {
                     app.start_of_frame_time = Instant::now();
 
-                    if let Err(e) = render::draw_frame(app) {
+                    let graph = std::mem::take(&mut app.render_graph);
+                    if let Err(e) = graph.execute(app) {
                         eprintln!("draw_frame error: {}", e);
                     }
+                    app.render_graph = graph;
 
                     let now = Instant::now();
                     let elapsed = now.duration_since(app.start_of_frame_time);

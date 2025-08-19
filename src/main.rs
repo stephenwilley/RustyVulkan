@@ -12,7 +12,7 @@ mod app;
 mod vulkan;
 mod graphics;
 
-use app::App;
+use app::app::App;
 
 fn main() {
     if let Err(e) = App::new().run() {

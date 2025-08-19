@@ -12,5 +12,3 @@ pub mod app;
 pub mod input;
 pub mod render;
 pub mod scene;
-
-pub use app::{App, WorldControls};

@@ -26,6 +26,7 @@ use crate::graphics::meshmanager::MeshManager;
 use crate::app::scene::{Scene, SceneObject, Transform as SceneTransform};
 use crate::vulkan::base::VulkanBase;
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
+use crate::vulkan::render_graph::{RenderGraph, RenderPass};
 
 use super::input;
 use super::input::InputState;
@@ -46,6 +47,7 @@ pub struct App {
     pub start_of_frame_time: Instant,
     pub current_ms_per_frame: f32,
     pub world_controls: WorldControls,
+    pub render_graph: RenderGraph,
 }
 
 impl App {
@@ -66,6 +68,7 @@ impl App {
             start_of_frame_time: Instant::now(),
             current_ms_per_frame: 0.0,
             world_controls: WorldControls::default(),
+            render_graph: RenderGraph::new(),
         }
     }
 
@@ -217,6 +220,8 @@ impl ApplicationHandler for App {
         self.imgui_renderer = Some(renderer);
 
         self.set_up_scene();
+
+        self.render_graph.add(RenderPass::Main);
     }
 
     fn device_event(

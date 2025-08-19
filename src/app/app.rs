@@ -19,11 +19,11 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowAttributes};
 
-use crate::camera::Camera;
+use crate::graphics::camera::Camera;
 use crate::graphics::gltf_loader::import_gltf;
 use crate::graphics::materialmanager::{MaterialManager, MaterialProperties};
 use crate::graphics::meshmanager::MeshManager;
-use crate::scene::{Scene, SceneObject, Transform as SceneTransform};
+use crate::app::scene::{Scene, SceneObject, Transform as SceneTransform};
 use crate::vulkan::base::VulkanBase;
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
 

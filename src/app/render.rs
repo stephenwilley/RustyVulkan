@@ -18,7 +18,7 @@ use imgui_winit_support::WinitPlatform;
 use winit::window::Window;
 use std::f32::consts::TAU;
 
-use crate::camera::Camera;
+use crate::graphics::camera::Camera;
 use crate::vulkan::base::{GlobalUbo, VulkanBase, GpuLight};
 
 use super::{App, WorldControls};

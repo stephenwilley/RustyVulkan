@@ -11,8 +11,6 @@
 mod app;
 mod vulkan;
 mod graphics;
-mod camera;
-mod scene;
 
 use app::App;
 

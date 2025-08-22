@@ -13,63 +13,12 @@ use std::error::Error;
 use ash::vk;
 use cgmath::{prelude::*};
 use cgmath::{Matrix4, Vector4};
-use imgui::{Context as ImGuiContext, Condition, WindowFlags};
-use imgui_winit_support::WinitPlatform;
-use winit::window::Window;
 use std::f32::consts::TAU;
 
 use crate::graphics::camera::Camera;
 use crate::vulkan::base::{GlobalUbo, VulkanBase, GpuLight};
-
-use crate::app::app::{App, WorldControls};
-
-pub fn prepare_imgui_draw_data<'a>(
-    ms_per_frame: f32,
-    platform: &'a mut WinitPlatform,
-    imgui: &'a mut ImGuiContext,
-    window: &Window,
-    show_ms_per_frame: bool,
-    _world_controls: &mut WorldControls,
-) -> &'a imgui::DrawData {
-    platform
-        .prepare_frame(imgui.io_mut(), window)
-        .expect("Failed to prepare imgui frame");
-
-    let ui = imgui.frame();
-    if show_ms_per_frame {
-        ui.window("##ms_per_redraw")
-            .position([10.0, 10.0], Condition::Always)
-            .size([200.0, 30.0], Condition::Always)
-            .flags(
-                WindowFlags::NO_TITLE_BAR
-                    | WindowFlags::NO_RESIZE
-                    | WindowFlags::NO_MOVE
-                    | WindowFlags::NO_SCROLLBAR
-                    | WindowFlags::NO_BACKGROUND,
-            )
-            .build(|| {
-                ui.text(format!("Redraw ms: {:.2}", ms_per_frame));
-            });
-    }
-    /*ui.window("Controls")
-        .size([300.0, 180.0], Condition::FirstUseEver)
-        .build(|| {
-            ui.text("Light Position");
-            ui.slider("Y", -100.0, 100.0, &mut world_controls.lights.height);
-            ui.text("Light Intensity");
-            ui.slider("LI", 0.0, 10.0, &mut world_controls.light_intensity);
-            ui.text("Light Radius");
-            ui.slider("LR", 0.0, 50.0, &mut world_controls.light_radius);
-            ui.text(format!(
-                "Light Position: {:.1}, {:.1}, {:.1}",
-                world_controls.light_pos[0],
-                world_controls.light_pos[1],
-                world_controls.light_pos[2]
-            ));
-        });*/
-    platform.prepare_render(ui, window);
-    imgui.render()
-}
+use crate::app::app::WorldControls;
+use crate::vulkan::render_graph::RenderCtx;
 
 pub fn compute_push_constant_per_obj(
     camera: &Camera,
@@ -161,67 +110,40 @@ pub fn update_ubo(
     }
 }
 
-pub fn draw_frame(app: &mut App) -> Result<(), Box<dyn Error>> {
-    if let Some(vb) = app.vulkan_base.as_mut() {
-        let imgui_renderer = app.imgui_renderer.as_mut().unwrap();
-
-        let s = app.step;
-        if app.input.moving_forward {
-            app.camera.translate(s, 0.0)
-        }
-        if app.input.moving_backward {
-            app.camera.translate(-s, 0.0)
-        }
-        if app.input.moving_left {
-            app.camera.translate(0.0, -s)
-        }
-        if app.input.moving_right {
-            app.camera.translate(0.0, s)
-        }
-
-        let window = app.window.as_ref().unwrap();
-        let draw_data = prepare_imgui_draw_data(
-            app.current_ms_per_frame,
-            app.platform.as_mut().unwrap(),
-            app.imgui.as_mut().unwrap(),
-            window,
-            vb.engine_settings.show_ms_per_frame,
-            &mut app.world_controls,
-        );
-
-        if let Some(frame) = vb.begin_frame()? {
+pub fn draw_frame(ctx: &mut RenderCtx) -> Result<(), Box<dyn Error>> {
+        if let Some(frame) = ctx.vulkan_base.begin_frame()? {
             let image_index = frame.image_index as usize;
 
-            update_ubo(vb, image_index, &mut app.world_controls, &app.camera);
-            let device = &vb.device;
+            update_ubo(ctx.vulkan_base, image_index, &mut ctx.world_controls, ctx.camera);
+            let device = &ctx.vulkan_base.device;
 
             let mut current_pipeline_id = usize::MAX;
-            for obj in &app.scene.objects {
+            for obj in &ctx.scene.objects {
                 let model_matrix = obj.transform.model_matrix();
-                let push_bytes = compute_push_constant_per_obj(&app.camera, &model_matrix);
+                let push_bytes = compute_push_constant_per_obj(ctx.camera, &model_matrix);
 
                 unsafe {
                     if current_pipeline_id != obj.material_id {
                         device.cmd_bind_pipeline(
                             frame.cmd_buf,
                             vk::PipelineBindPoint::GRAPHICS,
-                            app.material_manager.materials[obj.material_id].pipeline.vk_pipeline,
+                            ctx.material_manager.materials[obj.material_id].pipeline.vk_pipeline,
                         );
-                        let set0 = vb.set0_descriptor_sets[image_index];
-                        if let Some(_tex) = app.material_manager.materials[obj.material_id].textures.as_ref() {
+                        let set0 = ctx.vulkan_base.set0_descriptor_sets[image_index];
+                        if let Some(_tex) = ctx.material_manager.materials[obj.material_id].textures.as_ref() {
                             device.cmd_bind_descriptor_sets(
                                 frame.cmd_buf,
                                 vk::PipelineBindPoint::GRAPHICS,
-                                app.material_manager.materials[obj.material_id].pipeline.vk_layout,
+                                ctx.material_manager.materials[obj.material_id].pipeline.vk_layout,
                                 0,
-                                &[set0, app.material_manager.materials[obj.material_id].texture_descriptor_set],
+                                &[set0, ctx.material_manager.materials[obj.material_id].texture_descriptor_set],
                                 &[],
                             );
                         } else {
                             device.cmd_bind_descriptor_sets(
                                 frame.cmd_buf,
                                 vk::PipelineBindPoint::GRAPHICS,
-                                app.material_manager.materials[obj.material_id].pipeline.vk_layout,
+                                ctx.material_manager.materials[obj.material_id].pipeline.vk_layout,
                                 0,
                                 &[set0],
                                 &[],
@@ -231,25 +153,25 @@ pub fn draw_frame(app: &mut App) -> Result<(), Box<dyn Error>> {
                     }
                     device.cmd_push_constants(
                         frame.cmd_buf,
-                        app.material_manager.materials[obj.material_id].pipeline.vk_layout,
+                        ctx.material_manager.materials[obj.material_id].pipeline.vk_layout,
                         vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                         0,
                         &push_bytes,
                     );
                 }
-                app.mesh_manager.meshes[obj.mesh_id].record(device, frame.cmd_buf);
+                ctx.mesh_manager.meshes[obj.mesh_id].record(&device, frame.cmd_buf);
             }
 
+            let ui_ctx = ctx.ui_ctx.as_mut().unwrap();
             unsafe {
                 device.cmd_bind_pipeline(
                     frame.cmd_buf,
                     vk::PipelineBindPoint::GRAPHICS,
-                    imgui_renderer.vk_pipeline,
+                    ui_ctx.renderer.vk_pipeline,
                 );
             }
-            imgui_renderer.render(device, vb.allocator.as_ref().unwrap(), frame.cmd_buf, draw_data);
-            vb.end_frame(frame)?;
+            ui_ctx.renderer.render(&ctx.vulkan_base.device, ctx.vulkan_base.allocator.as_ref().unwrap(), frame.cmd_buf, ui_ctx.draw_data);
+            ctx.vulkan_base.end_frame(frame)?;
         }
-    }
     Ok(())
 }

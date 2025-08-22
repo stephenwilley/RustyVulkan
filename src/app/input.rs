@@ -157,6 +157,20 @@ pub fn handle_window_event(
                 WindowEvent::RedrawRequested => {
                     app.start_of_frame_time = Instant::now();
 
+                    let s = app.step;
+                    if app.input.moving_forward {
+                        app.camera.translate(s, 0.0)
+                    }
+                    if app.input.moving_backward {
+                        app.camera.translate(-s, 0.0)
+                    }
+                    if app.input.moving_left {
+                        app.camera.translate(0.0, -s)
+                    }
+                    if app.input.moving_right {
+                        app.camera.translate(0.0, s)
+                    }
+
                     let graph = std::mem::take(&mut app.render_graph);
                     if let Err(e) = graph.execute(app) {
                         eprintln!("draw_frame error: {}", e);

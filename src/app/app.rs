@@ -26,7 +26,7 @@ use crate::graphics::meshmanager::MeshManager;
 use crate::app::scene::{Scene, SceneObject, Transform as SceneTransform};
 use crate::vulkan::base::VulkanBase;
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
-use crate::vulkan::render_graph::{RenderGraph, RenderPass};
+use crate::vulkan::render_graph::{RenderGraph, RenderPassNode};
 
 use super::input;
 use super::input::InputState;
@@ -221,7 +221,7 @@ impl ApplicationHandler for App {
 
         self.set_up_scene();
 
-        self.render_graph.add(RenderPass::Main);
+        self.render_graph.add(RenderPassNode::Main);
     }
 
     fn device_event(

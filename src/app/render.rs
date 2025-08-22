@@ -111,7 +111,8 @@ pub fn update_ubo(
 }
 
 pub fn draw_frame(ctx: &mut RenderCtx) -> Result<(), Box<dyn Error>> {
-        if let Some(frame) = ctx.vulkan_base.begin_frame()? {
+        if ctx.frame.is_some() {
+            let frame = ctx.frame.as_mut().unwrap();
             let image_index = frame.image_index as usize;
 
             update_ubo(ctx.vulkan_base, image_index, &mut ctx.world_controls, ctx.camera);
@@ -171,7 +172,6 @@ pub fn draw_frame(ctx: &mut RenderCtx) -> Result<(), Box<dyn Error>> {
                 );
             }
             ui_ctx.renderer.render(&ctx.vulkan_base.device, ctx.vulkan_base.allocator.as_ref().unwrap(), frame.cmd_buf, ui_ctx.draw_data);
-            ctx.vulkan_base.end_frame(frame)?;
         }
     Ok(())
 }

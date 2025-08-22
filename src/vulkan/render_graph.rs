@@ -19,6 +19,7 @@ use crate::graphics::meshmanager::MeshManager;
 use crate::app::app::WorldControls;
 use crate::vulkan::base::VulkanBase;
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
+use crate::vulkan::base::FrameCtx;
 
 use imgui::{Context as ImGuiContext, Condition, WindowFlags};
 use imgui_winit_support::WinitPlatform;
@@ -42,7 +43,7 @@ pub struct UiCtx<'a> {
 /// RenderCtx Struct
 /// Used to pass the appropriate bits'n'pieces to the render passes
 pub struct RenderCtx<'a> {
-    pub frame: Option<crate::vulkan::base::FrameCtx>,
+    pub frame: Option<FrameCtx>,
     pub camera: &'a Camera,
     pub scene: &'a Scene,
     pub material_manager: &'a MaterialManager,
@@ -120,8 +121,8 @@ impl RenderGraph {
     }
 
     pub fn execute(&self, app: &mut App) -> Result<(), Box<dyn Error>> {
+        let vb = app.vulkan_base.as_mut().unwrap();
         let draw_data = {
-            let vb = app.vulkan_base.as_ref().unwrap();
             let window = app.window.as_ref().unwrap();
             Self::prepare_imgui_draw_data(
                 app.current_ms_per_frame,
@@ -133,9 +134,10 @@ impl RenderGraph {
             )
         };
         let ui_ctx = UiCtx { draw_data, renderer: app.imgui_renderer.as_mut().unwrap() };
-        let vb = app.vulkan_base.as_mut().unwrap();
+
+        let frame = vb.begin_frame()?;
         let mut ctx = RenderCtx {
-            frame: None,
+            frame,
             camera: &app.camera,
             scene: &app.scene,
             material_manager: &app.material_manager,
@@ -145,6 +147,8 @@ impl RenderGraph {
             ui_ctx: Some(ui_ctx),
         };
         draw_frame(&mut ctx)?;
+        ctx.vulkan_base.end_frame(ctx.frame.unwrap())?;
+        
         Ok(())
     }
 

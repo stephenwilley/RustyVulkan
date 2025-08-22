@@ -222,6 +222,7 @@ impl ApplicationHandler for App {
         self.set_up_scene();
 
         self.render_graph.add(RenderPassNode::Main);
+        self.render_graph.add(RenderPassNode::UI);
     }
 
     fn device_event(

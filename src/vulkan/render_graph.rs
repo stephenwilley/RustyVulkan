@@ -10,7 +10,6 @@
 
 use std::error::Error;
 
-use crate::app::render::draw_frame;
 use crate::app::app::App;
 use crate::graphics::camera::Camera;
 use crate::app::scene::Scene;
@@ -20,6 +19,8 @@ use crate::app::app::WorldControls;
 use crate::vulkan::base::VulkanBase;
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
 use crate::vulkan::base::FrameCtx;
+use crate::vulkan::main_pass::MainPass;
+use crate::vulkan::ui_pass::UiPass;
 
 use imgui::{Context as ImGuiContext, Condition, WindowFlags};
 use imgui_winit_support::WinitPlatform;
@@ -31,6 +32,7 @@ use winit::window::Window;
 /// Shadow, UI
 pub enum RenderPassNode {
     Main,
+    UI,
 }
 
 /// UiCtx Struct
@@ -62,7 +64,7 @@ pub trait RenderPass {
 /// RenderGraph
 /// Contains a list of render pass nodes
 pub struct RenderGraph {
-    render_passes: Vec<RenderPassNode>,
+    render_passes: Vec<Box<dyn RenderPass>>,
 }
 
 impl RenderGraph {
@@ -120,7 +122,7 @@ impl RenderGraph {
         imgui.render()
     }
 
-    pub fn execute(&self, app: &mut App) -> Result<(), Box<dyn Error>> {
+    pub fn execute(&mut self, app: &mut App) -> Result<(), Box<dyn Error>> {
         let vb = app.vulkan_base.as_mut().unwrap();
         let draw_data = {
             let window = app.window.as_ref().unwrap();
@@ -146,14 +148,23 @@ impl RenderGraph {
             vulkan_base: vb,
             ui_ctx: Some(ui_ctx),
         };
-        draw_frame(&mut ctx)?;
+        
+        // Iterate over all render passes and execute them
+        for pass in &mut self.render_passes {
+            pass.execute(&mut ctx)?;
+        }
+        
         ctx.vulkan_base.end_frame(ctx.frame.unwrap())?;
         
         Ok(())
     }
 
     pub fn add(&mut self, render_pass: RenderPassNode) {
-        self.render_passes.push(render_pass);
+        let pass: Box<dyn RenderPass> = match render_pass {
+            RenderPassNode::Main => Box::new(MainPass::new()),
+            RenderPassNode::UI => Box::new(UiPass::new()),
+        };
+        self.render_passes.push(pass);
     }
 }
 

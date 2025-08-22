@@ -171,7 +171,7 @@ pub fn handle_window_event(
                         app.camera.translate(0.0, s)
                     }
 
-                    let graph = std::mem::take(&mut app.render_graph);
+                    let mut graph = std::mem::take(&mut app.render_graph);
                     if let Err(e) = graph.execute(app) {
                         eprintln!("draw_frame error: {}", e);
                     }

@@ -12,6 +12,7 @@ use ash::vk;
 use cgmath::{prelude::*, Matrix4, Vector4};
 use crate::vulkan::base::{GlobalUbo, VulkanBase, GpuLight};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
+use crate::vulkan::attachments::AttachmentRequest;
 use crate::graphics::camera::Camera;
 use crate::app::app::WorldControls;
 use crate::app::app::MAX_LIGHTS;
@@ -82,6 +83,10 @@ impl RenderPass for MainPass {
             }
         }
         Ok(())
+    }
+
+    fn attachments(&self) -> Vec<AttachmentRequest> {
+        Vec::new()
     }
 }
 

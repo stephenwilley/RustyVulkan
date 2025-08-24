@@ -21,6 +21,7 @@ use crate::vulkan::base::{VulkanBase, FrameCtx, PassAttachments};
 use crate::vulkan::attachments::{AttachmentHandle, AttachmentKind, AttachmentRequest};
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
 use crate::vulkan::main_pass::MainPass;
+use crate::vulkan::shadow_pass::ShadowPass;
 use crate::vulkan::ui_pass::UiPass;
 
 use imgui::Context as ImGuiContext;
@@ -33,6 +34,7 @@ use winit::window::Window;
 /// Shadow, UI
 pub enum RenderPassNode {
     Main,
+    Shadow,
     UI,
 }
 
@@ -169,6 +171,7 @@ impl RenderGraph {
     pub fn add(&mut self, render_pass: RenderPassNode) {
         let pass: Box<dyn RenderPass> = match render_pass {
             RenderPassNode::Main => Box::new(MainPass::new()),
+            RenderPassNode::Shadow => Box::new(ShadowPass::new()),
             RenderPassNode::UI => Box::new(UiPass::new()),
         };
         self.render_passes.push(pass);

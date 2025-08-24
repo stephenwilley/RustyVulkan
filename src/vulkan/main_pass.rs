@@ -10,9 +10,9 @@
 
 use ash::vk;
 use cgmath::{prelude::*, Matrix4, Vector4};
-use crate::vulkan::base::{GlobalUbo, VulkanBase, GpuLight};
+use crate::vulkan::base::{GlobalUbo, VulkanBase, GpuLight, PassAttachments};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
-use crate::vulkan::attachments::AttachmentRequest;
+use crate::vulkan::attachments::{AttachmentRequest, AttachmentKind};
 use crate::graphics::camera::Camera;
 use crate::app::app::WorldControls;
 use crate::app::app::MAX_LIGHTS;
@@ -30,12 +30,29 @@ impl MainPass {
 
 impl RenderPass for MainPass {
     fn execute(&mut self, ctx: &mut RenderCtx) -> Result<(), Box<dyn std::error::Error>> {
-        if ctx.frame.is_some() {
-            let frame = ctx.frame.as_mut().unwrap();
+        if let Some(frame) = ctx.frame.as_mut() {
             let image_index = frame.image_index as usize;
 
             update_ubo(ctx.vulkan_base, image_index, &mut ctx.world_controls, ctx.camera);
             let device = &ctx.vulkan_base.device;
+
+            // Fetch the attachments needed for this pass from the render context.
+            let color = *ctx
+                .attachments
+                .get(&AttachmentKind::Color)
+                .expect("color attachment");
+            let depth = *ctx
+                .attachments
+                .get(&AttachmentKind::Depth)
+                .expect("depth attachment");
+
+            let pass_atts = PassAttachments {
+                color,
+                resolve: None,
+                depth: Some(depth),
+            };
+
+            ctx.vulkan_base.begin_rendering(frame.cmd_buf, &pass_atts);
 
             let mut current_pipeline_id = usize::MAX;
             for obj in &ctx.scene.objects {
@@ -50,13 +67,17 @@ impl RenderPass for MainPass {
                             ctx.material_manager.materials[obj.material_id].pipeline.vk_pipeline,
                         );
                         let set0 = ctx.vulkan_base.set0_descriptor_sets[image_index];
-                        if let Some(_tex) = ctx.material_manager.materials[obj.material_id].textures.as_ref() {
+                        if let Some(_tex) = ctx.material_manager.materials[obj.material_id]
+                            .textures
+                            .as_ref()
+                        {
                             device.cmd_bind_descriptor_sets(
                                 frame.cmd_buf,
                                 vk::PipelineBindPoint::GRAPHICS,
                                 ctx.material_manager.materials[obj.material_id].pipeline.vk_layout,
                                 0,
-                                &[set0, ctx.material_manager.materials[obj.material_id].texture_descriptor_set],
+                                &[set0, ctx.material_manager.materials[obj.material_id]
+                                    .texture_descriptor_set],
                                 &[],
                             );
                         } else {
@@ -81,12 +102,27 @@ impl RenderPass for MainPass {
                 }
                 ctx.mesh_manager.meshes[obj.mesh_id].record(&device, frame.cmd_buf);
             }
+
+            ctx.vulkan_base.end_rendering(frame.cmd_buf, &pass_atts);
         }
         Ok(())
     }
 
     fn attachments(&self) -> Vec<AttachmentRequest> {
-        Vec::new()
+        vec![
+            AttachmentRequest {
+                kind: AttachmentKind::Color,
+                format: vk::Format::B8G8R8A8_UNORM,
+                extent: vk::Extent2D::default(),
+                samples: vk::SampleCountFlags::TYPE_1,
+            },
+            AttachmentRequest {
+                kind: AttachmentKind::Depth,
+                format: vk::Format::D32_SFLOAT,
+                extent: vk::Extent2D::default(),
+                samples: vk::SampleCountFlags::TYPE_1,
+            },
+        ]
     }
 }
 

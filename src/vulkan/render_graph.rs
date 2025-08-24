@@ -22,7 +22,7 @@ use crate::vulkan::base::FrameCtx;
 use crate::vulkan::main_pass::MainPass;
 use crate::vulkan::ui_pass::UiPass;
 
-use imgui::{Context as ImGuiContext, Condition, WindowFlags};
+use imgui::Context as ImGuiContext;
 use imgui_winit_support::WinitPlatform;
 use winit::window::Window;
 
@@ -38,7 +38,11 @@ pub enum RenderPassNode {
 /// UiCtx Struct
 /// Used to pass the appropriate bits'n'pieces to the UI
 pub struct UiCtx<'a> {
-    pub draw_data: &'a imgui::DrawData,
+    pub ms_per_frame: f32,
+    pub imgui: &'a mut ImGuiContext,
+    pub window: &'a Window,
+    pub platform: &'a mut WinitPlatform,
+    pub show_ms_per_frame: bool,
     pub renderer: &'a mut ImGuiRenderer,
 }
 
@@ -74,68 +78,17 @@ impl RenderGraph {
         }
     }
 
-    pub fn prepare_imgui_draw_data<'a>(
-        ms_per_frame: f32,
-        platform: &'a mut WinitPlatform,
-        imgui: &'a mut ImGuiContext,
-        window: &Window,
-        show_ms_per_frame: bool,
-        _world_controls: &mut WorldControls,
-    ) -> &'a imgui::DrawData {
-        platform
-            .prepare_frame(imgui.io_mut(), window)
-            .expect("Failed to prepare imgui frame");
-
-        let ui = imgui.frame();
-        if show_ms_per_frame {
-            ui.window("##ms_per_redraw")
-                .position([10.0, 10.0], Condition::Always)
-                .size([200.0, 30.0], Condition::Always)
-                .flags(
-                    WindowFlags::NO_TITLE_BAR
-                        | WindowFlags::NO_RESIZE
-                        | WindowFlags::NO_MOVE
-                        | WindowFlags::NO_SCROLLBAR
-                        | WindowFlags::NO_BACKGROUND,
-                )
-                .build(|| {
-                    ui.text(format!("Redraw ms: {:.2}", ms_per_frame));
-                });
-        }
-        /*ui.window("Controls")
-            .size([300.0, 180.0], Condition::FirstUseEver)
-            .build(|| {
-                ui.text("Light Position");
-                ui.slider("Y", -100.0, 100.0, &mut world_controls.lights.height);
-                ui.text("Light Intensity");
-                ui.slider("LI", 0.0, 10.0, &mut world_controls.light_intensity);
-                ui.text("Light Radius");
-                ui.slider("LR", 0.0, 50.0, &mut world_controls.light_radius);
-                ui.text(format!(
-                    "Light Position: {:.1}, {:.1}, {:.1}",
-                    world_controls.light_pos[0],
-                    world_controls.light_pos[1],
-                    world_controls.light_pos[2]
-                ));
-            });*/
-        platform.prepare_render(ui, window);
-        imgui.render()
-    }
-
     pub fn execute(&mut self, app: &mut App) -> Result<(), Box<dyn Error>> {
         let vb = app.vulkan_base.as_mut().unwrap();
-        let draw_data = {
-            let window = app.window.as_ref().unwrap();
-            Self::prepare_imgui_draw_data(
-                app.current_ms_per_frame,
-                app.platform.as_mut().unwrap(),
-                app.imgui.as_mut().unwrap(),
-                window,
-                vb.engine_settings.show_ms_per_frame,
-                &mut app.world_controls,
-            )
+
+        let ui_ctx = UiCtx {
+            ms_per_frame: app.current_ms_per_frame,
+            imgui: app.imgui.as_mut().unwrap(),
+            window: app.window.as_ref().unwrap(),
+            platform: app.platform.as_mut().unwrap(),
+            show_ms_per_frame: vb.engine_settings.show_ms_per_frame,
+            renderer: app.imgui_renderer.as_mut().unwrap()
         };
-        let ui_ctx = UiCtx { draw_data, renderer: app.imgui_renderer.as_mut().unwrap() };
 
         let frame = vb.begin_frame()?;
         let mut ctx = RenderCtx {

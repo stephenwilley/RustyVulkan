@@ -10,6 +10,7 @@
 
 use ash::vk;
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
+use crate::vulkan::attachments::AttachmentRequest;
 
 use crate::app::app::WorldControls;
 use imgui::{Context as ImGuiContext, Condition, WindowFlags};
@@ -102,5 +103,9 @@ impl RenderPass for UiPass {
             ui_ctx.renderer.render(&ctx.vulkan_base.device, ctx.vulkan_base.allocator.as_ref().unwrap(), frame.cmd_buf, draw_data);
         }
         Ok(())
+    }
+
+    fn attachments(&self) -> Vec<AttachmentRequest> {
+        Vec::new()
     }
 }

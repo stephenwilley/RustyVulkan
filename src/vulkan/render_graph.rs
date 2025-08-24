@@ -8,6 +8,7 @@
 //!
 //! --------------------------------------------------------------------------------------
 
+use std::collections::HashMap;
 use std::error::Error;
 
 use crate::app::app::App;
@@ -17,6 +18,7 @@ use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::meshmanager::MeshManager;
 use crate::app::app::WorldControls;
 use crate::vulkan::base::VulkanBase;
+use crate::vulkan::attachments::{AttachmentHandle, AttachmentKind, AttachmentRequest};
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
 use crate::vulkan::base::FrameCtx;
 use crate::vulkan::main_pass::MainPass;
@@ -57,12 +59,14 @@ pub struct RenderCtx<'a> {
     pub world_controls: &'a mut WorldControls,
     pub vulkan_base: &'a mut VulkanBase,
     pub ui_ctx: Option<UiCtx<'a>>,
+    pub attachments: HashMap<AttachmentKind, AttachmentHandle>,
 }
 
 /// RenderPass Trait
 /// The behaviours of a render pass
 pub trait RenderPass {
     fn execute(&mut self, ctx: &mut RenderCtx) -> Result<(), Box<dyn std::error::Error>>;
+    fn attachments(&self) -> Vec<AttachmentRequest>;
 }
 
 /// RenderGraph
@@ -100,13 +104,35 @@ impl RenderGraph {
             world_controls: &mut app.world_controls,
             vulkan_base: vb,
             ui_ctx: Some(ui_ctx),
+            attachments: HashMap::new(),
         };
-        
-        // Iterate over all render passes and execute them
+
+        // Gather all attachment requests from passes
+        let mut requests: HashMap<AttachmentKind, AttachmentRequest> = HashMap::new();
+        for pass in &self.render_passes {
+            for req in pass.attachments() {
+                requests.insert(req.kind, req);
+            }
+        }
+
+        // Acquire all attachments from VulkanBase
+        let mut handles: HashMap<AttachmentKind, AttachmentHandle> = HashMap::new();
+        for (kind, req) in &requests {
+            let handle = ctx.vulkan_base.get_attachment(*req);
+            handles.insert(*kind, handle);
+        }
+
+        // Iterate over all render passes, providing the requested attachments
         for pass in &mut self.render_passes {
+            ctx.attachments.clear();
+            for req in pass.attachments() {
+                if let Some(handle) = handles.get(&req.kind) {
+                    ctx.attachments.insert(req.kind, *handle);
+                }
+            }
             pass.execute(&mut ctx)?;
         }
-        
+
         ctx.vulkan_base.end_frame(ctx.frame.unwrap())?;
         
         Ok(())

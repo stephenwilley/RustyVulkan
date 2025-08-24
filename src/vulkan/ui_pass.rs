@@ -10,7 +10,8 @@
 
 use ash::vk;
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
-use crate::vulkan::attachments::AttachmentRequest;
+use crate::vulkan::attachments::{AttachmentRequest, AttachmentKind};
+use crate::vulkan::base::PassAttachments;
 
 use crate::app::app::WorldControls;
 use imgui::{Context as ImGuiContext, Condition, WindowFlags};
@@ -78,8 +79,7 @@ impl UiPass {
 
 impl RenderPass for UiPass {
     fn execute(&mut self, ctx: &mut RenderCtx) -> Result<(), Box<dyn std::error::Error>> {
-        if ctx.frame.is_some() {
-            let frame = ctx.frame.as_mut().unwrap();
+        if let Some(frame) = ctx.frame.as_mut() {
             let device = &ctx.vulkan_base.device;
             let ui_ctx = ctx.ui_ctx.as_mut().unwrap();
 
@@ -92,6 +92,18 @@ impl RenderPass for UiPass {
                 ctx.world_controls,
             );
 
+            let color = *ctx
+                .attachments
+                .get(&AttachmentKind::Color)
+                .expect("color attachment");
+            let pass_atts = PassAttachments {
+                color,
+                resolve: None,
+                depth: None,
+            };
+
+            ctx.vulkan_base.begin_rendering(frame.cmd_buf, &pass_atts);
+
             // Render UI
             unsafe {
                 device.cmd_bind_pipeline(
@@ -100,12 +112,24 @@ impl RenderPass for UiPass {
                     ui_ctx.renderer.vk_pipeline,
                 );
             }
-            ui_ctx.renderer.render(&ctx.vulkan_base.device, ctx.vulkan_base.allocator.as_ref().unwrap(), frame.cmd_buf, draw_data);
+            ui_ctx.renderer.render(
+                &ctx.vulkan_base.device,
+                ctx.vulkan_base.allocator.as_ref().unwrap(),
+                frame.cmd_buf,
+                draw_data,
+            );
+
+            ctx.vulkan_base.end_rendering(frame.cmd_buf, &pass_atts);
         }
         Ok(())
     }
 
     fn attachments(&self) -> Vec<AttachmentRequest> {
-        Vec::new()
+        vec![AttachmentRequest {
+            kind: AttachmentKind::Color,
+            format: vk::Format::B8G8R8A8_UNORM,
+            extent: vk::Extent2D::default(),
+            samples: vk::SampleCountFlags::TYPE_1,
+        }]
     }
 }

@@ -44,6 +44,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
 use super::swapchain::Swapchain;
+use super::attachments::{AttachmentManager, AttachmentRequest, AttachmentHandle};
 use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
 
 /// The debug callback function that prints validation layer messages.
@@ -122,11 +123,14 @@ pub struct VulkanBase {
     // -- Misc --
     /// Runtime toggles (wireframe, ms/frame overlay).
     pub engine_settings: EngineSettings,
+    /// Handles offscreen and transient attachments per swapchain image.
+    pub attachment_manager: AttachmentManager,
     #[cfg(debug_assertions)]
     debug_messenger: vk::DebugUtilsMessengerEXT,
     #[cfg(debug_assertions)]
     debug_utils_loader: ash::ext::debug_utils::Instance,
     frame_slot: usize,
+    current_image_index: usize,
     max_msaa_samples: vk::SampleCountFlags,
 }
 
@@ -173,6 +177,7 @@ impl VulkanBase {
             };
 
             let idx = image_index as usize;
+            self.current_image_index = idx;
 
             // If this image is still tied to an older in-flight slot, wait for that slot to finish first.
             if self.image_owner_fence[idx] != vk::Fence::null() {
@@ -410,6 +415,17 @@ impl VulkanBase {
             self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len();
         }
         Ok(())
+    }
+
+    /// Retrieve or create an attachment for the current swapchain image.
+    pub fn get_attachment(&mut self, request: AttachmentRequest) -> AttachmentHandle {
+        let allocator = self.allocator.as_ref().expect("allocator");
+        self.attachment_manager.get_attachment(
+            &self.device,
+            allocator,
+            self.current_image_index,
+            request,
+        )
     }
     /// Helper: find a suitable memory type on the physical device.
     /// Creates a Vulkan instance.
@@ -851,6 +867,9 @@ impl VulkanBase {
         self.set0_descriptor_pool = new_pool;
         self.set0_descriptor_sets = new_sets;
 
+        self.attachment_manager.cleanup(&self.device, self.allocator.as_ref().unwrap());
+        self.attachment_manager = AttachmentManager::new(new_image_count);
+
         Ok(())
     }
 
@@ -1043,6 +1062,8 @@ impl VulkanBase {
             swapchain.swapchain_image_views.len(),
         )?;
 
+        let attachment_manager = AttachmentManager::new(image_count);
+
         let vulkan_base = Self {
             instance,
             physical_device,
@@ -1070,11 +1091,13 @@ impl VulkanBase {
             command_buffers,
             // misc
             engine_settings,
+            attachment_manager,
             #[cfg(debug_assertions)]
             debug_messenger,
             #[cfg(debug_assertions)]
             debug_utils_loader,
             frame_slot: 0,
+            current_image_index: 0,
             max_msaa_samples,
         };
 
@@ -1116,6 +1139,8 @@ impl Drop for VulkanBase {
                 .device_wait_idle()
                 .expect("Failed to wait device idle");
 
+            self.attachment_manager
+                .cleanup(&self.device, self.allocator.as_ref().unwrap());
             self.swapchain
                 .cleanup(&self.instance, &self.device, self.allocator.as_ref().unwrap());
             self.device

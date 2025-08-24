@@ -145,6 +145,18 @@ pub struct FrameCtx {
     frame_slot: usize,
 }
 
+/// Attachments used for a rendering pass.  Each handle carries the image,
+/// view and the layout the image should be transitioned **back** to when the
+/// pass completes.
+pub struct PassAttachments {
+    /// Color attachment the pass renders into.
+    pub color: AttachmentHandle,
+    /// Optional resolve target for multisample color outputs.
+    pub resolve: Option<AttachmentHandle>,
+    /// Optional depth attachment.
+    pub depth: Option<AttachmentHandle>,
+}
+
 impl VulkanBase {
     /// Begin a frame: wait/reset fences, acquire the next image, and begin the command buffer & render pass.
     ///
@@ -189,79 +201,98 @@ impl VulkanBase {
             self.device.reset_fences(&[self.in_flight_fences[slot]])?;
             self.image_owner_fence[idx] = self.in_flight_fences[slot];
 
-            // Begin recording and open dynamic rendering so the caller can just bind/draw.
+            // Begin recording; passes are responsible for starting rendering.
             let cmd_buf = self.command_buffers[idx];
-            let extent = self.swapchain.extent;
 
             let begin_info = vk::CommandBufferBeginInfo::default();
             self.device.begin_command_buffer(cmd_buf, &begin_info)?;
 
-            // Transition swapchain image to COLOR_ATTACHMENT_OPTIMAL and depth to DEPTH_ATTACHMENT_OPTIMAL
-            let color_barrier = vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::empty(),
-                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                old_layout: self.swapchain.image_layouts[idx],
-                new_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                image: self.swapchain.images[idx],
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                },
-                ..Default::default()
-            };
-            let color_msaa_barrier = vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::empty(),
-                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                old_layout: self.swapchain.color_msaa_layout,
-                new_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                image: self.swapchain.color_msaa_image,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                },
-                ..Default::default()
-            };
-            let depth_barrier = vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::empty(),
-                dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                old_layout: self.swapchain.depth_msaa_layout,
-                new_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                image: self.swapchain.depth_msaa_image,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::DEPTH,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                },
-                ..Default::default()
-            };
-            self.device.cmd_pipeline_barrier(
+            Ok(Some(FrameCtx {
                 cmd_buf,
-                vk::PipelineStageFlags::TOP_OF_PIPE,
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
-                    | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[color_barrier, color_msaa_barrier, depth_barrier],
-            );
-            self.swapchain.image_layouts[idx] = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
-            self.swapchain.color_msaa_layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
-            self.swapchain.depth_msaa_layout = vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL;
+                image_index,
+                frame_slot: slot,
+            }))
+        }
+    }
+
+    /// Begin dynamic rendering for a set of attachments.  This inserts the
+    /// necessary layout transitions and issues `vkCmdBeginRendering`.
+    pub fn begin_rendering(&self, cmd: vk::CommandBuffer, attachments: &PassAttachments) {
+        unsafe {
+            let mut barriers: Vec<vk::ImageMemoryBarrier> = Vec::new();
+
+            // Transition the color target
+            barriers.push(vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::empty(),
+                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                old_layout: attachments.color.layout,
+                new_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                image: attachments.color.image,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                ..Default::default()
+            });
+
+            if let Some(res) = &attachments.resolve {
+                barriers.push(vk::ImageMemoryBarrier {
+                    src_access_mask: vk::AccessFlags::empty(),
+                    dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                    old_layout: res.layout,
+                    new_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    image: res.image,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                    ..Default::default()
+                });
+            }
+
+            if let Some(depth) = &attachments.depth {
+                barriers.push(vk::ImageMemoryBarrier {
+                    src_access_mask: vk::AccessFlags::empty(),
+                    dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    old_layout: depth.layout,
+                    new_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    image: depth.image,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::DEPTH,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                    ..Default::default()
+                });
+            }
+
+            if !barriers.is_empty() {
+                self.device.cmd_pipeline_barrier(
+                    cmd,
+                    vk::PipelineStageFlags::TOP_OF_PIPE,
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                        | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                        | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &barriers,
+                );
+            }
 
             let clear_color = vk::ClearValue {
                 color: vk::ClearColorValue {
@@ -269,60 +300,141 @@ impl VulkanBase {
                 },
             };
             let clear_depth = vk::ClearValue {
-                depth_stencil: vk::ClearDepthStencilValue {
-                    depth: 1.0,
-                    stencil: 0,
-                },
+                depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
             };
+
             let resolve_mode = vk::ResolveModeFlags::AVERAGE;
-            let color_attachment = if self.engine_settings.msaa_samples > 1 {
-                vk::RenderingAttachmentInfo {
-                    image_view: self.swapchain.color_msaa_image_view,
-                    image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                    load_op: vk::AttachmentLoadOp::CLEAR,
-                    store_op: vk::AttachmentStoreOp::DONT_CARE,
-                    clear_value: clear_color,
-                    resolve_mode,
-                    resolve_image_view: self.swapchain.swapchain_image_views[idx],
-                    resolve_image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                    ..Default::default()
-                }
-            } else {
-                vk::RenderingAttachmentInfo {
-                    image_view: self.swapchain.swapchain_image_views[idx],
-                    image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                    load_op: vk::AttachmentLoadOp::CLEAR,
-                    store_op: vk::AttachmentStoreOp::STORE,
-                    clear_value: clear_color,
-                    ..Default::default()
-                }
-            };
-            let depth_attachment = vk::RenderingAttachmentInfo {
-                image_view: self.swapchain.depth_msaa_image_view,
-                image_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+
+            let mut color_attachment = vk::RenderingAttachmentInfo {
+                image_view: attachments.color.view,
+                image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                 load_op: vk::AttachmentLoadOp::CLEAR,
-                store_op: vk::AttachmentStoreOp::DONT_CARE,
-                clear_value: clear_depth,
+                store_op: if attachments.resolve.is_some() {
+                    vk::AttachmentStoreOp::DONT_CARE
+                } else {
+                    vk::AttachmentStoreOp::STORE
+                },
+                clear_value: clear_color,
                 ..Default::default()
             };
+
+            if let Some(res) = &attachments.resolve {
+                color_attachment.resolve_mode = resolve_mode;
+                color_attachment.resolve_image_view = res.view;
+                color_attachment.resolve_image_layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+            }
+
+            let mut depth_attachment_info = vk::RenderingAttachmentInfo::default();
+            let depth_ptr = if let Some(depth) = &attachments.depth {
+                depth_attachment_info = vk::RenderingAttachmentInfo {
+                    image_view: depth.view,
+                    image_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                    load_op: vk::AttachmentLoadOp::CLEAR,
+                    store_op: vk::AttachmentStoreOp::DONT_CARE,
+                    clear_value: clear_depth,
+                    ..Default::default()
+                };
+                &depth_attachment_info as *const _
+            } else {
+                std::ptr::null()
+            };
+
             let rendering_info = vk::RenderingInfo {
                 render_area: vk::Rect2D {
                     offset: vk::Offset2D { x: 0, y: 0 },
-                    extent,
+                    extent: self.swapchain.extent,
                 },
                 layer_count: 1,
                 color_attachment_count: 1,
                 p_color_attachments: &color_attachment,
-                p_depth_attachment: &depth_attachment,
+                p_depth_attachment: depth_ptr,
                 ..Default::default()
             };
-            self.device.cmd_begin_rendering(cmd_buf, &rendering_info);
 
-            Ok(Some(FrameCtx {
-                cmd_buf,
-                image_index,
-                frame_slot: slot,
-            }))
+            self.device.cmd_begin_rendering(cmd, &rendering_info);
+        }
+    }
+
+    /// End rendering for the provided attachments, performing any necessary
+    /// transitions back to the attachment's requested layout.
+    pub fn end_rendering(&self, cmd: vk::CommandBuffer, attachments: &PassAttachments) {
+        unsafe {
+            self.device.cmd_end_rendering(cmd);
+
+            let mut barriers: Vec<vk::ImageMemoryBarrier> = Vec::new();
+
+            // Color attachment back to its requested layout
+            barriers.push(vk::ImageMemoryBarrier {
+                src_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                dst_access_mask: vk::AccessFlags::empty(),
+                old_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                new_layout: attachments.color.layout,
+                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                image: attachments.color.image,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                ..Default::default()
+            });
+
+            if let Some(res) = &attachments.resolve {
+                barriers.push(vk::ImageMemoryBarrier {
+                    src_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                    dst_access_mask: vk::AccessFlags::empty(),
+                    old_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    new_layout: res.layout,
+                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    image: res.image,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                    ..Default::default()
+                });
+            }
+
+            if let Some(depth) = &attachments.depth {
+                barriers.push(vk::ImageMemoryBarrier {
+                    src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                    dst_access_mask: vk::AccessFlags::empty(),
+                    old_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                    new_layout: depth.layout,
+                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    image: depth.image,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::DEPTH,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                    ..Default::default()
+                });
+            }
+
+            if !barriers.is_empty() {
+                self.device.cmd_pipeline_barrier(
+                    cmd,
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                        | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                        | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                    vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &barriers,
+                );
+            }
         }
     }
 
@@ -335,39 +447,7 @@ impl VulkanBase {
     /// 4. Advance to the next CPU frame-in-flight slot.
     pub fn end_frame(&mut self, frame: FrameCtx) -> Result<(), Box<dyn Error>> {
         unsafe {
-            // Close dynamic rendering and command buffer
-            self.device.cmd_end_rendering(frame.cmd_buf);
-
-            // Transition image back for presentation
-            let idx = frame.image_index as usize;
-            let present_barrier = vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                dst_access_mask: vk::AccessFlags::empty(),
-                old_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                new_layout: vk::ImageLayout::PRESENT_SRC_KHR,
-                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                image: self.swapchain.images[idx],
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                },
-                ..Default::default()
-            };
-            self.device.cmd_pipeline_barrier(
-                frame.cmd_buf,
-                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[present_barrier],
-            );
-            self.swapchain.image_layouts[idx] = vk::ImageLayout::PRESENT_SRC_KHR;
-
+            // Command buffer was already closed by the passes.
             self.device.end_command_buffer(frame.cmd_buf)?;
 
             // Submit: wait for image-available (slot), signal render-finished (per-image)

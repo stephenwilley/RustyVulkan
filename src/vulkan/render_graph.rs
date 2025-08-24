@@ -17,10 +17,9 @@ use crate::app::scene::Scene;
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::meshmanager::MeshManager;
 use crate::app::app::WorldControls;
-use crate::vulkan::base::VulkanBase;
+use crate::vulkan::base::{VulkanBase, FrameCtx, PassAttachments};
 use crate::vulkan::attachments::{AttachmentHandle, AttachmentKind, AttachmentRequest};
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
-use crate::vulkan::base::FrameCtx;
 use crate::vulkan::main_pass::MainPass;
 use crate::vulkan::ui_pass::UiPass;
 
@@ -106,35 +105,64 @@ impl RenderGraph {
             ui_ctx: Some(ui_ctx),
             attachments: HashMap::new(),
         };
+        if ctx.frame.is_some() {
+            // Gather command buffer and image index before borrowing ctx mutably
+            let (cmd_buf, idx) = {
+                let f = ctx.frame.as_ref().unwrap();
+                (f.cmd_buf, f.image_index as usize)
+            };
+            // Build attachments for the main swapchain render pass
+            let attachments = PassAttachments {
+                color: AttachmentHandle {
+                    image: ctx.vulkan_base.swapchain.color_msaa_image,
+                    view: ctx.vulkan_base.swapchain.color_msaa_image_view,
+                    layout: ctx.vulkan_base.swapchain.color_msaa_layout,
+                },
+                resolve: Some(AttachmentHandle {
+                    image: ctx.vulkan_base.swapchain.images[idx],
+                    view: ctx.vulkan_base.swapchain.swapchain_image_views[idx],
+                    layout: ctx.vulkan_base.swapchain.image_layouts[idx],
+                }),
+                depth: Some(AttachmentHandle {
+                    image: ctx.vulkan_base.swapchain.depth_msaa_image,
+                    view: ctx.vulkan_base.swapchain.depth_msaa_image_view,
+                    layout: ctx.vulkan_base.swapchain.depth_msaa_layout,
+                }),
+            };
 
-        // Gather all attachment requests from passes
-        let mut requests: HashMap<AttachmentKind, AttachmentRequest> = HashMap::new();
-        for pass in &self.render_passes {
-            for req in pass.attachments() {
-                requests.insert(req.kind, req);
-            }
-        }
+            ctx.vulkan_base.begin_rendering(cmd_buf, &attachments);
 
-        // Acquire all attachments from VulkanBase
-        let mut handles: HashMap<AttachmentKind, AttachmentHandle> = HashMap::new();
-        for (kind, req) in &requests {
-            let handle = ctx.vulkan_base.get_attachment(*req);
-            handles.insert(*kind, handle);
-        }
-
-        // Iterate over all render passes, providing the requested attachments
-        for pass in &mut self.render_passes {
-            ctx.attachments.clear();
-            for req in pass.attachments() {
-                if let Some(handle) = handles.get(&req.kind) {
-                    ctx.attachments.insert(req.kind, *handle);
+            // Gather all attachment requests from passes
+            let mut requests: HashMap<AttachmentKind, AttachmentRequest> = HashMap::new();
+            for pass in &self.render_passes {
+                for req in pass.attachments() {
+                    requests.insert(req.kind, req);
                 }
             }
-            pass.execute(&mut ctx)?;
+
+            // Acquire all attachments from VulkanBase
+            let mut handles: HashMap<AttachmentKind, AttachmentHandle> = HashMap::new();
+            for (kind, req) in &requests {
+                let handle = ctx.vulkan_base.get_attachment(*req);
+                handles.insert(*kind, handle);
+            }
+
+            // Iterate over all render passes, providing the requested attachments
+            for pass in &mut self.render_passes {
+                ctx.attachments.clear();
+                for req in pass.attachments() {
+                    if let Some(handle) = handles.get(&req.kind) {
+                        ctx.attachments.insert(req.kind, *handle);
+                    }
+                }
+                pass.execute(&mut ctx)?;
+            }
+
+            ctx.vulkan_base.end_rendering(cmd_buf, &attachments);
+            let frame = ctx.frame.take().unwrap();
+            ctx.vulkan_base.end_frame(frame)?;
         }
 
-        ctx.vulkan_base.end_frame(ctx.frame.unwrap())?;
-        
         Ok(())
     }
 

@@ -1,6 +1,6 @@
 use ash::vk;
 use std::collections::HashMap;
-use vk_mem::{Allocation, AllocationCreateInfo, Allocator, MemoryUsage};
+use vk_mem::{Alloc, Allocation, AllocationCreateInfo, Allocator, MemoryUsage};
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum AttachmentKind {

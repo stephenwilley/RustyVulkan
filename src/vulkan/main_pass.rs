@@ -106,10 +106,24 @@ impl RenderPass for MainPass {
                 ctx.mesh_manager.meshes[obj.mesh_id].record(&device, frame.cmd_buf);
             }
 
+            // Update desired final layouts before ending rendering so that
+            // `end_rendering` transitions to a valid layout instead of
+            // `VK_IMAGE_LAYOUT_UNDEFINED`.
+            pass_atts.color.layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+            if let Some(depth) = pass_atts.depth.as_mut() {
+                depth.layout = vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL;
+            }
             if let Some(res) = pass_atts.resolve.as_mut() {
                 res.layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
             }
+
             ctx.vulkan_base.end_rendering(frame.cmd_buf, &pass_atts);
+
+            // Persist the final layouts for use in subsequent passes/frames.
+            ctx.vulkan_base.swapchain.color_msaa_layout = pass_atts.color.layout;
+            if let Some(depth) = pass_atts.depth {
+                ctx.vulkan_base.swapchain.depth_msaa_layout = depth.layout;
+            }
             if let Some(res) = pass_atts.resolve {
                 ctx.vulkan_base.swapchain.image_layouts[image_index] = res.layout;
             }

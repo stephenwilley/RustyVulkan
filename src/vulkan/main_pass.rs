@@ -12,7 +12,7 @@ use ash::vk;
 use cgmath::{prelude::*, Matrix4, Vector4};
 use crate::vulkan::base::{GlobalUbo, VulkanBase, GpuLight, PassAttachments};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
-use crate::vulkan::attachments::{AttachmentRequest, AttachmentKind};
+use crate::vulkan::attachments::{AttachmentHandle, AttachmentRequest};
 use crate::graphics::camera::Camera;
 use crate::app::app::WorldControls;
 use crate::app::app::MAX_LIGHTS;
@@ -36,20 +36,23 @@ impl RenderPass for MainPass {
             update_ubo(ctx.vulkan_base, image_index, &mut ctx.world_controls, ctx.camera);
             let device = &ctx.vulkan_base.device;
 
-            // Fetch the attachments needed for this pass from the render context.
-            let color = *ctx
-                .attachments
-                .get(&AttachmentKind::Color)
-                .expect("color attachment");
-            let depth = *ctx
-                .attachments
-                .get(&AttachmentKind::Depth)
-                .expect("depth attachment");
-
-            let pass_atts = PassAttachments {
-                color,
-                resolve: None,
-                depth: Some(depth),
+            // Build attachments from the swapchain and MSAA images.
+            let mut pass_atts = PassAttachments {
+                color: AttachmentHandle {
+                    image: ctx.vulkan_base.swapchain.color_msaa_image,
+                    view: ctx.vulkan_base.swapchain.color_msaa_image_view,
+                    layout: ctx.vulkan_base.swapchain.color_msaa_layout,
+                },
+                resolve: Some(AttachmentHandle {
+                    image: ctx.vulkan_base.swapchain.images[image_index],
+                    view: ctx.vulkan_base.swapchain.swapchain_image_views[image_index],
+                    layout: ctx.vulkan_base.swapchain.image_layouts[image_index],
+                }),
+                depth: Some(AttachmentHandle {
+                    image: ctx.vulkan_base.swapchain.depth_msaa_image,
+                    view: ctx.vulkan_base.swapchain.depth_msaa_image_view,
+                    layout: ctx.vulkan_base.swapchain.depth_msaa_layout,
+                }),
             };
 
             ctx.vulkan_base.begin_rendering(frame.cmd_buf, &pass_atts);
@@ -103,26 +106,19 @@ impl RenderPass for MainPass {
                 ctx.mesh_manager.meshes[obj.mesh_id].record(&device, frame.cmd_buf);
             }
 
+            if let Some(res) = pass_atts.resolve.as_mut() {
+                res.layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+            }
             ctx.vulkan_base.end_rendering(frame.cmd_buf, &pass_atts);
+            if let Some(res) = pass_atts.resolve {
+                ctx.vulkan_base.swapchain.image_layouts[image_index] = res.layout;
+            }
         }
         Ok(())
     }
 
     fn attachments(&self) -> Vec<AttachmentRequest> {
-        vec![
-            AttachmentRequest {
-                kind: AttachmentKind::Color,
-                format: vk::Format::B8G8R8A8_UNORM,
-                extent: vk::Extent2D::default(),
-                samples: vk::SampleCountFlags::TYPE_1,
-            },
-            AttachmentRequest {
-                kind: AttachmentKind::Depth,
-                format: vk::Format::D32_SFLOAT,
-                extent: vk::Extent2D::default(),
-                samples: vk::SampleCountFlags::TYPE_1,
-            },
-        ]
+        Vec::new()
     }
 }
 

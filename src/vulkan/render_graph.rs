@@ -19,8 +19,8 @@ use crate::app::scene::Scene;
 use crate::graphics::camera::Camera;
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::meshmanager::MeshManager;
-use crate::vulkan::attachments::{AttachmentHandle, AttachmentKind, AttachmentRequest};
-use crate::vulkan::base::{FrameCtx, ImageTransition, PassAttachments, VulkanBase};
+use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
+use crate::vulkan::base::{FrameCtx, ImageTransition, VulkanBase};
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
 use crate::vulkan::main_pass::MainPass;
 use crate::vulkan::shadow_pass::ShadowPass;
@@ -120,32 +120,6 @@ impl RenderGraph {
             attachment_states: HashMap::new(),
         };
         if ctx.frame.is_some() {
-            // Gather command buffer and image index before borrowing ctx mutably
-            let (cmd_buf, idx) = {
-                let f = ctx.frame.as_ref().unwrap();
-                (f.cmd_buf, f.image_index as usize)
-            };
-            // Build attachments for the main swapchain render pass
-            let attachments = PassAttachments {
-                color: AttachmentHandle {
-                    image: ctx.vulkan_base.swapchain.color_msaa_image,
-                    view: ctx.vulkan_base.swapchain.color_msaa_image_view,
-                    layout: ctx.vulkan_base.swapchain.color_msaa_layout,
-                },
-                resolve: Some(AttachmentHandle {
-                    image: ctx.vulkan_base.swapchain.images[idx],
-                    view: ctx.vulkan_base.swapchain.swapchain_image_views[idx],
-                    layout: ctx.vulkan_base.swapchain.image_layouts[idx],
-                }),
-                depth: Some(AttachmentHandle {
-                    image: ctx.vulkan_base.swapchain.depth_msaa_image,
-                    view: ctx.vulkan_base.swapchain.depth_msaa_image_view,
-                    layout: ctx.vulkan_base.swapchain.depth_msaa_layout,
-                }),
-            };
-
-            ctx.vulkan_base.begin_rendering(cmd_buf, &attachments);
-
             // Gather all attachment requests from passes
             // Any request that doesn't specify an extent (width or height of 0)
             // is assumed to target the swapchain size.  This prevents creation
@@ -195,17 +169,12 @@ impl RenderGraph {
                     for req in pass_reqs {
                         if let Some(state) = ctx.attachment_states.get_mut(&req.kind) {
                             let (new_layout, new_access, new_stage) = match req.kind {
-                                AttachmentKind::Color | AttachmentKind::Shadow => (
+                                AttachmentKind::Shadow => (
                                     vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                                     vk::AccessFlags::SHADER_READ,
                                     vk::PipelineStageFlags::FRAGMENT_SHADER,
                                 ),
-                                AttachmentKind::Depth => (
-                                    vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-                                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                                    vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
-                                        | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                                ),
+                                _ => (state.handle.layout, state.access, state.stage),
                             };
                             if state.handle.layout != new_layout
                                 || state.access != new_access
@@ -231,8 +200,6 @@ impl RenderGraph {
                         .insert_attachment_barriers(frame.cmd_buf, &transitions);
                 }
             }
-
-            ctx.vulkan_base.end_rendering(cmd_buf, &attachments);
             let frame = ctx.frame.take().unwrap();
             ctx.vulkan_base.end_frame(frame)?;
         }

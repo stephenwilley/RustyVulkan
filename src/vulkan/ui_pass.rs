@@ -10,7 +10,7 @@
 
 use ash::vk;
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
-use crate::vulkan::attachments::{AttachmentRequest, AttachmentKind};
+use crate::vulkan::attachments::{AttachmentHandle, AttachmentRequest};
 use crate::vulkan::base::PassAttachments;
 
 use crate::app::app::WorldControls;
@@ -82,6 +82,7 @@ impl RenderPass for UiPass {
         if let Some(frame) = ctx.frame.as_mut() {
             let device = &ctx.vulkan_base.device;
             let ui_ctx = ctx.ui_ctx.as_mut().unwrap();
+            let idx = frame.image_index as usize;
 
             let draw_data = Self::prepare_imgui_draw_data(
                 ui_ctx.ms_per_frame,
@@ -92,12 +93,12 @@ impl RenderPass for UiPass {
                 ctx.world_controls,
             );
 
-            let color = *ctx
-                .attachments
-                .get(&AttachmentKind::Color)
-                .expect("color attachment");
-            let pass_atts = PassAttachments {
-                color,
+            let mut pass_atts = PassAttachments {
+                color: AttachmentHandle {
+                    image: ctx.vulkan_base.swapchain.images[idx],
+                    view: ctx.vulkan_base.swapchain.swapchain_image_views[idx],
+                    layout: ctx.vulkan_base.swapchain.image_layouts[idx],
+                },
                 resolve: None,
                 depth: None,
             };
@@ -119,17 +120,15 @@ impl RenderPass for UiPass {
                 draw_data,
             );
 
+            // Transition to present for presentation
+            pass_atts.color.layout = vk::ImageLayout::PRESENT_SRC_KHR;
             ctx.vulkan_base.end_rendering(frame.cmd_buf, &pass_atts);
+            ctx.vulkan_base.swapchain.image_layouts[idx] = vk::ImageLayout::PRESENT_SRC_KHR;
         }
         Ok(())
     }
 
     fn attachments(&self) -> Vec<AttachmentRequest> {
-        vec![AttachmentRequest {
-            kind: AttachmentKind::Color,
-            format: vk::Format::B8G8R8A8_UNORM,
-            extent: vk::Extent2D::default(),
-            samples: vk::SampleCountFlags::TYPE_1,
-        }]
+        Vec::new()
     }
 }

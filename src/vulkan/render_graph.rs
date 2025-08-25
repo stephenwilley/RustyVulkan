@@ -11,14 +11,16 @@
 use std::collections::HashMap;
 use std::error::Error;
 
+use ash::vk;
+
 use crate::app::app::App;
-use crate::graphics::camera::Camera;
+use crate::app::app::WorldControls;
 use crate::app::scene::Scene;
+use crate::graphics::camera::Camera;
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::meshmanager::MeshManager;
-use crate::app::app::WorldControls;
-use crate::vulkan::base::{VulkanBase, FrameCtx, PassAttachments};
 use crate::vulkan::attachments::{AttachmentHandle, AttachmentKind, AttachmentRequest};
+use crate::vulkan::base::{FrameCtx, ImageTransition, PassAttachments, VulkanBase};
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
 use crate::vulkan::main_pass::MainPass;
 use crate::vulkan::shadow_pass::ShadowPass;
@@ -27,7 +29,6 @@ use crate::vulkan::ui_pass::UiPass;
 use imgui::Context as ImGuiContext;
 use imgui_winit_support::WinitPlatform;
 use winit::window::Window;
-
 
 /// Render pass node enum
 /// Will eventually contain things like
@@ -61,6 +62,16 @@ pub struct RenderCtx<'a> {
     pub vulkan_base: &'a mut VulkanBase,
     pub ui_ctx: Option<UiCtx<'a>>,
     pub attachments: HashMap<AttachmentKind, AttachmentHandle>,
+    pub attachment_states: HashMap<AttachmentKind, AttachmentState>,
+}
+
+/// Tracks the current usage state of an attachment
+#[derive(Clone, Copy)]
+pub struct AttachmentState {
+    pub handle: AttachmentHandle,
+    pub access: vk::AccessFlags,
+    pub stage: vk::PipelineStageFlags,
+    pub aspect: vk::ImageAspectFlags,
 }
 
 /// RenderPass Trait
@@ -92,7 +103,7 @@ impl RenderGraph {
             window: app.window.as_ref().unwrap(),
             platform: app.platform.as_mut().unwrap(),
             show_ms_per_frame: vb.engine_settings.show_ms_per_frame,
-            renderer: app.imgui_renderer.as_mut().unwrap()
+            renderer: app.imgui_renderer.as_mut().unwrap(),
         };
 
         let frame = vb.begin_frame()?;
@@ -106,6 +117,7 @@ impl RenderGraph {
             vulkan_base: vb,
             ui_ctx: Some(ui_ctx),
             attachments: HashMap::new(),
+            attachment_states: HashMap::new(),
         };
         if ctx.frame.is_some() {
             // Gather command buffer and image index before borrowing ctx mutably
@@ -142,22 +154,75 @@ impl RenderGraph {
                 }
             }
 
-            // Acquire all attachments from VulkanBase
-            let mut handles: HashMap<AttachmentKind, AttachmentHandle> = HashMap::new();
+            // Acquire all attachments from VulkanBase and initialise their usage state
             for (kind, req) in &requests {
                 let handle = ctx.vulkan_base.get_attachment(*req);
-                handles.insert(*kind, handle);
+                let aspect = match kind {
+                    AttachmentKind::Color => vk::ImageAspectFlags::COLOR,
+                    AttachmentKind::Depth | AttachmentKind::Shadow => vk::ImageAspectFlags::DEPTH,
+                };
+                ctx.attachment_states.insert(
+                    *kind,
+                    AttachmentState {
+                        handle,
+                        access: vk::AccessFlags::empty(),
+                        stage: vk::PipelineStageFlags::TOP_OF_PIPE,
+                        aspect,
+                    },
+                );
             }
 
             // Iterate over all render passes, providing the requested attachments
             for pass in &mut self.render_passes {
                 ctx.attachments.clear();
-                for req in pass.attachments() {
-                    if let Some(handle) = handles.get(&req.kind) {
-                        ctx.attachments.insert(req.kind, *handle);
+                let pass_reqs = pass.attachments();
+                for req in &pass_reqs {
+                    if let Some(state) = ctx.attachment_states.get(&req.kind) {
+                        ctx.attachments.insert(req.kind, state.handle);
                     }
                 }
                 pass.execute(&mut ctx)?;
+
+                if let Some(frame) = ctx.frame.as_ref() {
+                    let mut transitions: Vec<ImageTransition> = Vec::new();
+                    for req in pass_reqs {
+                        if let Some(state) = ctx.attachment_states.get_mut(&req.kind) {
+                            let (new_layout, new_access, new_stage) = match req.kind {
+                                AttachmentKind::Color | AttachmentKind::Shadow => (
+                                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                                    vk::AccessFlags::SHADER_READ,
+                                    vk::PipelineStageFlags::FRAGMENT_SHADER,
+                                ),
+                                AttachmentKind::Depth => (
+                                    vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                                    vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                                        | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                                ),
+                            };
+                            if state.handle.layout != new_layout
+                                || state.access != new_access
+                                || state.stage != new_stage
+                            {
+                                transitions.push(ImageTransition {
+                                    image: state.handle.image,
+                                    old_layout: state.handle.layout,
+                                    new_layout,
+                                    src_access_mask: state.access,
+                                    dst_access_mask: new_access,
+                                    src_stage_mask: state.stage,
+                                    dst_stage_mask: new_stage,
+                                    aspect_mask: state.aspect,
+                                });
+                                state.handle.layout = new_layout;
+                                state.access = new_access;
+                                state.stage = new_stage;
+                            }
+                        }
+                    }
+                    ctx.vulkan_base
+                        .insert_attachment_barriers(frame.cmd_buf, &transitions);
+                }
             }
 
             ctx.vulkan_base.end_rendering(cmd_buf, &attachments);

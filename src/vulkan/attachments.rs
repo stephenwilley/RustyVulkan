@@ -2,6 +2,7 @@ use ash::vk;
 use std::collections::HashMap;
 use vk_mem::{Alloc, Allocation, AllocationCreateInfo, Allocator, MemoryUsage};
 
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum AttachmentKind {
     Color,

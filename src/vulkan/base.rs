@@ -344,19 +344,21 @@ impl VulkanBase {
                 color_attachment.resolve_image_layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
             }
 
-            let mut depth_attachment_info = vk::RenderingAttachmentInfo::default();
-            let depth_ptr = if let Some(depth) = &attachments.depth {
-                depth_attachment_info = vk::RenderingAttachmentInfo {
+            let depth_attachment_info: Option<vk::RenderingAttachmentInfo> = if let Some(depth) = &attachments.depth {
+                Some(vk::RenderingAttachmentInfo {
                     image_view: depth.view,
                     image_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
                     load_op: attachments.depth_load_op,
                     store_op: vk::AttachmentStoreOp::DONT_CARE,
                     clear_value: clear_depth,
                     ..Default::default()
-                };
-                &depth_attachment_info as *const _
+                })
             } else {
-                std::ptr::null()
+                None
+            };
+            let depth_ptr = match &depth_attachment_info {
+                Some(info) => info as *const _,
+                None => std::ptr::null(),
             };
 
             let rendering_info = vk::RenderingInfo {

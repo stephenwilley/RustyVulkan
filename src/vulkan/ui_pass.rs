@@ -8,42 +8,41 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use crate::vulkan::attachments::{AttachmentHandle, AttachmentRequest};
-use crate::vulkan::base::PassAttachments;
+use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use ash::vk;
-
-use crate::app::app::WorldControls;
-use imgui::{Condition, Context as ImGuiContext, WindowFlags};
-use imgui_winit_support::WinitPlatform;
-use winit::window::Window;
+use imgui::{Condition, WindowFlags};
 
 /// Render pass responsible for drawing the ImGui user interface.
 pub struct UiPass {
-    // Any state that the main pass needs can be stored here
+    attachments: [AttachmentRequest; 1],
 }
 
 impl UiPass {
     /// Create a new [`UiPass`].
     pub fn new() -> Self {
-        Self {}
+        Self {
+            attachments: [AttachmentRequest::new(AttachmentKind::SwapchainColor)],
+        }
     }
 
-    /// Build the ImGui [`DrawData`] for the current frame.
-    pub fn prepare_imgui_draw_data<'a>(
-        ms_per_frame: f32,
-        platform: &'a mut WinitPlatform,
-        imgui: &'a mut ImGuiContext,
-        window: &Window,
-        show_ms_per_frame: bool,
-        _world_controls: &mut WorldControls,
-    ) -> &'a imgui::DrawData {
-        platform
-            .prepare_frame(imgui.io_mut(), window)
+    
+}
+
+impl RenderPass for UiPass {
+    /// Render the ImGui user interface over the final swapchain image.
+    fn execute(&mut self, ctx: &mut RenderCtx) -> Result<(), Box<dyn std::error::Error>> {
+        let device = &ctx.vulkan_base.device;
+        let cmd = ctx.frame.cmd_buf;
+        let ui_ctx = ctx.ui_ctx.as_mut().unwrap();
+
+        ui_ctx
+            .platform
+            .prepare_frame(ui_ctx.imgui.io_mut(), ui_ctx.window)
             .expect("Failed to prepare imgui frame");
 
-        let ui = imgui.frame();
-        if show_ms_per_frame {
+        let ui = ui_ctx.imgui.frame();
+        if ui_ctx.show_ms_per_frame {
             ui.window("##ms_per_redraw")
                 .position([10.0, 10.0], Condition::Always)
                 .size([200.0, 30.0], Condition::Always)
@@ -55,91 +54,65 @@ impl UiPass {
                         | WindowFlags::NO_BACKGROUND,
                 )
                 .build(|| {
-                    ui.text(format!("Redraw ms: {:.2}", ms_per_frame));
+                    ui.text(format!("Redraw ms: {:.2}", ui_ctx.ms_per_frame));
                 });
         }
-        /*ui.window("Controls")
-        .size([300.0, 180.0], Condition::FirstUseEver)
-        .build(|| {
-            ui.text("Light Position");
-            ui.slider("Y", -100.0, 100.0, &mut world_controls.lights.height);
-            ui.text("Light Intensity");
-            ui.slider("LI", 0.0, 10.0, &mut world_controls.light_intensity);
-            ui.text("Light Radius");
-            ui.slider("LR", 0.0, 50.0, &mut world_controls.light_radius);
-            ui.text(format!(
-                "Light Position: {:.1}, {:.1}, {:.1}",
-                world_controls.light_pos[0],
-                world_controls.light_pos[1],
-                world_controls.light_pos[2]
-            ));
-        });*/
-        platform.prepare_render(ui, window);
-        imgui.render()
-    }
-}
 
-impl RenderPass for UiPass {
-    /// Render the ImGui user interface over the final swapchain image.
-    fn execute(&mut self, ctx: &mut RenderCtx) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(frame) = ctx.frame.as_mut() {
-            let device = &ctx.vulkan_base.device;
-            let ui_ctx = ctx.ui_ctx.as_mut().unwrap();
-            let idx = frame.image_index as usize;
+        ui_ctx.platform.prepare_render(&ui, ui_ctx.window);
+        let draw_data = ui_ctx.imgui.render();
 
-            let draw_data = Self::prepare_imgui_draw_data(
-                ui_ctx.ms_per_frame,
-                ui_ctx.platform,
-                ui_ctx.imgui,
-                ui_ctx.window,
-                ui_ctx.show_ms_per_frame,
-                ctx.world_controls,
+        let color_att = ctx.attachments[&AttachmentKind::SwapchainColor];
+
+        let color_attachment_info = vk::RenderingAttachmentInfo::default()
+            .image_view(color_att.view)
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::LOAD) // Load the results of the main pass
+            .store_op(vk::AttachmentStoreOp::STORE); // Store the UI on top
+
+        let rendering_info = vk::RenderingInfo::default()
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D::default(),
+                extent: ctx.vulkan_base.swapchain.extent,
+            })
+            .layer_count(1)
+            .color_attachments(std::slice::from_ref(&color_attachment_info));
+
+        unsafe {
+            device.cmd_begin_rendering(cmd, &rendering_info);
+
+            device.cmd_bind_pipeline(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                ui_ctx.renderer.vk_pipeline,
             );
 
-            let mut pass_atts = PassAttachments {
-                color: AttachmentHandle {
-                    image: ctx.vulkan_base.swapchain.images[idx],
-                    view: ctx.vulkan_base.swapchain.swapchain_image_views[idx],
-                    layout: ctx.vulkan_base.swapchain.image_layouts[idx],
-                },
-                color_load_op: vk::AttachmentLoadOp::LOAD,
-                resolve: None,
-                depth: None,
-                depth_load_op: vk::AttachmentLoadOp::DONT_CARE,
-            };
-
-            ctx.vulkan_base.begin_rendering(frame.cmd_buf, &pass_atts);
-
-            // Render UI
-            unsafe {
-                device.cmd_bind_pipeline(
-                    frame.cmd_buf,
-                    vk::PipelineBindPoint::GRAPHICS,
-                    ui_ctx.renderer.vk_pipeline,
-                );
-            }
             ui_ctx.renderer.render(
-                &ctx.vulkan_base.device,
+                device,
                 ctx.vulkan_base.allocator.as_ref().unwrap(),
-                frame.cmd_buf,
+                cmd,
                 draw_data,
             );
 
-            // Transition to present for presentation or keep as color attachment if not last pass
-            pass_atts.color.layout = if ctx.is_last_pass {
-                vk::ImageLayout::PRESENT_SRC_KHR
-            } else {
-                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
-            };
-            ctx.vulkan_base.end_rendering(frame.cmd_buf, &pass_atts);
-            ctx.vulkan_base.swapchain.image_layouts[idx] = pass_atts.color.layout;
+            device.cmd_end_rendering(cmd);
         }
+
         Ok(())
     }
 
-    /// `UiPass` renders directly to the swapchain image and therefore does
-    /// not request any additional attachments.
-    fn attachments(&self) -> Vec<AttachmentRequest> {
-        Vec::new()
+    fn attachments(&self) -> &[AttachmentRequest] {
+        &self.attachments
+    }
+
+    fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags) {
+        match kind {
+            AttachmentKind::SwapchainColor => (
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            ),
+            _ => (
+                vk::ImageLayout::UNDEFINED,
+                vk::AccessFlags::empty(),
+            ),
+        }
     }
 }

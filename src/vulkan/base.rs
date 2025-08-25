@@ -145,21 +145,6 @@ pub struct FrameCtx {
     frame_slot: usize,
 }
 
-/// Attachments used for a rendering pass.  Each handle carries the image,
-/// view and the layout the image should be transitioned **back** to when the
-/// pass completes.
-pub struct PassAttachments {
-    /// Color attachment the pass renders into.
-    pub color: AttachmentHandle,
-    /// Load operation for the color attachment.
-    pub color_load_op: vk::AttachmentLoadOp,
-    /// Optional resolve target for multisample color outputs.
-    pub resolve: Option<AttachmentHandle>,
-    /// Optional depth attachment.
-    pub depth: Option<AttachmentHandle>,
-    /// Load operation for the depth attachment.
-    pub depth_load_op: vk::AttachmentLoadOp,
-}
 
 /// Describes a transition for an image attachment between two usages.
 #[derive(Clone, Copy, Debug)]
@@ -232,233 +217,6 @@ impl VulkanBase {
         }
     }
 
-    /// Begin dynamic rendering for a set of attachments.  This inserts the
-    /// necessary layout transitions and issues `vkCmdBeginRendering`.
-    pub fn begin_rendering(&self, cmd: vk::CommandBuffer, attachments: &PassAttachments) {
-        unsafe {
-            let mut barriers: Vec<vk::ImageMemoryBarrier> = Vec::new();
-
-            // Transition the color target
-            barriers.push(vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::empty(),
-                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                old_layout: attachments.color.layout,
-                new_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                image: attachments.color.image,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                },
-                ..Default::default()
-            });
-
-            if let Some(res) = &attachments.resolve {
-                barriers.push(vk::ImageMemoryBarrier {
-                    src_access_mask: vk::AccessFlags::empty(),
-                    dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                    old_layout: res.layout,
-                    new_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    image: res.image,
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                    ..Default::default()
-                });
-            }
-
-            if let Some(depth) = &attachments.depth {
-                barriers.push(vk::ImageMemoryBarrier {
-                    src_access_mask: vk::AccessFlags::empty(),
-                    dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                    old_layout: depth.layout,
-                    new_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    image: depth.image,
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::DEPTH,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                    ..Default::default()
-                });
-            }
-
-            if !barriers.is_empty() {
-                self.device.cmd_pipeline_barrier(
-                    cmd,
-                    vk::PipelineStageFlags::TOP_OF_PIPE,
-                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-                        | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
-                        | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &barriers,
-                );
-            }
-
-            let clear_color = vk::ClearValue {
-                color: vk::ClearColorValue {
-                    float32: [0.0, 0.0, 0.0, 1.0],
-                },
-            };
-            let clear_depth = vk::ClearValue {
-                depth_stencil: vk::ClearDepthStencilValue {
-                    depth: 1.0,
-                    stencil: 0,
-                },
-            };
-
-            let resolve_mode = vk::ResolveModeFlags::AVERAGE;
-
-            let mut color_attachment = vk::RenderingAttachmentInfo {
-                image_view: attachments.color.view,
-                image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                load_op: attachments.color_load_op,
-                store_op: if attachments.resolve.is_some() {
-                    vk::AttachmentStoreOp::DONT_CARE
-                } else {
-                    vk::AttachmentStoreOp::STORE
-                },
-                clear_value: clear_color,
-                ..Default::default()
-            };
-
-            if let Some(res) = &attachments.resolve {
-                color_attachment.resolve_mode = resolve_mode;
-                color_attachment.resolve_image_view = res.view;
-                color_attachment.resolve_image_layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
-            }
-
-            let depth_attachment_info: Option<vk::RenderingAttachmentInfo> = if let Some(depth) = &attachments.depth {
-                Some(vk::RenderingAttachmentInfo {
-                    image_view: depth.view,
-                    image_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-                    load_op: attachments.depth_load_op,
-                    store_op: vk::AttachmentStoreOp::DONT_CARE,
-                    clear_value: clear_depth,
-                    ..Default::default()
-                })
-            } else {
-                None
-            };
-            let depth_ptr = match &depth_attachment_info {
-                Some(info) => info as *const _,
-                None => std::ptr::null(),
-            };
-
-            let rendering_info = vk::RenderingInfo {
-                render_area: vk::Rect2D {
-                    offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: self.swapchain.extent,
-                },
-                layer_count: 1,
-                color_attachment_count: 1,
-                p_color_attachments: &color_attachment,
-                p_depth_attachment: depth_ptr,
-                ..Default::default()
-            };
-
-            self.device.cmd_begin_rendering(cmd, &rendering_info);
-        }
-    }
-
-    /// End rendering for the provided attachments, performing any necessary
-    /// transitions back to the attachment's requested layout.
-    pub fn end_rendering(&self, cmd: vk::CommandBuffer, attachments: &PassAttachments) {
-        unsafe {
-            self.device.cmd_end_rendering(cmd);
-
-            let mut barriers: Vec<vk::ImageMemoryBarrier> = Vec::new();
-
-            // Color attachment back to its requested layout
-            barriers.push(vk::ImageMemoryBarrier {
-                src_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                dst_access_mask: vk::AccessFlags::empty(),
-                old_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                new_layout: attachments.color.layout,
-                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                image: attachments.color.image,
-                subresource_range: vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                },
-                ..Default::default()
-            });
-
-            if let Some(res) = &attachments.resolve {
-                barriers.push(vk::ImageMemoryBarrier {
-                    src_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-                    dst_access_mask: vk::AccessFlags::empty(),
-                    old_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                    new_layout: res.layout,
-                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    image: res.image,
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                    ..Default::default()
-                });
-            }
-
-            if let Some(depth) = &attachments.depth {
-                barriers.push(vk::ImageMemoryBarrier {
-                    src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                    dst_access_mask: vk::AccessFlags::empty(),
-                    old_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-                    new_layout: depth.layout,
-                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-                    image: depth.image,
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::DEPTH,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                    ..Default::default()
-                });
-            }
-
-            if !barriers.is_empty() {
-                self.device.cmd_pipeline_barrier(
-                    cmd,
-                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-                        | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
-                        | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                    vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                    vk::DependencyFlags::empty(),
-                    &[],
-                    &[],
-                    &barriers,
-                );
-            }
-        }
-    }
 
     /// Insert image memory barriers for a set of attachment transitions.
     ///
@@ -580,6 +338,27 @@ impl VulkanBase {
             request,
         )
     }
+
+    pub fn update_global_ubo(&mut self, image_index: usize, ubo: &GlobalUbo) {
+        let allocation = &mut self.ubo_allocations[image_index];
+        unsafe {
+            let ptr = self
+                .allocator
+                .as_ref()
+                .unwrap()
+                .map_memory(allocation)
+                .expect("Map UBO") as *mut u8;
+            std::ptr::copy_nonoverlapping(
+                ubo as *const GlobalUbo as *const u8,
+                ptr,
+                std::mem::size_of::<GlobalUbo>(),
+            );
+            self.allocator.as_ref().unwrap().unmap_memory(allocation);
+        }
+    }
+
+    /// Update the global UBO with lighting data
+    
     /// Helper: find a suitable memory type on the physical device.
     /// Creates a Vulkan instance.
     /// # Arguments

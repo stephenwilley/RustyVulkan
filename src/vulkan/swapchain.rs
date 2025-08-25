@@ -36,15 +36,12 @@ pub struct Swapchain {
     pub extent: vk::Extent2D,
     pub color_format: vk::Format,
     pub depth_format: vk::Format,
-    pub image_layouts: Vec<vk::ImageLayout>,
     pub color_msaa_image: vk::Image,
     pub color_msaa_image_view: vk::ImageView,
     pub color_msaa_allocation: Allocation,
-    pub color_msaa_layout: vk::ImageLayout,
     pub depth_msaa_image: vk::Image,
     pub depth_msaa_image_view: vk::ImageView,
     pub depth_msaa_allocation: Allocation,
-    pub depth_msaa_layout: vk::ImageLayout,
 }
 
 impl Swapchain {
@@ -128,15 +125,12 @@ impl Swapchain {
             extent,
             color_format: surface_format.format,
             depth_format,
-            image_layouts: vec![vk::ImageLayout::UNDEFINED; image_count],
             color_msaa_image,
             color_msaa_image_view,
             color_msaa_allocation,
-            color_msaa_layout: vk::ImageLayout::UNDEFINED,
             depth_msaa_image,
             depth_msaa_image_view,
             depth_msaa_allocation,
-            depth_msaa_layout: vk::ImageLayout::UNDEFINED,
         })
     }
 

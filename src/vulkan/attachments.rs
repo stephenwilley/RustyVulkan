@@ -5,9 +5,14 @@ use vk_mem::{Alloc, Allocation, AllocationCreateInfo, Allocator, MemoryUsage};
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum AttachmentKind {
+    // Off-screen targets managed by AttachmentManager
     Color,
     Depth,
     Shadow,
+    // Special targets managed by the RenderGraph
+    SwapchainColor,
+    MsaaColor,
+    MsaaDepth,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -18,11 +23,24 @@ pub struct AttachmentRequest {
     pub samples: vk::SampleCountFlags,
 }
 
+impl AttachmentRequest {
+    pub fn new(kind: AttachmentKind) -> Self {
+        Self {
+            kind,
+            format: vk::Format::UNDEFINED,
+            extent: vk::Extent2D {
+                width: 0,
+                height: 0,
+            },
+            samples: vk::SampleCountFlags::TYPE_1,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct AttachmentHandle {
     pub image: vk::Image,
     pub view: vk::ImageView,
-    pub layout: vk::ImageLayout,
 }
 
 struct AttachmentInternal {
@@ -103,10 +121,12 @@ impl AttachmentManager {
             AttachmentKind::Shadow => {
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED
             }
+            _ => panic!("Unsupported attachment kind for AttachmentManager"),
         };
         let aspect = match key.kind {
             AttachmentKind::Color => vk::ImageAspectFlags::COLOR,
             AttachmentKind::Depth | AttachmentKind::Shadow => vk::ImageAspectFlags::DEPTH,
+            _ => panic!("Unsupported attachment kind for AttachmentManager"),
         };
         let image_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::TYPE_2D,
@@ -149,7 +169,6 @@ impl AttachmentManager {
             AttachmentHandle {
                 image,
                 view,
-                layout: vk::ImageLayout::UNDEFINED,
             },
             allocation,
         )

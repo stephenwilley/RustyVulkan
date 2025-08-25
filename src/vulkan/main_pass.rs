@@ -8,157 +8,149 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use crate::app::app::MAX_LIGHTS;
-use crate::app::app::WorldControls;
 use crate::graphics::camera::Camera;
-use crate::vulkan::attachments::{AttachmentHandle, AttachmentRequest};
-use crate::vulkan::base::{GlobalUbo, GpuLight, PassAttachments, VulkanBase};
+use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use ash::vk;
-use cgmath::{Matrix4, Vector4, prelude::*};
+use cgmath::{Matrix4, prelude::*};
 
 /// Main rendering pass that draws all scene objects
 pub struct MainPass {
-    // Any state that the main pass needs can be stored here
+    attachments: [AttachmentRequest; 3],
 }
 
 impl MainPass {
     /// Create a new [`MainPass`].
     pub fn new() -> Self {
-        Self {}
+        let attachments = [
+            AttachmentRequest::new(AttachmentKind::MsaaColor),
+            AttachmentRequest::new(AttachmentKind::MsaaDepth),
+            AttachmentRequest::new(AttachmentKind::SwapchainColor),
+        ];
+        Self { attachments }
     }
 }
 
 impl RenderPass for MainPass {
     /// Render all scene objects to the swapchain and depth attachments.
     fn execute(&mut self, ctx: &mut RenderCtx) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(frame) = ctx.frame.as_mut() {
-            let image_index = frame.image_index as usize;
+        let image_index = ctx.frame.image_index as usize;
+        let device = &ctx.vulkan_base.device;
+        let cmd = ctx.frame.cmd_buf;
 
-            update_ubo(
-                ctx.vulkan_base,
-                image_index,
-                &mut ctx.world_controls,
-                ctx.camera,
-            );
-            let device = &ctx.vulkan_base.device;
+        // Get handles for the attachments we requested
+        let color_att = ctx.attachments[&AttachmentKind::MsaaColor];
+        let depth_att = ctx.attachments[&AttachmentKind::MsaaDepth];
+        let resolve_att = ctx.attachments[&AttachmentKind::SwapchainColor];
 
-            // Build attachments from the swapchain and MSAA images.
-            let mut pass_atts = PassAttachments {
-                color: AttachmentHandle {
-                    image: ctx.vulkan_base.swapchain.color_msaa_image,
-                    view: ctx.vulkan_base.swapchain.color_msaa_image_view,
-                    layout: ctx.vulkan_base.swapchain.color_msaa_layout,
-                },
-                color_load_op: vk::AttachmentLoadOp::CLEAR,
-                resolve: Some(AttachmentHandle {
-                    image: ctx.vulkan_base.swapchain.images[image_index],
-                    view: ctx.vulkan_base.swapchain.swapchain_image_views[image_index],
-                    layout: ctx.vulkan_base.swapchain.image_layouts[image_index],
-                }),
-                depth: Some(AttachmentHandle {
-                    image: ctx.vulkan_base.swapchain.depth_msaa_image,
-                    view: ctx.vulkan_base.swapchain.depth_msaa_image_view,
-                    layout: ctx.vulkan_base.swapchain.depth_msaa_layout,
-                }),
-                depth_load_op: vk::AttachmentLoadOp::CLEAR,
-            };
+        let clear_color = vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 1.0],
+            },
+        };
+        let clear_depth = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
+        };
 
-            ctx.vulkan_base.begin_rendering(frame.cmd_buf, &pass_atts);
+        // The graph has already transitioned the images to these layouts
+        let color_attachment_info = vk::RenderingAttachmentInfo::default()
+            .image_view(color_att.view)
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE) // MSAA is resolved, so we don't need to store it
+            .clear_value(clear_color)
+            .resolve_mode(vk::ResolveModeFlags::AVERAGE)
+            .resolve_image_view(resolve_att.view)
+            .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+        let depth_attachment_info = vk::RenderingAttachmentInfo::default()
+            .image_view(depth_att.view)
+            .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE) // No need to store depth after this pass
+            .clear_value(clear_depth);
+
+        let rendering_info = vk::RenderingInfo::default()
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D::default(),
+                extent: ctx.vulkan_base.swapchain.extent,
+            })
+            .layer_count(1)
+            .color_attachments(std::slice::from_ref(&color_attachment_info))
+            .depth_attachment(&depth_attachment_info);
+
+        unsafe {
+            device.cmd_begin_rendering(cmd, &rendering_info);
 
             let mut current_pipeline_id = usize::MAX;
             for obj in &ctx.scene.objects {
                 let model_matrix = obj.transform.model_matrix();
                 let push_bytes = compute_push_constant_per_obj(ctx.camera, &model_matrix);
 
-                unsafe {
-                    if current_pipeline_id != obj.material_id {
-                        device.cmd_bind_pipeline(
-                            frame.cmd_buf,
-                            vk::PipelineBindPoint::GRAPHICS,
-                            ctx.material_manager.materials[obj.material_id]
-                                .pipeline
-                                .vk_pipeline,
-                        );
-                        let set0 = ctx.vulkan_base.set0_descriptor_sets[image_index];
-                        if let Some(_tex) = ctx.material_manager.materials[obj.material_id]
-                            .textures
-                            .as_ref()
-                        {
-                            device.cmd_bind_descriptor_sets(
-                                frame.cmd_buf,
-                                vk::PipelineBindPoint::GRAPHICS,
-                                ctx.material_manager.materials[obj.material_id]
-                                    .pipeline
-                                    .vk_layout,
-                                0,
-                                &[
-                                    set0,
-                                    ctx.material_manager.materials[obj.material_id]
-                                        .texture_descriptor_set,
-                                ],
-                                &[],
-                            );
-                        } else {
-                            device.cmd_bind_descriptor_sets(
-                                frame.cmd_buf,
-                                vk::PipelineBindPoint::GRAPHICS,
-                                ctx.material_manager.materials[obj.material_id]
-                                    .pipeline
-                                    .vk_layout,
-                                0,
-                                &[set0],
-                                &[],
-                            );
-                        }
-                        current_pipeline_id = obj.material_id;
-                    }
-                    device.cmd_push_constants(
-                        frame.cmd_buf,
-                        ctx.material_manager.materials[obj.material_id]
-                            .pipeline
-                            .vk_layout,
-                        vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                        0,
-                        &push_bytes,
+                if current_pipeline_id != obj.material_id {
+                    let material = &ctx.material_manager.materials[obj.material_id];
+                    device.cmd_bind_pipeline(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        material.pipeline.vk_pipeline,
                     );
+                    let set0 = ctx.vulkan_base.set0_descriptor_sets[image_index];
+                    let sets_to_bind = if material.textures.is_some() {
+                        vec![set0, material.texture_descriptor_set]
+                    } else {
+                        vec![set0]
+                    };
+                    device.cmd_bind_descriptor_sets(
+                        cmd,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        material.pipeline.vk_layout,
+                        0,
+                        &sets_to_bind,
+                        &[],
+                    );
+                    current_pipeline_id = obj.material_id;
                 }
-                ctx.mesh_manager.meshes[obj.mesh_id].record(&device, frame.cmd_buf);
+
+                let material = &ctx.material_manager.materials[obj.material_id];
+                device.cmd_push_constants(
+                    cmd,
+                    material.pipeline.vk_layout,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                    0,
+                    &push_bytes,
+                );
+
+                ctx.mesh_manager.meshes[obj.mesh_id].record(device, cmd);
             }
 
-            // Update desired final layouts before ending rendering so that
-            // `end_rendering` transitions to a valid layout instead of
-            // `VK_IMAGE_LAYOUT_UNDEFINED`.
-            pass_atts.color.layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
-            if let Some(depth) = pass_atts.depth.as_mut() {
-                depth.layout = vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL;
-            }
-            if let Some(res) = pass_atts.resolve.as_mut() {
-                res.layout = if ctx.is_last_pass {
-                    vk::ImageLayout::PRESENT_SRC_KHR
-                } else {
-                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
-                };
-            }
-
-            ctx.vulkan_base.end_rendering(frame.cmd_buf, &pass_atts);
-
-            // Persist the final layouts for use in subsequent passes/frames.
-            ctx.vulkan_base.swapchain.color_msaa_layout = pass_atts.color.layout;
-            if let Some(depth) = pass_atts.depth {
-                ctx.vulkan_base.swapchain.depth_msaa_layout = depth.layout;
-            }
-            if let Some(res) = pass_atts.resolve {
-                ctx.vulkan_base.swapchain.image_layouts[image_index] = res.layout;
-            }
+            device.cmd_end_rendering(cmd);
         }
+
         Ok(())
     }
 
-    /// `MainPass` uses the swapchain images directly and therefore does not
-    /// request any off-screen attachments from the render graph.
-    fn attachments(&self) -> Vec<AttachmentRequest> {
-        Vec::new()
+    fn attachments(&self) -> &[AttachmentRequest] {
+        &self.attachments
+    }
+
+    fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags) {
+        match kind {
+            AttachmentKind::MsaaColor | AttachmentKind::SwapchainColor => (
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            ),
+            AttachmentKind::MsaaDepth => (
+                vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            ),
+            _ => (
+                vk::ImageLayout::UNDEFINED,
+                vk::AccessFlags::empty(),
+            ),
+        }
     }
 }
 
@@ -186,68 +178,3 @@ pub fn compute_push_constant_per_obj(camera: &Camera, model_matrix: &Matrix4<f32
     bytes
 }
 
-/// Update the global UBO with lighting data
-pub fn update_ubo(
-    base: &mut VulkanBase,
-    image_index: usize,
-    world: &mut WorldControls,
-    camera: &Camera,
-) {
-    world.lights_rotation = (world.lights_rotation + 0.01) % std::f32::consts::TAU;
-
-    // Build CPU-side UBO
-    let mut ubo = GlobalUbo::default();
-    ubo.light_count = world.light_count as u32;
-
-    let view: Matrix4<f32> = *camera.get_view();
-
-    // Evenly distribute *active* lights around the circle so they don't bunch up
-    let active = world.light_count.min(MAX_LIGHTS);
-    let n = active.max(1) as f32;
-    for i in 0..active {
-        let lc = world.lights[i];
-        // Spread the active lights evenly (ignore the stored phase so N lights are 2π/N apart)
-        let base_phase = (i as f32) * (std::f32::consts::TAU / n);
-        let angle = base_phase + world.lights_rotation;
-
-        let x = angle.sin() * lc.radius;
-        let z = angle.cos() * lc.radius;
-
-        let p_view4 = view * Vector4::new(x, lc.height, z, 1.0);
-        let p_view = p_view4.truncate();
-
-        ubo.lights[i] = GpuLight {
-            position: [p_view.x, p_view.y, p_view.z],
-            intensity: lc.intensity,
-            color: lc.color,
-            _pad: 0.0,
-        };
-    }
-
-    // Clear any remaining (inactive) light slots to avoid stale data
-    for i in active..MAX_LIGHTS {
-        ubo.lights[i] = GpuLight {
-            position: [0.0, 0.0, 0.0],
-            intensity: 0.0,
-            color: [0.0, 0.0, 0.0],
-            _pad: 0.0,
-        };
-    }
-
-    // Upload (same mapping pattern you already use)
-    let allocation = &mut base.ubo_allocations[image_index];
-    unsafe {
-        let ptr = base
-            .allocator
-            .as_ref()
-            .unwrap()
-            .map_memory(allocation)
-            .expect("Map UBO") as *mut u8;
-        std::ptr::copy_nonoverlapping(
-            &ubo as *const GlobalUbo as *const u8,
-            ptr,
-            std::mem::size_of::<GlobalUbo>(),
-        );
-        base.allocator.as_ref().unwrap().unmap_memory(allocation);
-    }
-}

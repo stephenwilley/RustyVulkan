@@ -147,9 +147,16 @@ impl RenderGraph {
             ctx.vulkan_base.begin_rendering(cmd_buf, &attachments);
 
             // Gather all attachment requests from passes
+            // Any request that doesn't specify an extent (width or height of 0)
+            // is assumed to target the swapchain size.  This prevents creation
+            // of zero-sized images which would trigger `ERROR_INITIALIZATION_FAILED`
+            // when the attachment manager tries to allocate them.
             let mut requests: HashMap<AttachmentKind, AttachmentRequest> = HashMap::new();
             for pass in &self.render_passes {
-                for req in pass.attachments() {
+                for mut req in pass.attachments() {
+                    if req.extent.width == 0 || req.extent.height == 0 {
+                        req.extent = ctx.vulkan_base.swapchain.extent;
+                    }
                     requests.insert(req.kind, req);
                 }
             }

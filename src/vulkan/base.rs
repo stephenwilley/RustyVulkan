@@ -151,10 +151,14 @@ pub struct FrameCtx {
 pub struct PassAttachments {
     /// Color attachment the pass renders into.
     pub color: AttachmentHandle,
+    /// Load operation for the color attachment.
+    pub color_load_op: vk::AttachmentLoadOp,
     /// Optional resolve target for multisample color outputs.
     pub resolve: Option<AttachmentHandle>,
     /// Optional depth attachment.
     pub depth: Option<AttachmentHandle>,
+    /// Load operation for the depth attachment.
+    pub depth_load_op: vk::AttachmentLoadOp,
 }
 
 /// Describes a transition for an image attachment between two usages.
@@ -324,7 +328,7 @@ impl VulkanBase {
             let mut color_attachment = vk::RenderingAttachmentInfo {
                 image_view: attachments.color.view,
                 image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                load_op: vk::AttachmentLoadOp::CLEAR,
+                load_op: attachments.color_load_op,
                 store_op: if attachments.resolve.is_some() {
                     vk::AttachmentStoreOp::DONT_CARE
                 } else {
@@ -345,7 +349,7 @@ impl VulkanBase {
                 depth_attachment_info = vk::RenderingAttachmentInfo {
                     image_view: depth.view,
                     image_layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-                    load_op: vk::AttachmentLoadOp::CLEAR,
+                    load_op: attachments.depth_load_op,
                     store_op: vk::AttachmentStoreOp::DONT_CARE,
                     clear_value: clear_depth,
                     ..Default::default()

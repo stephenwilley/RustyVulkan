@@ -43,8 +43,8 @@ use std::ffi::CStr;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
+use super::attachments::{AttachmentHandle, AttachmentManager, AttachmentRequest};
 use super::swapchain::Swapchain;
-use super::attachments::{AttachmentManager, AttachmentRequest, AttachmentHandle};
 use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
 
 /// The debug callback function that prints validation layer messages.
@@ -155,6 +155,19 @@ pub struct PassAttachments {
     pub resolve: Option<AttachmentHandle>,
     /// Optional depth attachment.
     pub depth: Option<AttachmentHandle>,
+}
+
+/// Describes a transition for an image attachment between two usages.
+#[derive(Clone, Copy, Debug)]
+pub struct ImageTransition {
+    pub image: vk::Image,
+    pub old_layout: vk::ImageLayout,
+    pub new_layout: vk::ImageLayout,
+    pub src_access_mask: vk::AccessFlags,
+    pub dst_access_mask: vk::AccessFlags,
+    pub src_stage_mask: vk::PipelineStageFlags,
+    pub dst_stage_mask: vk::PipelineStageFlags,
+    pub aspect_mask: vk::ImageAspectFlags,
 }
 
 impl VulkanBase {
@@ -300,7 +313,10 @@ impl VulkanBase {
                 },
             };
             let clear_depth = vk::ClearValue {
-                depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 1.0,
+                    stencil: 0,
+                },
             };
 
             let resolve_mode = vk::ResolveModeFlags::AVERAGE;
@@ -435,6 +451,52 @@ impl VulkanBase {
                     &barriers,
                 );
             }
+        }
+    }
+
+    /// Insert image memory barriers for a collection of attachment transitions.
+    pub fn insert_attachment_barriers(
+        &self,
+        cmd: vk::CommandBuffer,
+        transitions: &[ImageTransition],
+    ) {
+        if transitions.is_empty() {
+            return;
+        }
+        let mut barriers: Vec<vk::ImageMemoryBarrier> = Vec::new();
+        let mut src_stage = vk::PipelineStageFlags::empty();
+        let mut dst_stage = vk::PipelineStageFlags::empty();
+        for t in transitions {
+            barriers.push(vk::ImageMemoryBarrier {
+                src_access_mask: t.src_access_mask,
+                dst_access_mask: t.dst_access_mask,
+                old_layout: t.old_layout,
+                new_layout: t.new_layout,
+                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                image: t.image,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: t.aspect_mask,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                ..Default::default()
+            });
+            src_stage |= t.src_stage_mask;
+            dst_stage |= t.dst_stage_mask;
+        }
+        unsafe {
+            self.device.cmd_pipeline_barrier(
+                cmd,
+                src_stage,
+                dst_stage,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &barriers,
+            );
         }
     }
 
@@ -947,7 +1009,8 @@ impl VulkanBase {
         self.set0_descriptor_pool = new_pool;
         self.set0_descriptor_sets = new_sets;
 
-        self.attachment_manager.cleanup(&self.device, self.allocator.as_ref().unwrap());
+        self.attachment_manager
+            .cleanup(&self.device, self.allocator.as_ref().unwrap());
         self.attachment_manager = AttachmentManager::new(new_image_count);
 
         Ok(())
@@ -966,7 +1029,9 @@ impl VulkanBase {
             vk::SampleCountFlags::TYPE_4,
             vk::SampleCountFlags::TYPE_2,
         ] {
-            if counts.contains(c) { return c; }
+            if counts.contains(c) {
+                return c;
+            }
         }
         vk::SampleCountFlags::TYPE_1
     }
@@ -977,14 +1042,19 @@ impl VulkanBase {
             64 => vk::SampleCountFlags::TYPE_64,
             32 => vk::SampleCountFlags::TYPE_32,
             16 => vk::SampleCountFlags::TYPE_16,
-            8  => vk::SampleCountFlags::TYPE_8,
-            4  => vk::SampleCountFlags::TYPE_4,
-            2  => vk::SampleCountFlags::TYPE_2,
-            _  => vk::SampleCountFlags::TYPE_1,
+            8 => vk::SampleCountFlags::TYPE_8,
+            4 => vk::SampleCountFlags::TYPE_4,
+            2 => vk::SampleCountFlags::TYPE_2,
+            _ => vk::SampleCountFlags::TYPE_1,
         };
-        if supported.contains(want) { want } else {
+        if supported.contains(want) {
+            want
+        } else {
             // fallback highest supported (same loop you already wrote)
-            let chosen_props = unsafe { self.instance.get_physical_device_properties(self.physical_device) };
+            let chosen_props = unsafe {
+                self.instance
+                    .get_physical_device_properties(self.physical_device)
+            };
             VulkanBase::pick_msaa(&chosen_props)
         }
     }
@@ -1073,7 +1143,8 @@ impl VulkanBase {
         let command_pool = Self::create_command_pool(&device, graphics_queue_family_index)?;
 
         // Create a Vulkan Memory Allocator (VMA) instance.
-        let mut allocator_info = vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
+        let mut allocator_info =
+            vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
         allocator_info.flags |= vk_mem::AllocatorCreateFlags::EXT_MEMORY_BUDGET;
         let allocator = unsafe { Allocator::new(allocator_info)? };
 
@@ -1221,8 +1292,11 @@ impl Drop for VulkanBase {
 
             self.attachment_manager
                 .cleanup(&self.device, self.allocator.as_ref().unwrap());
-            self.swapchain
-                .cleanup(&self.instance, &self.device, self.allocator.as_ref().unwrap());
+            self.swapchain.cleanup(
+                &self.instance,
+                &self.device,
+                self.allocator.as_ref().unwrap(),
+            );
             self.device
                 .destroy_descriptor_set_layout(self.set0_global_layout, None);
 
@@ -1252,8 +1326,10 @@ impl Drop for VulkanBase {
                 // (optional) quick summary before it goes away
                 if let Ok(stats) = alloc.calculate_statistics() {
                     let s = stats.total.statistics;
-                    println!("🗑️ VMA total before drop: allocs={} blocks={} allocBytes={} blockBytes={}",
-                            s.allocationCount, s.blockCount, s.allocationBytes, s.blockBytes);
+                    println!(
+                        "🗑️ VMA total before drop: allocs={} blocks={} allocBytes={} blockBytes={}",
+                        s.allocationCount, s.blockCount, s.allocationBytes, s.blockBytes
+                    );
                 }
                 drop(alloc);
             }

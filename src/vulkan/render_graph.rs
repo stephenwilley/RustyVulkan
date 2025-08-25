@@ -19,7 +19,7 @@ use crate::app::scene::Scene;
 use crate::graphics::camera::Camera;
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::meshmanager::MeshManager;
-use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
+use crate::vulkan::attachments::{AttachmentHandle, AttachmentKind, AttachmentRequest};
 use crate::vulkan::base::{FrameCtx, ImageTransition, VulkanBase};
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
 use crate::vulkan::main_pass::MainPass;

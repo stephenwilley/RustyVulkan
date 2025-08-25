@@ -458,7 +458,12 @@ impl VulkanBase {
         }
     }
 
-    /// Insert image memory barriers for a collection of attachment transitions.
+    /// Insert image memory barriers for a set of attachment transitions.
+    ///
+    /// Each [`ImageTransition`] describes how a single image's layout and
+    /// access masks change. The command buffer must be in the recording state
+    /// and will receive a single `vkCmdPipelineBarrier` covering all
+    /// transitions.
     pub fn insert_attachment_barriers(
         &self,
         cmd: vk::CommandBuffer,

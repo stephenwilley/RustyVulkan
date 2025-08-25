@@ -23,12 +23,14 @@ pub struct MainPass {
 }
 
 impl MainPass {
+    /// Create a new [`MainPass`].
     pub fn new() -> Self {
         Self {}
     }
 }
 
 impl RenderPass for MainPass {
+    /// Render all scene objects to the swapchain and depth attachments.
     fn execute(&mut self, ctx: &mut RenderCtx) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(frame) = ctx.frame.as_mut() {
             let image_index = frame.image_index as usize;
@@ -149,6 +151,8 @@ impl RenderPass for MainPass {
         Ok(())
     }
 
+    /// `MainPass` uses the swapchain images directly and therefore does not
+    /// request any off-screen attachments from the render graph.
     fn attachments(&self) -> Vec<AttachmentRequest> {
         Vec::new()
     }

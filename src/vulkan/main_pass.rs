@@ -8,14 +8,14 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use ash::vk;
-use cgmath::{prelude::*, Matrix4, Vector4};
-use crate::vulkan::base::{GlobalUbo, VulkanBase, GpuLight, PassAttachments};
-use crate::vulkan::render_graph::{RenderCtx, RenderPass};
-use crate::vulkan::attachments::{AttachmentHandle, AttachmentRequest};
-use crate::graphics::camera::Camera;
-use crate::app::app::WorldControls;
 use crate::app::app::MAX_LIGHTS;
+use crate::app::app::WorldControls;
+use crate::graphics::camera::Camera;
+use crate::vulkan::attachments::{AttachmentHandle, AttachmentRequest};
+use crate::vulkan::base::{GlobalUbo, GpuLight, PassAttachments, VulkanBase};
+use crate::vulkan::render_graph::{RenderCtx, RenderPass};
+use ash::vk;
+use cgmath::{Matrix4, Vector4, prelude::*};
 
 /// Main rendering pass that draws all scene objects
 pub struct MainPass {
@@ -33,7 +33,12 @@ impl RenderPass for MainPass {
         if let Some(frame) = ctx.frame.as_mut() {
             let image_index = frame.image_index as usize;
 
-            update_ubo(ctx.vulkan_base, image_index, &mut ctx.world_controls, ctx.camera);
+            update_ubo(
+                ctx.vulkan_base,
+                image_index,
+                &mut ctx.world_controls,
+                ctx.camera,
+            );
             let device = &ctx.vulkan_base.device;
 
             // Build attachments from the swapchain and MSAA images.
@@ -43,6 +48,7 @@ impl RenderPass for MainPass {
                     view: ctx.vulkan_base.swapchain.color_msaa_image_view,
                     layout: ctx.vulkan_base.swapchain.color_msaa_layout,
                 },
+                color_load_op: vk::AttachmentLoadOp::CLEAR,
                 resolve: Some(AttachmentHandle {
                     image: ctx.vulkan_base.swapchain.images[image_index],
                     view: ctx.vulkan_base.swapchain.swapchain_image_views[image_index],
@@ -53,6 +59,7 @@ impl RenderPass for MainPass {
                     view: ctx.vulkan_base.swapchain.depth_msaa_image_view,
                     layout: ctx.vulkan_base.swapchain.depth_msaa_layout,
                 }),
+                depth_load_op: vk::AttachmentLoadOp::CLEAR,
             };
 
             ctx.vulkan_base.begin_rendering(frame.cmd_buf, &pass_atts);
@@ -67,7 +74,9 @@ impl RenderPass for MainPass {
                         device.cmd_bind_pipeline(
                             frame.cmd_buf,
                             vk::PipelineBindPoint::GRAPHICS,
-                            ctx.material_manager.materials[obj.material_id].pipeline.vk_pipeline,
+                            ctx.material_manager.materials[obj.material_id]
+                                .pipeline
+                                .vk_pipeline,
                         );
                         let set0 = ctx.vulkan_base.set0_descriptor_sets[image_index];
                         if let Some(_tex) = ctx.material_manager.materials[obj.material_id]
@@ -77,17 +86,24 @@ impl RenderPass for MainPass {
                             device.cmd_bind_descriptor_sets(
                                 frame.cmd_buf,
                                 vk::PipelineBindPoint::GRAPHICS,
-                                ctx.material_manager.materials[obj.material_id].pipeline.vk_layout,
+                                ctx.material_manager.materials[obj.material_id]
+                                    .pipeline
+                                    .vk_layout,
                                 0,
-                                &[set0, ctx.material_manager.materials[obj.material_id]
-                                    .texture_descriptor_set],
+                                &[
+                                    set0,
+                                    ctx.material_manager.materials[obj.material_id]
+                                        .texture_descriptor_set,
+                                ],
                                 &[],
                             );
                         } else {
                             device.cmd_bind_descriptor_sets(
                                 frame.cmd_buf,
                                 vk::PipelineBindPoint::GRAPHICS,
-                                ctx.material_manager.materials[obj.material_id].pipeline.vk_layout,
+                                ctx.material_manager.materials[obj.material_id]
+                                    .pipeline
+                                    .vk_layout,
                                 0,
                                 &[set0],
                                 &[],
@@ -97,7 +113,9 @@ impl RenderPass for MainPass {
                     }
                     device.cmd_push_constants(
                         frame.cmd_buf,
-                        ctx.material_manager.materials[obj.material_id].pipeline.vk_layout,
+                        ctx.material_manager.materials[obj.material_id]
+                            .pipeline
+                            .vk_layout,
                         vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                         0,
                         &push_bytes,
@@ -137,10 +155,7 @@ impl RenderPass for MainPass {
 }
 
 /// Compute push constants for a single object
-pub fn compute_push_constant_per_obj(
-    camera: &Camera,
-    model_matrix: &Matrix4<f32>,
-) -> Vec<u8> {
+pub fn compute_push_constant_per_obj(camera: &Camera, model_matrix: &Matrix4<f32>) -> Vec<u8> {
     let proj: Matrix4<f32> = *camera.get_projection();
     let view: Matrix4<f32> = *camera.get_view();
 
@@ -216,7 +231,8 @@ pub fn update_ubo(
     unsafe {
         let ptr = base
             .allocator
-            .as_ref().unwrap()
+            .as_ref()
+            .unwrap()
             .map_memory(allocation)
             .expect("Map UBO") as *mut u8;
         std::ptr::copy_nonoverlapping(

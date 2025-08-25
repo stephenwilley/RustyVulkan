@@ -8,13 +8,13 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use ash::vk;
-use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use crate::vulkan::attachments::{AttachmentHandle, AttachmentRequest};
 use crate::vulkan::base::PassAttachments;
+use crate::vulkan::render_graph::{RenderCtx, RenderPass};
+use ash::vk;
 
 use crate::app::app::WorldControls;
-use imgui::{Context as ImGuiContext, Condition, WindowFlags};
+use imgui::{Condition, Context as ImGuiContext, WindowFlags};
 use imgui_winit_support::WinitPlatform;
 use winit::window::Window;
 
@@ -57,21 +57,21 @@ impl UiPass {
                 });
         }
         /*ui.window("Controls")
-            .size([300.0, 180.0], Condition::FirstUseEver)
-            .build(|| {
-                ui.text("Light Position");
-                ui.slider("Y", -100.0, 100.0, &mut world_controls.lights.height);
-                ui.text("Light Intensity");
-                ui.slider("LI", 0.0, 10.0, &mut world_controls.light_intensity);
-                ui.text("Light Radius");
-                ui.slider("LR", 0.0, 50.0, &mut world_controls.light_radius);
-                ui.text(format!(
-                    "Light Position: {:.1}, {:.1}, {:.1}",
-                    world_controls.light_pos[0],
-                    world_controls.light_pos[1],
-                    world_controls.light_pos[2]
-                ));
-            });*/
+        .size([300.0, 180.0], Condition::FirstUseEver)
+        .build(|| {
+            ui.text("Light Position");
+            ui.slider("Y", -100.0, 100.0, &mut world_controls.lights.height);
+            ui.text("Light Intensity");
+            ui.slider("LI", 0.0, 10.0, &mut world_controls.light_intensity);
+            ui.text("Light Radius");
+            ui.slider("LR", 0.0, 50.0, &mut world_controls.light_radius);
+            ui.text(format!(
+                "Light Position: {:.1}, {:.1}, {:.1}",
+                world_controls.light_pos[0],
+                world_controls.light_pos[1],
+                world_controls.light_pos[2]
+            ));
+        });*/
         platform.prepare_render(ui, window);
         imgui.render()
     }
@@ -99,8 +99,10 @@ impl RenderPass for UiPass {
                     view: ctx.vulkan_base.swapchain.swapchain_image_views[idx],
                     layout: ctx.vulkan_base.swapchain.image_layouts[idx],
                 },
+                color_load_op: vk::AttachmentLoadOp::LOAD,
                 resolve: None,
                 depth: None,
+                depth_load_op: vk::AttachmentLoadOp::DONT_CARE,
             };
 
             ctx.vulkan_base.begin_rendering(frame.cmd_buf, &pass_atts);

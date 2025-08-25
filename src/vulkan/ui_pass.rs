@@ -18,16 +18,18 @@ use imgui::{Condition, Context as ImGuiContext, WindowFlags};
 use imgui_winit_support::WinitPlatform;
 use winit::window::Window;
 
-/// Main rendering pass that draws all scene objects
+/// Render pass responsible for drawing the ImGui user interface.
 pub struct UiPass {
     // Any state that the main pass needs can be stored here
 }
 
 impl UiPass {
+    /// Create a new [`UiPass`].
     pub fn new() -> Self {
         Self {}
     }
 
+    /// Build the ImGui [`DrawData`] for the current frame.
     pub fn prepare_imgui_draw_data<'a>(
         ms_per_frame: f32,
         platform: &'a mut WinitPlatform,
@@ -78,6 +80,7 @@ impl UiPass {
 }
 
 impl RenderPass for UiPass {
+    /// Render the ImGui user interface over the final swapchain image.
     fn execute(&mut self, ctx: &mut RenderCtx) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(frame) = ctx.frame.as_mut() {
             let device = &ctx.vulkan_base.device;
@@ -130,6 +133,8 @@ impl RenderPass for UiPass {
         Ok(())
     }
 
+    /// `UiPass` renders directly to the swapchain image and therefore does
+    /// not request any additional attachments.
     fn attachments(&self) -> Vec<AttachmentRequest> {
         Vec::new()
     }

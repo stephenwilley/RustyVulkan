@@ -150,6 +150,12 @@ pub fn handle_window_event(
                             if let Some(vb) = &mut app.vulkan_base {
                                 vb.toggle_ms_per_frame();
                             }
+                            let show = if let Some(vb) = &app.vulkan_base {
+                                vb.engine_settings.show_ms_per_frame
+                            } else {
+                                false
+                            };
+                            app.render_graph.set_pass_enabled(crate::vulkan::render_graph::RenderPassNode::UI, show);
                         }
                         _ => {}
                     }

@@ -125,10 +125,14 @@ impl RenderPass for UiPass {
                 draw_data,
             );
 
-            // Transition to present for presentation
-            pass_atts.color.layout = vk::ImageLayout::PRESENT_SRC_KHR;
+            // Transition to present for presentation or keep as color attachment if not last pass
+            pass_atts.color.layout = if ctx.is_last_pass {
+                vk::ImageLayout::PRESENT_SRC_KHR
+            } else {
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+            };
             ctx.vulkan_base.end_rendering(frame.cmd_buf, &pass_atts);
-            ctx.vulkan_base.swapchain.image_layouts[idx] = vk::ImageLayout::PRESENT_SRC_KHR;
+            ctx.vulkan_base.swapchain.image_layouts[idx] = pass_atts.color.layout;
         }
         Ok(())
     }

@@ -134,7 +134,11 @@ impl RenderPass for MainPass {
                 depth.layout = vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL;
             }
             if let Some(res) = pass_atts.resolve.as_mut() {
-                res.layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
+                res.layout = if ctx.is_last_pass {
+                    vk::ImageLayout::PRESENT_SRC_KHR
+                } else {
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+                };
             }
 
             ctx.vulkan_base.end_rendering(frame.cmd_buf, &pass_atts);

@@ -32,10 +32,20 @@ use winit::window::Window;
 /// Identifiers for the concrete render passes that can be added to a
 /// [`RenderGraph`].  The graph executes passes in the order they were
 /// inserted.
+#[allow(dead_code)]
+#[derive(PartialEq, Eq, Clone, Copy)]
 pub enum RenderPassNode {
     Main,
     Shadow,
     UI,
+}
+
+fn pass_order(node: RenderPassNode) -> u8 {
+    match node {
+        RenderPassNode::Shadow => 50,
+        RenderPassNode::Main => 100,
+        RenderPassNode::UI => 200,
+    }
 }
 
 /// Context passed to the UI pass.  Bundles the bits and pieces ImGui needs
@@ -62,6 +72,7 @@ pub struct RenderCtx<'a> {
     pub ui_ctx: Option<UiCtx<'a>>,
     pub attachments: HashMap<AttachmentKind, AttachmentHandle>,
     pub attachment_states: HashMap<AttachmentKind, AttachmentState>,
+    pub is_last_pass: bool,
 }
 
 /// Tracks the current usage state of an attachment so that the render graph
@@ -86,7 +97,7 @@ pub trait RenderPass {
 /// Simple render graph that executes a linear sequence of render passes and
 /// manages the lifetime and state transitions of off-screen attachments.
 pub struct RenderGraph {
-    render_passes: Vec<Box<dyn RenderPass>>,
+    render_passes: Vec<(RenderPassNode, Box<dyn RenderPass>)>,
 }
 
 impl RenderGraph {
@@ -126,12 +137,13 @@ impl RenderGraph {
             ui_ctx: Some(ui_ctx),
             attachments: HashMap::new(),
             attachment_states: HashMap::new(),
+            is_last_pass: false,
         };
 
         // Collect unique attachment requests from all passes.  Requests with a
         // zero extent default to the swapchain size.
         let mut requests: HashMap<AttachmentKind, AttachmentRequest> = HashMap::new();
-        for pass in &self.render_passes {
+        for (_, pass) in &self.render_passes {
             for mut req in pass.attachments() {
                 if req.extent.width == 0 || req.extent.height == 0 {
                     req.extent = ctx.vulkan_base.swapchain.extent;
@@ -158,9 +170,16 @@ impl RenderGraph {
             );
         }
 
+        // Compute the last pass index once to avoid borrow issues
+        debug_assert!(
+            !self.render_passes.is_empty(),
+            "RenderGraph has no passes"
+        );
+        let last_pass_index = self.render_passes.len().saturating_sub(1);
         // Execute passes in sequence, providing them with their requested attachments
         // and inserting image barriers as their usage changes.
-        for pass in &mut self.render_passes {
+        for (i, (_, pass)) in self.render_passes.iter_mut().enumerate() {
+            ctx.is_last_pass = i == last_pass_index;
             ctx.attachments.clear();
             let pass_reqs = pass.attachments();
             for req in &pass_reqs {
@@ -218,7 +237,24 @@ impl RenderGraph {
             RenderPassNode::Shadow => unimplemented!(),
             RenderPassNode::UI => Box::new(UiPass::new()),
         };
-        self.render_passes.push(pass);
+        let new_key = pass_order(render_pass);
+        let idx = self
+            .render_passes
+            .iter()
+            .position(|(n, _)| pass_order(*n) > new_key)
+            .unwrap_or(self.render_passes.len());
+        self.render_passes.insert(idx, (render_pass, pass));
+    }
+
+    pub fn set_pass_enabled(&mut self, node: RenderPassNode, enabled: bool) {
+        let has_node = self.render_passes.iter().any(|(n, _)| *n == node);
+        if enabled {
+            if !has_node {
+                self.add(node);
+            }
+        } else {
+            self.render_passes.retain(|(n, _)| *n != node);
+        }
     }
 }
 

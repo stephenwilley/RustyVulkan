@@ -53,7 +53,7 @@ pub struct UiCtx<'a> {
     pub imgui: &'a mut ImGuiContext,
     pub window: &'a Window,
     pub platform: &'a mut WinitPlatform,
-    pub show_ms_per_frame: bool,
+    pub show_ui: bool,
     pub renderer: &'a mut ImGuiRenderer,
 }
 
@@ -234,7 +234,7 @@ impl RenderGraph {
                     imgui: app.imgui.as_mut().unwrap(),
                     window: app.window.as_ref().unwrap(),
                     platform: app.platform.as_mut().unwrap(),
-                    show_ms_per_frame: vb.engine_settings.show_ms_per_frame,
+                    show_ui: vb.engine_settings.show_ui,
                     renderer: app.imgui_renderer.as_mut().unwrap(),
                 })
             } else {

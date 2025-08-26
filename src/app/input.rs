@@ -96,7 +96,7 @@ pub fn handle_window_event(
                             win.set_fullscreen(fullscreen);
                             println!("🖥️ Toggled fullscreen");
                         }
-                        (Code(KeyCode::KeyF), Released) => {
+                        (Code(KeyCode::KeyU), Released) => {
                             app.input.toggle_locked = false;
                         }
                         (Code(KeyCode::KeyW), Pressed) if !app.modifiers.control_key() => {
@@ -143,15 +143,15 @@ pub fn handle_window_event(
                                 };
                             }
                         }
-                        (Code(KeyCode::KeyF), Pressed)
-                            if app.modifiers.control_key() && !app.input.toggle_locked =>
+                        (Code(KeyCode::KeyU), Pressed)
+                            if !app.input.toggle_locked =>
                         {
                             app.input.toggle_locked = true;
                             if let Some(vb) = &mut app.vulkan_base {
-                                vb.toggle_ms_per_frame();
+                                vb.toggle_ui();
                             }
                             let show = if let Some(vb) = &app.vulkan_base {
-                                vb.engine_settings.show_ms_per_frame
+                                vb.engine_settings.show_ui
                             } else {
                                 false
                             };

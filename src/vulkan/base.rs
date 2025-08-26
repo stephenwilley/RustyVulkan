@@ -339,6 +339,7 @@ impl VulkanBase {
         )
     }
 
+    /// Update the global UBO with lighting data
     pub fn update_global_ubo(&mut self, image_index: usize, ubo: &GlobalUbo) {
         let allocation = &mut self.ubo_allocations[image_index];
         unsafe {
@@ -356,10 +357,7 @@ impl VulkanBase {
             self.allocator.as_ref().unwrap().unmap_memory(allocation);
         }
     }
-
-    /// Update the global UBO with lighting data
     
-    /// Helper: find a suitable memory type on the physical device.
     /// Creates a Vulkan instance.
     /// # Arguments
     /// * `entry` - The Ash Entry point.
@@ -854,8 +852,8 @@ impl VulkanBase {
         self.engine_settings.wireframe = !self.engine_settings.wireframe;
     }
     /// Toggles the FPS display
-    pub fn toggle_ms_per_frame(&mut self) {
-        self.engine_settings.show_ms_per_frame = !self.engine_settings.show_ms_per_frame;
+    pub fn toggle_ui(&mut self) {
+        self.engine_settings.show_ui = !self.engine_settings.show_ui;
     }
 
     /// Creates a new `VulkanBase` instance, initializing Vulkan resources and setting up the swapchain.
@@ -867,7 +865,7 @@ impl VulkanBase {
     pub fn new(window: &Window, event_loop: &ActiveEventLoop) -> Result<Self, Box<dyn Error>> {
         let engine_settings = EngineSettings {
             wireframe: false,
-            show_ms_per_frame: false,
+            show_ui: false,
             msaa_samples: 4,
         };
 
@@ -1136,7 +1134,7 @@ impl Drop for VulkanBase {
 /// Debug settings for the Vulkan engine
 pub struct EngineSettings {
     pub wireframe: bool,
-    pub show_ms_per_frame: bool,
+    pub show_ui: bool,
     pub msaa_samples: u32,
 }
 

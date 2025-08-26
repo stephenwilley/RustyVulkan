@@ -222,7 +222,7 @@ impl ApplicationHandler for App {
         self.set_up_scene();
 
         self.render_graph.add(RenderPassNode::Main);
-        let show = self.vulkan_base.as_ref().unwrap().engine_settings.show_ms_per_frame;
+        let show = self.vulkan_base.as_ref().unwrap().engine_settings.show_ui;
         self.render_graph.set_pass_enabled(RenderPassNode::UI, show);
     }
 

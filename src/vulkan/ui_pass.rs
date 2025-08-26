@@ -42,7 +42,7 @@ impl RenderPass for UiPass {
             .expect("Failed to prepare imgui frame");
 
         let ui = ui_ctx.imgui.frame();
-        if ui_ctx.show_ms_per_frame {
+        if ui_ctx.show_ui {
             ui.window("##ms_per_redraw")
                 .position([10.0, 10.0], Condition::Always)
                 .size([200.0, 30.0], Condition::Always)

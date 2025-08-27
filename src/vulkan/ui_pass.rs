@@ -11,7 +11,6 @@
 use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use ash::vk;
-use imgui::{Condition, WindowFlags};
 use std::sync::atomic::Ordering;
 
 /// Render pass responsible for drawing the ImGui user interface.
@@ -44,30 +43,23 @@ impl RenderPass for UiPass {
 
         let ui = ui_ctx.imgui.frame();
         if ui_ctx.show_ui {
-            let main_menu_bar = ui.begin_main_menu_bar();
-            if main_menu_bar.is_some() {
-                let main_menu = ui.begin_menu("Main");
-                if main_menu.is_some() {
+            if let Some(_menu_bar) = ui.begin_main_menu_bar() {
+                if let Some(_main_menu) = ui.begin_menu("Main") {
                     if ui.menu_item("Exit") {
                         ui_ctx.exit_flag.store(true, Ordering::Relaxed);
                     }
-                    main_menu.unwrap().end();
+                    _main_menu.end();
                 }
-                main_menu_bar.unwrap().end();
+
+                // Right-align the text
+                let text = format!("Redraw ms: {:.2}", ui_ctx.ms_per_frame);
+                let text_size = ui.calc_text_size(&text);
+                let menu_bar_width = ui.content_region_avail()[0];
+                ui.set_cursor_pos([menu_bar_width - text_size[0], 0.0]); // 10px padding
+                ui.text(text);
+
+                _menu_bar.end();
             }
-            ui.window("##ms_per_redraw")
-                .position([10.0, 20.0], Condition::Always)
-                .size([200.0, 30.0], Condition::Always)
-                .flags(
-                    WindowFlags::NO_TITLE_BAR
-                        | WindowFlags::NO_RESIZE
-                        | WindowFlags::NO_MOVE
-                        | WindowFlags::NO_SCROLLBAR
-                        | WindowFlags::NO_BACKGROUND,
-                )
-                .build(|| {
-                    ui.text(format!("Redraw ms: {:.2}", ui_ctx.ms_per_frame));
-                });
         }
 
         ui_ctx.platform.prepare_render(&ui, ui_ctx.window);

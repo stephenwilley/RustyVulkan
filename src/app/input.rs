@@ -161,6 +161,13 @@ pub fn handle_window_event(
                     }
                 }
                 WindowEvent::RedrawRequested => {
+                    // Exit requested via UI? Signal the event loop to exit.
+                    if app.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        println!("👋 Exit requested from UI");
+                        event_loop.exit();
+                        return;
+                    }
+
                     app.start_of_frame_time = Instant::now();
 
                     let s = app.step;

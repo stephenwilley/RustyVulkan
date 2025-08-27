@@ -26,6 +26,8 @@ use imgui_winit_support::WinitPlatform;
 use std::collections::HashMap;
 use std::error::Error;
 use winit::window::Window;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 /// Identifiers for the concrete render passes that can be added to a
 /// [`RenderGraph`].  The graph executes passes in the order they were
@@ -55,6 +57,7 @@ pub struct UiCtx<'a> {
     pub platform: &'a mut WinitPlatform,
     pub show_ui: bool,
     pub renderer: &'a mut ImGuiRenderer,
+    pub exit_flag: Arc<AtomicBool>,
 }
 
 /// Per-pass context provided to [`RenderPass::execute`].  Gives each pass
@@ -236,6 +239,7 @@ impl RenderGraph {
                     platform: app.platform.as_mut().unwrap(),
                     show_ui: vb.engine_settings.show_ui,
                     renderer: app.imgui_renderer.as_mut().unwrap(),
+                    exit_flag: app.exit_flag.clone(),
                 })
             } else {
                 None

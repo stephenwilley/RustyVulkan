@@ -10,6 +10,7 @@
 
 use std::error::Error;
 use std::time::Instant;
+use std::sync::{Arc, atomic::AtomicBool};
 
 use imgui::Context as ImGuiContext;
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
@@ -48,6 +49,7 @@ pub struct App {
     pub current_ms_per_frame: f32,
     pub world_controls: WorldControls,
     pub render_graph: RenderGraph,
+    pub exit_flag: Arc<AtomicBool>,
 }
 
 impl App {
@@ -69,6 +71,7 @@ impl App {
             current_ms_per_frame: 0.0,
             world_controls: WorldControls::default(),
             render_graph: RenderGraph::new(),
+            exit_flag: Arc::new(AtomicBool::new(false)),
         }
     }
 

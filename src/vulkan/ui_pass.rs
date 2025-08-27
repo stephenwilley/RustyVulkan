@@ -12,6 +12,7 @@ use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use ash::vk;
 use imgui::{Condition, WindowFlags};
+use std::sync::atomic::Ordering;
 
 /// Render pass responsible for drawing the ImGui user interface.
 pub struct UiPass {
@@ -43,8 +44,19 @@ impl RenderPass for UiPass {
 
         let ui = ui_ctx.imgui.frame();
         if ui_ctx.show_ui {
+            let main_menu_bar = ui.begin_main_menu_bar();
+            if main_menu_bar.is_some() {
+                let main_menu = ui.begin_menu("Main");
+                if main_menu.is_some() {
+                    if ui.menu_item("Exit") {
+                        ui_ctx.exit_flag.store(true, Ordering::Relaxed);
+                    }
+                    main_menu.unwrap().end();
+                }
+                main_menu_bar.unwrap().end();
+            }
             ui.window("##ms_per_redraw")
-                .position([10.0, 10.0], Condition::Always)
+                .position([10.0, 20.0], Condition::Always)
                 .size([200.0, 30.0], Condition::Always)
                 .flags(
                     WindowFlags::NO_TITLE_BAR

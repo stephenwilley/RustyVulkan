@@ -19,6 +19,7 @@ use winit::event::{DeviceEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowAttributes};
+use winit::dpi::LogicalSize;
 
 use crate::graphics::camera::Camera;
 use crate::graphics::gltf_loader::import_gltf;
@@ -82,7 +83,9 @@ impl App {
     }
 
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Window {
-        let window_attributes = WindowAttributes::default().with_title("Rusty Vulkan");
+        let window_attributes = WindowAttributes::default()
+    .with_title("Rusty Vulkan")
+    .with_inner_size(LogicalSize::new(1280, 720));
         let window = event_loop
             .create_window(window_attributes)
             .expect("Failed to create window");
@@ -276,36 +279,48 @@ pub const MAX_LIGHTS: usize = 8;
 
 #[derive(Clone, Copy)]
 pub struct LightCtrl {
-    pub radius: f32,
-    pub height: f32,
+    pub position: [f32; 3],   // x, y, z in world space
     pub intensity: f32,
     pub color: [f32; 3],
-    pub phase: f32,   // per-light offset around the circle (0..2π)
 }
 
 #[derive(Clone, Copy)]
 pub struct WorldControls {
     pub lights: [LightCtrl; MAX_LIGHTS],
     pub light_count: usize,
-    pub lights_rotation: f32,
 }
 
 impl Default for WorldControls {
     fn default() -> Self {
-        let light_count = 8;
-        use std::f32::consts::TAU;
-        let base = LightCtrl {
-            radius: 8.0, height: 4.0, intensity: 0.5,
-            color: [1.0, 1.0, 1.0], phase: 0.0,
-        };
-        let lights = std::array::from_fn(|i| {
-            let mut l = base;
-            l.phase = (i as f32) * (TAU / light_count as f32);
-            // (optional) tint each light a bit:
-            let hue = i as f32 / light_count as f32;
-            l.color = [hue, 1.0 - hue, hue * hue];
-            l
+        // Simple LCG for deterministic "random" without external crates
+        fn lcg_next(state: &mut u32) -> f32 {
+            // Numerical Recipes LCG parameters
+            *state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            // Map to 0.0..1.0
+            (*state as f32) / (u32::MAX as f32)
+        }
+
+        let mut seed = 0xA17E_6C83; // arbitrary seed
+        let light_count = 4;
+
+        let lights = std::array::from_fn(|_i| {
+            // X and Z in [-5, 5], Y fixed at 2.0
+            let x = (lcg_next(&mut seed) * 10.0) - 5.0;
+            let z = (lcg_next(&mut seed) * 10.0) - 5.0;
+            let y = 2.0;
+
+            // Bright color: each channel in [0.5, 1.0]
+            let r = 0.5 + 0.5 * lcg_next(&mut seed);
+            let g = 0.5 + 0.5 * lcg_next(&mut seed);
+            let b = 0.5 + 0.5 * lcg_next(&mut seed);
+
+            LightCtrl {
+                position: [x, y, z],
+                intensity: 0.5,
+                color: [r, g, b],
+            }
         });
-        Self { lights, light_count, lights_rotation: 0.0 }
+
+        Self { lights, light_count }
     }
 }

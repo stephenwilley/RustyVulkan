@@ -64,12 +64,6 @@ pub fn handle_window_event(
                         if let Err(e) = vulkan_base.recreate_swapchain(app.window.as_ref().unwrap()) {
                             eprintln!("Failed to recreate swapchain: {}", e);
                         }
-                        if let Err(e) = app.material_manager.recreate_pipelines(vulkan_base) {
-                            eprintln!("Failed to recreate material pipelines: {}", e);
-                        };
-                        if let Err(e) = app.imgui_renderer.as_mut().unwrap().rebuild_pipeline(vulkan_base) {
-                            eprintln!("Failed to rebuild imgui pipeline: {}", e);
-                        }
                     }
                     if let Some(window) = &app.window {
                         let size = window.inner_size();
@@ -138,9 +132,6 @@ pub fn handle_window_event(
                             if let Some(vb) = &mut app.vulkan_base {
                                 vb.toggle_wireframe();
                                 println!("🔲 Wireframe mode toggled");
-                                if let Err(e) = app.material_manager.recreate_pipelines(vb) {
-                                    eprintln!("Failed to recreate material pipelines: {}", e);
-                                };
                             }
                         }
                         (Code(KeyCode::KeyU), Pressed)

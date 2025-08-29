@@ -68,8 +68,9 @@ pub struct RenderCtx<'a> {
     pub scene: &'a Scene,
     pub material_manager: &'a MaterialManager,
     pub mesh_manager: &'a MeshManager,
-    pub vulkan_base: &'a VulkanBase,
+    pub vulkan_base: &'a mut VulkanBase,
     pub ui_ctx: Option<UiCtx<'a>>,
+    pub world_controls: &'a mut WorldControls,
     pub attachments: &'a HashMap<AttachmentKind, AttachmentHandle>,
 }
 
@@ -98,7 +99,8 @@ pub trait RenderPass {
 /// Simple render graph that executes a linear sequence of render passes and
 /// manages the lifetime and state transitions of off-screen attachments.
 pub struct RenderGraph {
-    render_passes: Vec<(RenderPassNode, Box<dyn RenderPass>)>, 
+    render_passes: Vec<(RenderPassNode, Box<dyn RenderPass>)>,
+    swap_gen_seen: u64,
 }
 
 impl RenderGraph {
@@ -106,37 +108,37 @@ impl RenderGraph {
     pub fn new() -> Self {
         Self {
             render_passes: Vec::new(),
+            swap_gen_seen: 0,
         }
     }
 
     /// Prepares the global uniform buffer data for the current frame.
-    fn prepare_global_ubo(&self, world: &mut WorldControls, camera: &Camera) -> GlobalUbo {
-        world.lights_rotation = (world.lights_rotation + 0.01) % std::f32::consts::TAU;
-
+    fn prepare_global_ubo(&self, world: &WorldControls, camera: &Camera) -> GlobalUbo {
         let mut ubo = GlobalUbo::default();
-        ubo.light_count = world.light_count as u32;
+        ubo.light_count = world.light_count.min(MAX_LIGHTS) as u32;
 
         let view: Matrix4<f32> = *camera.get_view();
 
-        let active = world.light_count.min(MAX_LIGHTS);
-        let n = active.max(1) as f32;
-        for i in 0..active {
-            let lc = world.lights[i];
-            let base_phase = (i as f32) * (std::f32::consts::TAU / n);
-            let angle = base_phase + world.lights_rotation;
-
-            let x = angle.sin() * lc.radius;
-            let z = angle.cos() * lc.radius;
-
-            let p_view4 = view * Vector4::new(x, lc.height, z, 1.0);
-            let p_view = p_view4.truncate();
-
-            ubo.lights[i] = GpuLight {
-                position: [p_view.x, p_view.y, p_view.z],
-                intensity: lc.intensity,
-                color: lc.color,
-                _pad: 0.0,
-            };
+        for i in 0..MAX_LIGHTS {
+            if i < world.light_count {
+                let lc = world.lights[i];
+                let p_view4 = view * Vector4::new(lc.position[0], lc.position[1], lc.position[2], 1.0);
+                let p_view = p_view4.truncate();
+                ubo.lights[i] = GpuLight {
+                    position: [p_view.x, p_view.y, p_view.z],
+                    intensity: lc.intensity,
+                    color: lc.color,
+                    _pad: 0.0,
+                };
+            } else {
+                // Empty slot: keep position as 0 and intensity 0 so shader can safely loop MAX_LIGHTS
+                ubo.lights[i] = GpuLight {
+                    position: [0.0, 0.0, 0.0],
+                    intensity: 0.0,
+                    color: [0.0, 0.0, 0.0],
+                    _pad: 0.0,
+                };
+            }
         }
 
         ubo
@@ -146,6 +148,18 @@ impl RenderGraph {
     pub fn execute(&mut self, app: &mut App) -> Result<(), Box<dyn Error>> {
         let vb = app.vulkan_base.as_mut().unwrap();
 
+        // Apply queued changes (e.g., MSAA) at a safe point, before acquiring the image
+        vb.apply_pending_surface_changes(app.window.as_ref().unwrap())?;
+        // Rebuild pipelines only when engine-signaled generation changes (swapchain/MSAA/wireframe)
+        let swap_gen = vb.pipeline_generation();
+        if swap_gen != self.swap_gen_seen {
+            app.material_manager.recreate_pipelines(vb)?;
+            if let Some(renderer) = app.imgui_renderer.as_mut() {
+                renderer.rebuild_pipeline(vb)?;
+            }
+            self.swap_gen_seen = swap_gen;
+        }
+
         let frame = match vb.begin_frame()? {
             Some(frame) => frame,
             None => return Ok(()), // Swapchain out of date
@@ -154,7 +168,7 @@ impl RenderGraph {
         let image_index = frame.image_index as usize;
 
         // --- 1. Prepare and update frame-global data ---
-        let ubo = self.prepare_global_ubo(&mut app.world_controls, &app.camera);
+        let ubo = self.prepare_global_ubo(&app.world_controls, &app.camera);
         vb.update_global_ubo(image_index, &ubo);
 
         let mut attachment_handles: HashMap<AttachmentKind, AttachmentHandle> = HashMap::new();
@@ -183,6 +197,14 @@ impl RenderGraph {
                     image: vb.swapchain.depth_msaa_image,
                     view: vb.swapchain.depth_msaa_image_view,
                 },
+                AttachmentKind::Depth => {
+                    // Build a concrete request for a single-sample depth attachment
+                    let mut depth_req = *req;
+                    depth_req.format = vb.swapchain.depth_format; // engine’s chosen depth format
+                    depth_req.extent = vb.swapchain.extent;        // match swapchain size
+                    depth_req.samples = vk::SampleCountFlags::TYPE_1; // single-sampled
+                    vb.get_attachment(depth_req)
+                }
                 _ => vb.get_attachment(*req),
             };
             attachment_handles.insert(req.kind, handle);
@@ -253,6 +275,7 @@ impl RenderGraph {
                 mesh_manager: &app.mesh_manager,
                 vulkan_base: vb,
                 ui_ctx,
+                world_controls: &mut app.world_controls,
                 attachments: &attachment_handles,
             };
 

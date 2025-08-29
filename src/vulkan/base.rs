@@ -33,7 +33,6 @@ const INFLIGHT_FRAMES: usize = 2;
 use ash::khr::surface;
 use ash::khr::swapchain;
 use ash::vk;
-use ash::vk::PhysicalDeviceProperties;
 use ash::{Entry, Instance};
 use ash_window::create_surface;
 use ash_window::enumerate_required_extensions;
@@ -131,7 +130,11 @@ pub struct VulkanBase {
     debug_utils_loader: ash::ext::debug_utils::Instance,
     frame_slot: usize,
     current_image_index: usize,
-    max_msaa_samples: vk::SampleCountFlags,
+    /// Generation counter for pipeline-dependent changes (swapchain, MSAA, wireframe, etc)
+    pipeline_generation: u64,
+    pub sample_count_flags_supported: vk::SampleCountFlags,
+    /// Tracks a pending MSAA sample count change requested by the UI.
+    pending_msaa_samples: Option<u32>,
 }
 
 /// Frame context returned by `begin_frame` and consumed by `end_frame`.
@@ -357,8 +360,19 @@ impl VulkanBase {
             self.allocator.as_ref().unwrap().unmap_memory(allocation);
         }
     }
+
+    /// Apply any queued surface-dependent changes (like MSAA) at a frame boundary.
+    pub fn apply_pending_surface_changes(&mut self, window: &winit::window::Window) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(new_samples) = self.pending_msaa_samples.take() {
+            if new_samples != self.engine_settings.msaa_samples {
+                self.engine_settings.msaa_samples = new_samples;
+                // Wrapper expected to recreate swapchain + dependent resources
+                self.recreate_swapchain(window)?;
+            }
+        }
+        Ok(())
+    }
     
-    /// Creates a Vulkan instance.
     /// # Arguments
     /// * `entry` - The Ash Entry point.
     /// * `event_loop` - The winit event loop.
@@ -800,33 +814,15 @@ impl VulkanBase {
         self.attachment_manager
             .cleanup(&self.device, self.allocator.as_ref().unwrap());
         self.attachment_manager = AttachmentManager::new(new_image_count);
-
+        // Bump pipeline generation (swapchain/image count change affects pipelines)
+        self.pipeline_generation = self.pipeline_generation.saturating_add(1);
         Ok(())
     }
 
-    fn pick_msaa(props: &PhysicalDeviceProperties) -> vk::SampleCountFlags {
-        let counts = props.limits.framebuffer_color_sample_counts
-            & props.limits.framebuffer_depth_sample_counts;
+    const MSAA_CHOICES: [u32; 7] = [1, 2, 4, 8, 16, 32, 64];
 
-        // Try highest to lowest
-        for &c in &[
-            vk::SampleCountFlags::TYPE_64,
-            vk::SampleCountFlags::TYPE_32,
-            vk::SampleCountFlags::TYPE_16,
-            vk::SampleCountFlags::TYPE_8,
-            vk::SampleCountFlags::TYPE_4,
-            vk::SampleCountFlags::TYPE_2,
-        ] {
-            if counts.contains(c) {
-                return c;
-            }
-        }
-        vk::SampleCountFlags::TYPE_1
-    }
-
-    fn clamp_msaa(self, desired: u32, supported: vk::SampleCountFlags) -> vk::SampleCountFlags {
-        // Map u32 → flag (invalid → TYPE_1)
-        let want = match desired {
+    fn flag_for(samples: u32) -> vk::SampleCountFlags {
+        match samples {
             64 => vk::SampleCountFlags::TYPE_64,
             32 => vk::SampleCountFlags::TYPE_32,
             16 => vk::SampleCountFlags::TYPE_16,
@@ -834,26 +830,50 @@ impl VulkanBase {
             4 => vk::SampleCountFlags::TYPE_4,
             2 => vk::SampleCountFlags::TYPE_2,
             _ => vk::SampleCountFlags::TYPE_1,
-        };
-        if supported.contains(want) {
-            want
-        } else {
-            // fallback highest supported (same loop you already wrote)
-            let chosen_props = unsafe {
-                self.instance
-                    .get_physical_device_properties(self.physical_device)
-            };
-            VulkanBase::pick_msaa(&chosen_props)
         }
+    }
+
+    fn clamp_msaa_samples(&self, desired: u32) -> u32 {
+        let mut opts = self.supported_msaa_samples();
+        if opts.is_empty() { return 1; }
+        opts.sort_unstable();
+        // highest supported <= desired, else the smallest supported
+        opts.iter().copied().rev().find(|&n| n <= desired).unwrap_or(opts[0])
+    }
+
+    pub fn supported_msaa_samples(&self) -> Vec<u32> {
+        let supported = self.sample_count_flags_supported;
+        Self::MSAA_CHOICES
+            .into_iter()
+            .filter(|&n| supported.contains(Self::flag_for(n)))
+            .collect()
+    }
+
+    pub fn request_msaa_samples(&mut self, desired: u32) {
+        self.pending_msaa_samples = Some(self.clamp_msaa_samples(desired));
+    }
+
+    pub fn get_msaa_samples(&self) -> u32 {
+        self.engine_settings.msaa_samples
     }
 
     /// Toggles the wireframe mode in the debug settings.
     pub fn toggle_wireframe(&mut self) {
+        let old = self.engine_settings.wireframe;
         self.engine_settings.wireframe = !self.engine_settings.wireframe;
+        if self.engine_settings.wireframe != old {
+            // Wireframe affects pipelines; ensure rebuild next frame
+            self.pipeline_generation = self.pipeline_generation.saturating_add(1);
+        }
     }
     /// Toggles the FPS display
     pub fn toggle_ui(&mut self) {
         self.engine_settings.show_ui = !self.engine_settings.show_ui;
+    }
+
+    /// Returns the current pipeline generation counter.
+    pub fn pipeline_generation(&self) -> u64 {
+        self.pipeline_generation
     }
 
     /// Creates a new `VulkanBase` instance, initializing Vulkan resources and setting up the swapchain.
@@ -913,7 +933,9 @@ impl VulkanBase {
                 .to_str()
                 .unwrap_or("<invalid utf-8>")
         };
-        let max_msaa_samples = Self::pick_msaa(&chosen_props);
+        let sample_count_flags_supported =
+            chosen_props.limits.framebuffer_color_sample_counts
+            & chosen_props.limits.framebuffer_depth_sample_counts;
         println!("👉 Selected device for next steps: '{}'", chosen_name);
 
         let graphics_queue_family_index =
@@ -1037,7 +1059,9 @@ impl VulkanBase {
             debug_utils_loader,
             frame_slot: 0,
             current_image_index: 0,
-            max_msaa_samples,
+            pipeline_generation: 1,
+            sample_count_flags_supported,
+            pending_msaa_samples: None,
         };
 
         println!("✅ VulkanBase initialized successfully");

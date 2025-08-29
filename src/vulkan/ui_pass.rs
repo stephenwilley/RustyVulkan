@@ -16,6 +16,8 @@ use std::sync::atomic::Ordering;
 /// Render pass responsible for drawing the ImGui user interface.
 pub struct UiPass {
     attachments: [AttachmentRequest; 1],
+    show_point_lights_window: bool,
+    show_msaa_window: bool,
 }
 
 impl UiPass {
@@ -23,6 +25,8 @@ impl UiPass {
     pub fn new() -> Self {
         Self {
             attachments: [AttachmentRequest::new(AttachmentKind::SwapchainColor)],
+            show_point_lights_window: false,
+            show_msaa_window: false,
         }
     }
 
@@ -32,7 +36,6 @@ impl UiPass {
 impl RenderPass for UiPass {
     /// Render the ImGui user interface over the final swapchain image.
     fn execute(&mut self, ctx: &mut RenderCtx) -> Result<(), Box<dyn std::error::Error>> {
-        let device = &ctx.vulkan_base.device;
         let cmd = ctx.frame.cmd_buf;
         let ui_ctx = ctx.ui_ctx.as_mut().unwrap();
 
@@ -51,14 +54,89 @@ impl RenderPass for UiPass {
                     _main_menu.end();
                 }
 
+                if let Some(_world_menu) = ui.begin_menu("World Controls") {
+                    if ui.menu_item("Point Lights") {
+                        self.show_point_lights_window = true;
+                    }
+                    _world_menu.end();
+                }
+
+                if let Some(_engine_menu) = ui.begin_menu("Engine Settings") {
+                    if ui.menu_item("MSAA") {
+                        self.show_msaa_window = true;
+                    }
+                    _engine_menu.end();
+                }
+
                 // Right-align the text
                 let text = format!("Redraw ms: {:.2}", ui_ctx.ms_per_frame);
                 let text_size = ui.calc_text_size(&text);
                 let menu_bar_width = ui.content_region_avail()[0];
-                ui.set_cursor_pos([menu_bar_width - text_size[0], 0.0]); // 10px padding
+                ui.set_cursor_pos([menu_bar_width - text_size[0], 0.0]);
                 ui.text(text);
 
                 _menu_bar.end();
+            }
+        }
+
+        if self.show_point_lights_window {
+            let mut open = true;
+            ui.window("Point Lights")
+                .opened(&mut open)
+                .always_auto_resize(true)
+                .build(|| {
+                    ui.text("Adjust point light positions");
+                    ui.separator();
+
+                    let count = ctx.world_controls.light_count.min(crate::app::app::MAX_LIGHTS);
+                    for i in 0..count {
+                        ui.text(format!("Light {}", i + 1));
+                        let l = &mut ctx.world_controls.lights[i];
+
+                        // X slider: [-5, 5]
+                        ui.slider(&format!("X##{}", i), -5.0, 5.0, &mut l.position[0]);
+                        // Y slider: [0, 5] (default 2.0)
+                        ui.slider(&format!("Y##{}", i), 0.0, 5.0, &mut l.position[1]);
+                        // Z slider: [-5, 5]
+                        ui.slider(&format!("Z##{}", i), -5.0, 5.0, &mut l.position[2]);
+                        // Intensity slider: [0, 5]
+                        ui.slider(&format!("Intensity##{}", i), 0.0, 5.0, &mut l.intensity);
+                        // Full-range color editor for RGB
+                        ui.color_edit3(&format!("Color##{}", i), &mut l.color);
+
+                        if i + 1 != count { ui.separator(); }
+                    }
+                });
+            if !open {
+                self.show_point_lights_window = false;
+            }
+        }
+
+        if self.show_msaa_window {
+            let mut open = true;
+            ui.window("Multisample Anti-Aliasing")
+                .opened(&mut open)
+                .always_auto_resize(true)
+                .build(|| {
+                    ui.text("Multisample Anti-Aliasing");
+                    ui.separator();
+
+                    let options = ctx.vulkan_base.supported_msaa_samples();
+                    let mut current = ctx.vulkan_base.get_msaa_samples() as i32;
+                    let prev = current;
+
+                    for (i, samples) in options.iter().enumerate() {
+                        if ui.radio_button(&format!("{}x", samples), &mut current, *samples as i32) {}
+                        if i + 1 != options.len() { ui.same_line(); }
+                    }
+                    ui.new_line();
+
+                    if current != prev {
+                        ctx.vulkan_base.request_msaa_samples(current as u32)
+                    }
+                });
+            if !open {
+                self.show_msaa_window = false;
             }
         }
 
@@ -82,22 +160,22 @@ impl RenderPass for UiPass {
             .color_attachments(std::slice::from_ref(&color_attachment_info));
 
         unsafe {
-            device.cmd_begin_rendering(cmd, &rendering_info);
+            ctx.vulkan_base.device.cmd_begin_rendering(cmd, &rendering_info);
 
-            device.cmd_bind_pipeline(
+            ctx.vulkan_base.device.cmd_bind_pipeline(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
                 ui_ctx.renderer.vk_pipeline,
             );
 
             ui_ctx.renderer.render(
-                device,
+                &ctx.vulkan_base.device,
                 ctx.vulkan_base.allocator.as_ref().unwrap(),
                 cmd,
                 draw_data,
             );
 
-            device.cmd_end_rendering(cmd);
+            ctx.vulkan_base.device.cmd_end_rendering(cmd);
         }
 
         Ok(())

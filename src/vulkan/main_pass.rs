@@ -16,7 +16,7 @@ use cgmath::{Matrix4, prelude::*};
 
 /// Main rendering pass that draws all scene objects
 pub struct MainPass {
-    attachments: [AttachmentRequest; 3],
+    attachments: [AttachmentRequest; 4],
 }
 
 impl MainPass {
@@ -26,6 +26,7 @@ impl MainPass {
             AttachmentRequest::new(AttachmentKind::MsaaColor),
             AttachmentRequest::new(AttachmentKind::MsaaDepth),
             AttachmentRequest::new(AttachmentKind::SwapchainColor),
+            AttachmentRequest::new(AttachmentKind::Depth),
         ];
         Self { attachments }
     }
@@ -37,11 +38,6 @@ impl RenderPass for MainPass {
         let image_index = ctx.frame.image_index as usize;
         let device = &ctx.vulkan_base.device;
         let cmd = ctx.frame.cmd_buf;
-
-        // Get handles for the attachments we requested
-        let color_att = ctx.attachments[&AttachmentKind::MsaaColor];
-        let depth_att = ctx.attachments[&AttachmentKind::MsaaDepth];
-        let resolve_att = ctx.attachments[&AttachmentKind::SwapchainColor];
 
         let clear_color = vk::ClearValue {
             color: vk::ClearColorValue {
@@ -55,31 +51,62 @@ impl RenderPass for MainPass {
             },
         };
 
-        // The graph has already transitioned the images to these layouts
-        let color_attachment_info = vk::RenderingAttachmentInfo::default()
-            .image_view(color_att.view)
-            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::DONT_CARE) // MSAA is resolved, so we don't need to store it
-            .clear_value(clear_color)
-            .resolve_mode(vk::ResolveModeFlags::AVERAGE)
-            .resolve_image_view(resolve_att.view)
-            .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        let msaa_samples = ctx.vulkan_base.engine_settings.msaa_samples;
 
-        let depth_attachment_info = vk::RenderingAttachmentInfo::default()
-            .image_view(depth_att.view)
-            .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::DONT_CARE) // No need to store depth after this pass
-            .clear_value(clear_depth);
+        // Build attachment infos in locals that will live until we call cmd_begin_rendering.
+        let (color_attachment_info, depth_attachment_info) = if msaa_samples > 1 {
+            // MSAA path: render to MSAA color/depth and resolve to swapchain
+            let color_att = ctx.attachments[&AttachmentKind::MsaaColor];
+            let depth_att = ctx.attachments[&AttachmentKind::MsaaDepth];
+            let resolve_att = ctx.attachments[&AttachmentKind::SwapchainColor];
 
+            let color_attachment_info = vk::RenderingAttachmentInfo::default()
+                .image_view(color_att.view)
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::DONT_CARE) // resolve writes final color
+                .clear_value(clear_color)
+                .resolve_mode(vk::ResolveModeFlags::AVERAGE)
+                .resolve_image_view(resolve_att.view)
+                .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+            let depth_attachment_info = vk::RenderingAttachmentInfo::default()
+                .image_view(depth_att.view)
+                .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .clear_value(clear_depth);
+
+            (color_attachment_info, depth_attachment_info)
+        } else {
+            // 1x path: render directly to swapchain color and single-sample depth
+            let color_att = ctx.attachments[&AttachmentKind::SwapchainColor];
+            let depth_att = ctx.attachments[&AttachmentKind::Depth];
+
+            let color_attachment_info = vk::RenderingAttachmentInfo::default()
+                .image_view(color_att.view)
+                .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE) // we will present this image
+                .clear_value(clear_color);
+            // NOTE: no resolve_* fields set in 1x path
+
+            let depth_attachment_info = vk::RenderingAttachmentInfo::default()
+                .image_view(depth_att.view)
+                .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .clear_value(clear_depth);
+
+            (color_attachment_info, depth_attachment_info)
+        };
+
+        // The RenderingInfo borrows from small local arrays; build them and call immediately.
+        let color_attachments = [color_attachment_info];
         let rendering_info = vk::RenderingInfo::default()
-            .render_area(vk::Rect2D {
-                offset: vk::Offset2D::default(),
-                extent: ctx.vulkan_base.swapchain.extent,
-            })
+            .render_area(vk::Rect2D { offset: vk::Offset2D::default(), extent: ctx.vulkan_base.swapchain.extent })
             .layer_count(1)
-            .color_attachments(std::slice::from_ref(&color_attachment_info))
+            .color_attachments(&color_attachments)
             .depth_attachment(&depth_attachment_info);
 
         unsafe {
@@ -138,11 +165,11 @@ impl RenderPass for MainPass {
 
     fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags) {
         match kind {
-            AttachmentKind::MsaaColor | AttachmentKind::SwapchainColor => (
+            AttachmentKind::MsaaColor | AttachmentKind::SwapchainColor | AttachmentKind::Color => (
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                 vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
             ),
-            AttachmentKind::MsaaDepth => (
+            AttachmentKind::MsaaDepth | AttachmentKind::Depth => (
                 vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                 vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
             ),
@@ -177,4 +204,3 @@ pub fn compute_push_constant_per_obj(camera: &Camera, model_matrix: &Matrix4<f32
 
     bytes
 }
-

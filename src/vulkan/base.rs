@@ -822,15 +822,7 @@ impl VulkanBase {
     const MSAA_CHOICES: [u32; 7] = [1, 2, 4, 8, 16, 32, 64];
 
     fn flag_for(samples: u32) -> vk::SampleCountFlags {
-        match samples {
-            64 => vk::SampleCountFlags::TYPE_64,
-            32 => vk::SampleCountFlags::TYPE_32,
-            16 => vk::SampleCountFlags::TYPE_16,
-            8 => vk::SampleCountFlags::TYPE_8,
-            4 => vk::SampleCountFlags::TYPE_4,
-            2 => vk::SampleCountFlags::TYPE_2,
-            _ => vk::SampleCountFlags::TYPE_1,
-        }
+        vk::SampleCountFlags::from_raw(samples)
     }
 
     fn clamp_msaa_samples(&self, desired: u32) -> u32 {

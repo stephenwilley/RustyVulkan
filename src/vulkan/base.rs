@@ -1017,7 +1017,7 @@ impl VulkanBase {
         let (set0_descriptor_pool, set0_descriptor_sets) =
             Self::create_set0_descriptor_pool_and_sets(&device, set0_global_layout, &ubo_buffers);
 
-        // Create a simple shadow sampler (no compare yet)
+        // Shadow sampler (no compare; better compatibility with portability subset on macOS)
         let sampler_info = vk::SamplerCreateInfo {
             mag_filter: vk::Filter::LINEAR,
             min_filter: vk::Filter::LINEAR,

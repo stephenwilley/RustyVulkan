@@ -66,18 +66,27 @@ float shadow_factor(vec3 fragPosView) {
     // Small receiver bias to reduce acne (raster depth bias handles most)
     float bias = 0.0005;
 
-    // Percentage-Closer Filtering (3x3)
-    ivec2 texSize = textureSize(shadowMap, 0);
-    vec2 texel = 1.0 / vec2(texSize);
+    // Manual PCF with a few jittered taps (compat path for platforms without compare samplers).
+    // Poisson-ish offsets (in texels):
+    const vec2 OFFS[6] = vec2[](
+        vec2( 0.0,  0.0),
+        vec2( 0.35, 0.12),
+        vec2(-0.28,-0.34),
+        vec2(-0.57, 0.49),
+        vec2( 0.62,-0.41),
+        vec2( 0.15, 0.68)
+    );
+    ivec2 ts = textureSize(shadowMap, 0);
+    vec2 texel = 1.0 / vec2(ts);
+    float radius = 1.5; // in texels; tweak per taste
+
     float sum = 0.0;
-    for (int y = -1; y <= 1; ++y) {
-        for (int x = -1; x <= 1; ++x) {
-            vec2 uvOffset = uv + vec2(x, y) * texel;
-            float sm = texture(shadowMap, uvOffset).r;
-            sum += (depth - bias <= sm) ? 1.0 : 0.0;
-        }
+    for (int i = 0; i < 6; ++i) {
+        vec2 uvOff = uv + OFFS[i] * texel * radius;
+        float sm = texture(shadowMap, uvOff).r;
+        sum += (depth - bias <= sm) ? 1.0 : 0.0;
     }
-    return sum / 9.0;
+    return sum / 6.0;
 }
 
 void main() {

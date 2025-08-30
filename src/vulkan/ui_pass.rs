@@ -19,6 +19,7 @@ pub struct UiPass {
     show_point_lights_window: bool,
     show_msaa_window: bool,
     show_sun_window: bool,
+    show_ground_window: bool,
 }
 
 impl UiPass {
@@ -29,6 +30,7 @@ impl UiPass {
             show_point_lights_window: false,
             show_msaa_window: false,
             show_sun_window: false,
+            show_ground_window: false,
         }
     }
 
@@ -62,6 +64,9 @@ impl RenderPass for UiPass {
                     }
                     if ui.menu_item("Sun Light") {
                         self.show_sun_window = true;
+                    }
+                    if ui.menu_item("Ground Surface") {
+                        self.show_ground_window = true;
                     }
                     _world_menu.end();
                 }
@@ -145,6 +150,25 @@ impl RenderPass for UiPass {
                 });
             if !open {
                 self.show_sun_window = false;
+            }
+        }
+
+        if self.show_ground_window {
+            let mut open = true;
+            ui.window("Ground Surface")
+                .opened(&mut open)
+                .always_auto_resize(true)
+                .build(|| {
+                    ui.text("Choose ground rendering");
+                    ui.separator();
+                    let mut use_sand = ctx.world_controls.use_sand_ground;
+                    if ui.radio_button("Infinite Plane", &mut use_sand, false) {}
+                    ui.same_line();
+                    if ui.radio_button("Sand", &mut use_sand, true) {}
+                    ctx.world_controls.use_sand_ground = use_sand;
+                });
+            if !open {
+                self.show_ground_window = false;
             }
         }
 

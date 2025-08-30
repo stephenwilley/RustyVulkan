@@ -180,7 +180,17 @@ impl RenderGraph {
 
         let image_index = frame.image_index as usize;
 
-        // --- 1. Prepare and update frame-global data ---
+        // --- 1. Handle per-frame app state & UBO ---
+        if let Some(gi) = app.ground_obj_index {
+            let desired_mat = if app.world_controls.use_sand_ground {
+                app.sand_plane_material_id
+            } else {
+                app.infinite_plane_material_id
+            };
+            app.scene.objects[gi].material_id = desired_mat;
+        }
+
+        // Prepare and update frame-global data
         let ubo = self.prepare_global_ubo(&app.world_controls, &app.camera);
         vb.update_global_ubo(image_index, &ubo);
 

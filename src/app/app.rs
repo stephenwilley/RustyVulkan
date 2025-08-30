@@ -51,6 +51,10 @@ pub struct App {
     pub world_controls: WorldControls,
     pub render_graph: RenderGraph,
     pub exit_flag: Arc<AtomicBool>,
+    // Ground switching
+    pub ground_obj_index: Option<usize>,
+    pub infinite_plane_material_id: usize,
+    pub sand_plane_material_id: usize,
 }
 
 impl App {
@@ -73,6 +77,9 @@ impl App {
             world_controls: WorldControls::default(),
             render_graph: RenderGraph::new(),
             exit_flag: Arc::new(AtomicBool::new(false)),
+            ground_obj_index: None,
+            infinite_plane_material_id: 0,
+            sand_plane_material_id: 0,
         }
     }
 
@@ -100,24 +107,44 @@ impl App {
 
     fn set_up_scene(&mut self) {
         let vulkan_base = self.vulkan_base.as_mut().unwrap();
+        // Create both materials needed for ground
+        let infinite_plane_mat_id = self.material_manager.request_material(
+            vulkan_base,
+            MaterialProperties {
+                name: "InfinitePlaneMaterial".into(),
+                vs_path: "assets/shaders/spv/infinite_plane.vert.spv".into(),
+                fs_path: "assets/shaders/spv/infinite_plane.frag.spv".into(),
+                diffuse_texture_path: None,
+                normalmap_texture_path: None,
+                depth_write: false,
+            },
+        );
+        let sand_plane_mat_id = self.material_manager.request_material(
+            vulkan_base,
+            MaterialProperties {
+                name: "SandPlaneMaterial".into(),
+                vs_path: "assets/shaders/spv/point_light.vert.spv".into(),
+                fs_path: "assets/shaders/spv/point_light.frag.spv".into(),
+                diffuse_texture_path: Some("assets/textures/sand/color.jpg".into()),
+                normalmap_texture_path: Some("assets/textures/sand/normal.png".into()),
+                depth_write: true,
+            },
+        );
+
+        // Ground mesh: reuse unit plane
+        let ground_mesh_id = self
+            .mesh_manager
+            .request_unit_plane(vulkan_base)
+            .expect("Failed to load unit plane mesh");
 
         let infinite_plane = SceneObject {
-            transform: SceneTransform::identity(),
-            material_id: self.material_manager.request_material(
-                vulkan_base,
-                MaterialProperties {
-                    name: "InfinitePlaneMaterial".into(),
-                    vs_path: "assets/shaders/spv/infinite_plane.vert.spv".into(),
-                    fs_path: "assets/shaders/spv/infinite_plane.frag.spv".into(),
-                    diffuse_texture_path: None,
-                    normalmap_texture_path: None,
-                    depth_write: false,
-                },
+            transform: SceneTransform::from_euler(
+                cgmath::Vector3::new(0.0, 0.0, 0.0),
+                cgmath::Vector3::new(0.0, 0.0, 0.0),
+                10.0,
             ),
-            mesh_id: self
-                .mesh_manager
-                .request_unit_plane(vulkan_base)
-                .expect("Failed to load unit plane mesh"),
+            material_id: infinite_plane_mat_id,
+            mesh_id: ground_mesh_id,
         };
 
         let cube = SceneObject {
@@ -185,7 +212,12 @@ impl App {
         self.scene.add(cube);
         self.scene.add(duck);
         self.scene.add(sphere);
+        // Record index of ground object after pushing
+        let ground_index = self.scene.objects.len();
         self.scene.add(infinite_plane);
+        self.ground_obj_index = Some(ground_index);
+        self.infinite_plane_material_id = infinite_plane_mat_id;
+        self.sand_plane_material_id = sand_plane_mat_id;
 
         self.camera = Camera::new();
         self.step = 0.1;
@@ -291,6 +323,7 @@ pub struct WorldControls {
     pub sun_direction: [f32; 3],
     pub sun_intensity: f32,
     pub sun_color: [f32; 3],
+    pub use_sand_ground: bool,
 }
 
 impl Default for WorldControls {
@@ -336,6 +369,7 @@ impl Default for WorldControls {
             sun_direction: sdir,
             sun_intensity: 1.5,
             sun_color: [1.0, 1.0, 0.98],
+            use_sand_ground: false,
         }
     }
 }

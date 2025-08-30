@@ -7,6 +7,7 @@
 // GLSL 450
 // --------------------------------------------------------------------------------------
 #version 450
+// Keep in sync with Rust `MAX_LIGHTS`
 #define MAX_LIGHTS 8
 
 layout(push_constant) uniform Push { mat4 mvp; mat4 mv; } pc;
@@ -18,11 +19,18 @@ struct Light {
     float _pad;    // keep 16-byte stride
 };
 
+struct DirLight {
+    vec3 direction; // in view space
+    float intensity;
+    vec3 color;
+    float _pad1;
+};
+
 layout(set = 0, binding = 0) uniform GlobalUBO {
-    // Keep padding at the end: array is naturally 16-byte aligned in std140
-    Light lights[MAX_LIGHTS];
-    uint  light_count;
-    uvec3 _pad0;
+    DirLight sun;
+    Light    lights[MAX_LIGHTS];
+    uint     light_count;
+    uvec3    _pad0;
 } ubo;
 
 layout(set = 1, binding = 0) uniform sampler2D diffuseMap;
@@ -50,6 +58,13 @@ void main() {
     float shininess = 64.0;
     vec3 ambient = 0.1 * albedo;
     vec3 lighting = ambient;
+
+    // Directional light (view-space direction). L points from fragment toward light.
+    vec3 Ldir = normalize(TBN * (-ubo.sun.direction));
+    vec3 Hdir = normalize(Ldir + V);
+    float diff_dir = max(dot(normalTangent, Ldir), 0.0);
+    float spec_dir = pow(max(dot(normalTangent, Hdir), 0.0), shininess);
+    lighting += ubo.sun.intensity * ubo.sun.color * (diff_dir * albedo + spec_dir * vec3(1.0));
 
     for (uint i = 0; i < ubo.light_count; ++i) {
         // Light vector in view space and tangent space

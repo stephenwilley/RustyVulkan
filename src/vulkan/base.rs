@@ -1163,6 +1163,15 @@ pub struct GpuLight {
     pub _pad: f32, // pad to 16 bytes
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct GpuDirLight {
+    pub direction: [f32; 3],
+    pub intensity: f32, // keep std140 friendly packing
+    pub color: [f32; 3],
+    pub _pad: f32,
+}
+
 /// Global (per-frame/per-image) uniform buffer object shared across all pipelines via **descriptor set 0, binding 0**.
 /// There is **one buffer per swapchain image** so the CPU can update the UBO while another image is still in-flight.
 /// Keep fields 16-byte aligned for std140-like layouts. The order here must match the GLSL:
@@ -1170,7 +1179,8 @@ pub struct GpuLight {
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Default)]
 pub struct GlobalUbo {
-    pub lights: [GpuLight; crate::app::app::MAX_LIGHTS], // array of structs (std140: 16-byte aligned/strided)
-    pub light_count: u32,                                // scalar after array
+    pub dir_light: GpuDirLight,                          // single directional light (sun)
+    pub lights: [GpuLight; crate::app::app::MAX_LIGHTS], // array of point lights
+    pub light_count: u32,                                // number of active point lights
     pub _pad0: [u32; 3],                                 // pad to 16B multiple (std140)
 }

@@ -18,6 +18,7 @@ pub struct UiPass {
     attachments: [AttachmentRequest; 1],
     show_point_lights_window: bool,
     show_msaa_window: bool,
+    show_sun_window: bool,
 }
 
 impl UiPass {
@@ -27,6 +28,7 @@ impl UiPass {
             attachments: [AttachmentRequest::new(AttachmentKind::SwapchainColor)],
             show_point_lights_window: false,
             show_msaa_window: false,
+            show_sun_window: false,
         }
     }
 
@@ -57,6 +59,9 @@ impl RenderPass for UiPass {
                 if let Some(_world_menu) = ui.begin_menu("World Controls") {
                     if ui.menu_item("Point Lights") {
                         self.show_point_lights_window = true;
+                    }
+                    if ui.menu_item("Sun Light") {
+                        self.show_sun_window = true;
                     }
                     _world_menu.end();
                 }
@@ -109,6 +114,37 @@ impl RenderPass for UiPass {
                 });
             if !open {
                 self.show_point_lights_window = false;
+            }
+        }
+
+        if self.show_sun_window {
+            let mut open = true;
+            ui.window("Sun Light")
+                .opened(&mut open)
+                .always_auto_resize(true)
+                .build(|| {
+                    ui.text("Adjust directional sun light");
+                    ui.separator();
+
+                    // Direction sliders in [-1, 1], then normalize
+                    let mut dir = ctx.world_controls.sun_direction;
+                    ui.slider("Dir X", -1.0, 1.0, &mut dir[0]);
+                    ui.slider("Dir Y", -1.0, 1.0, &mut dir[1]);
+                    ui.slider("Dir Z", -1.0, 1.0, &mut dir[2]);
+
+                    // Normalize to keep it a unit vector
+                    let len = (dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]).sqrt();
+                    if len > 1e-6 {
+                        dir[0] /= len; dir[1] /= len; dir[2] /= len;
+                    }
+                    ctx.world_controls.sun_direction = dir;
+
+                    // Intensity and color
+                    ui.slider("Intensity", 0.0, 5.0, &mut ctx.world_controls.sun_intensity);
+                    ui.color_edit3("Color", &mut ctx.world_controls.sun_color);
+                });
+            if !open {
+                self.show_sun_window = false;
             }
         }
 

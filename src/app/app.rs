@@ -288,6 +288,9 @@ pub struct LightCtrl {
 pub struct WorldControls {
     pub lights: [LightCtrl; MAX_LIGHTS],
     pub light_count: usize,
+    pub sun_direction: [f32; 3],
+    pub sun_intensity: f32,
+    pub sun_color: [f32; 3],
 }
 
 impl Default for WorldControls {
@@ -301,7 +304,8 @@ impl Default for WorldControls {
         }
 
         let mut seed = 0xA17E_6C83; // arbitrary seed
-        let light_count = 4;
+        // Disable point lights for now (shadow mapping prep)
+        let light_count = 0;
 
         let lights = std::array::from_fn(|_i| {
             // X and Z in [-5, 5], Y fixed at 2.0
@@ -321,6 +325,17 @@ impl Default for WorldControls {
             }
         });
 
-        Self { lights, light_count }
+        // Reasonable default sun: slightly from above-left, white-ish
+        let mut sdir = [-0.5f32, -1.0, -0.3];
+        let len = (sdir[0]*sdir[0] + sdir[1]*sdir[1] + sdir[2]*sdir[2]).sqrt().max(1e-6);
+        sdir[0] /= len; sdir[1] /= len; sdir[2] /= len;
+
+        Self {
+            lights,
+            light_count,
+            sun_direction: sdir,
+            sun_intensity: 1.5,
+            sun_color: [1.0, 1.0, 0.98],
+        }
     }
 }

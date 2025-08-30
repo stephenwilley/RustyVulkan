@@ -7,6 +7,7 @@
 // GLSL 450
 // --------------------------------------------------------------------------------------
 #version 450
+// Keep in sync with Rust `MAX_LIGHTS`
 #define MAX_LIGHTS 8
 
 layout(push_constant) uniform Push { mat4 mvp; mat4 mv; } pc;
@@ -19,11 +20,18 @@ struct Light {
     float _pad;    // keep 16-byte stride
 };
 
+struct DirLight {
+    vec3 direction; // in view space
+    float intensity;
+    vec3 color;
+    float _pad1;
+};
+
 layout(set = 0, binding = 0) uniform GlobalUBO {
-    // Keep padding at the end: array is naturally 16-byte aligned in std140
-    Light lights[MAX_LIGHTS];
-    uint  light_count;
-    uvec3 _pad0;
+    DirLight sun;
+    Light    lights[MAX_LIGHTS];
+    uint     light_count;
+    uvec3    _pad0;
 } ubo;
 
 layout(location = 0) in vec3 inPos;

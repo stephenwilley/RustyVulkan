@@ -11,7 +11,7 @@
 use crate::app::app::{App, WorldControls, MAX_LIGHTS};
 use crate::app::scene::Scene;
 use crate::graphics::camera::Camera;
-use crate::vulkan::base::{GlobalUbo, GpuLight}; 
+use crate::vulkan::base::{GlobalUbo, GpuLight, GpuDirLight}; 
 use cgmath::{Matrix4, Vector4};
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::meshmanager::MeshManager;
@@ -118,6 +118,19 @@ impl RenderGraph {
         ubo.light_count = world.light_count.min(MAX_LIGHTS) as u32;
 
         let view: Matrix4<f32> = *camera.get_view();
+
+        // Fill directional light (transform direction to view space; w=0)
+        let d = world.sun_direction;
+        let dir_view4 = view * Vector4::new(d[0], d[1], d[2], 0.0);
+        let dv = dir_view4.truncate();
+        let len = (dv.x * dv.x + dv.y * dv.y + dv.z * dv.z).sqrt().max(1e-6);
+        let dir_norm = [dv.x / len, dv.y / len, dv.z / len];
+        ubo.dir_light = GpuDirLight {
+            direction: dir_norm,
+            intensity: world.sun_intensity,
+            color: world.sun_color,
+            _pad: 0.0,
+        };
 
         for i in 0..MAX_LIGHTS {
             if i < world.light_count {

@@ -877,7 +877,7 @@ impl VulkanBase {
     pub fn new(window: &Window, event_loop: &ActiveEventLoop) -> Result<Self, Box<dyn Error>> {
         let engine_settings = EngineSettings {
             wireframe: false,
-            show_ui: false,
+            show_ui: true, // UI enabled by default
             msaa_samples: 4,
         };
 

@@ -369,7 +369,7 @@ impl Default for WorldControls {
             sun_direction: sdir,
             sun_intensity: 1.5,
             sun_color: [1.0, 1.0, 0.98],
-            use_sand_ground: false,
+            use_sand_ground: true,
         }
     }
 }

@@ -17,7 +17,6 @@ use std::sync::atomic::Ordering;
 pub struct UiPass {
     attachments: [AttachmentRequest; 1],
     show_point_lights_window: bool,
-    show_msaa_window: bool,
     show_sun_window: bool,
     show_ground_window: bool,
 }
@@ -28,7 +27,6 @@ impl UiPass {
         Self {
             attachments: [AttachmentRequest::new(AttachmentKind::SwapchainColor)],
             show_point_lights_window: false,
-            show_msaa_window: false,
             show_sun_window: false,
             show_ground_window: false,
         }
@@ -72,8 +70,24 @@ impl RenderPass for UiPass {
                 }
 
                 if let Some(_engine_menu) = ui.begin_menu("Engine Settings") {
-                    if ui.menu_item("MSAA") {
-                        self.show_msaa_window = true;
+                    if let Some(_msaa_menu) = ui.begin_menu("MSAA") {
+                        let options = ctx.vulkan_base.supported_msaa_samples();
+                        let mut current = ctx.vulkan_base.get_msaa_samples() as i32;
+                        let prev = current;
+                        for (i, samples) in options.iter().enumerate() {
+                            if ui.radio_button(&format!("{}x", samples), &mut current, *samples as i32) {}
+                            if i + 1 != options.len() { ui.same_line(); }
+                        }
+                        ui.new_line();
+                        if current != prev {
+                            ctx.vulkan_base.request_msaa_samples(current as u32)
+                        }
+                        _msaa_menu.end();
+                    }
+                    // Checkable toggle: wireframe on/off
+                    let wireframe = ctx.vulkan_base.engine_settings.wireframe;
+                    if ui.menu_item_config("Wireframe").selected(wireframe).build() {
+                        ctx.vulkan_base.toggle_wireframe();
                     }
                     _engine_menu.end();
                 }
@@ -172,33 +186,9 @@ impl RenderPass for UiPass {
             }
         }
 
-        if self.show_msaa_window {
-            let mut open = true;
-            ui.window("Multisample Anti-Aliasing")
-                .opened(&mut open)
-                .always_auto_resize(true)
-                .build(|| {
-                    ui.text("Multisample Anti-Aliasing");
-                    ui.separator();
+        // MSAA controlled via Engine Settings submenu
 
-                    let options = ctx.vulkan_base.supported_msaa_samples();
-                    let mut current = ctx.vulkan_base.get_msaa_samples() as i32;
-                    let prev = current;
-
-                    for (i, samples) in options.iter().enumerate() {
-                        if ui.radio_button(&format!("{}x", samples), &mut current, *samples as i32) {}
-                        if i + 1 != options.len() { ui.same_line(); }
-                    }
-                    ui.new_line();
-
-                    if current != prev {
-                        ctx.vulkan_base.request_msaa_samples(current as u32)
-                    }
-                });
-            if !open {
-                self.show_msaa_window = false;
-            }
-        }
+        // (Wireframe uses checkable menu item; no pop-up window)
 
         ui_ctx.platform.prepare_render(&ui, ui_ctx.window);
         let draw_data = ui_ctx.imgui.render();

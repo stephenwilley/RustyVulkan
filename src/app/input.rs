@@ -125,15 +125,6 @@ pub fn handle_window_event(
                         (Code(KeyCode::KeyM), Released) => {
                             app.input.toggle_locked = false;
                         }
-                        (Code(KeyCode::KeyW), Pressed)
-                            if app.modifiers.control_key() && !app.input.toggle_locked =>
-                        {
-                            app.input.toggle_locked = true;
-                            if let Some(vb) = &mut app.vulkan_base {
-                                vb.toggle_wireframe();
-                                println!("🔲 Wireframe mode toggled");
-                            }
-                        }
                         (Code(KeyCode::KeyU), Pressed)
                             if !app.input.toggle_locked =>
                         {

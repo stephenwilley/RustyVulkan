@@ -86,6 +86,20 @@ impl RenderPass for UiPass {
                         }
                         _msaa_menu.end();
                     }
+                    if let Some(_shadow_menu) = ui.begin_menu("Shadow Map Resolution") {
+                        let mut cur_res = ctx.vulkan_base.engine_settings.shadow_map_resolution as i32;
+                        let prev = cur_res;
+                        let choices = [512, 1024, 2048, 4096];
+                        for (i, &opt) in choices.iter().enumerate() {
+                            if ui.radio_button(&format!("{}", opt), &mut cur_res, opt as i32) {}
+                            if i + 1 != choices.len() { ui.same_line(); }
+                        }
+                        ui.new_line();
+                        if cur_res != prev {
+                            ctx.vulkan_base.engine_settings.shadow_map_resolution = cur_res as u32;
+                        }
+                        _shadow_menu.end();
+                    }
                     // Checkable toggle: wireframe on/off
                     let wireframe = ctx.vulkan_base.engine_settings.wireframe;
                     if ui.menu_item_config("Wireframe").selected(wireframe).build() {

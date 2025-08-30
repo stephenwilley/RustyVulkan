@@ -901,6 +901,7 @@ impl VulkanBase {
             wireframe: false,
             show_ui: true, // UI enabled by default
             msaa_samples: 4,
+            shadow_map_resolution: 1024,
         };
 
         let entry = Entry::linked();
@@ -1199,6 +1200,7 @@ pub struct EngineSettings {
     pub wireframe: bool,
     pub show_ui: bool,
     pub msaa_samples: u32,
+    pub shadow_map_resolution: u32,
 }
 
 #[repr(C)]

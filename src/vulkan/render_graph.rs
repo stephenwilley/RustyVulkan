@@ -274,6 +274,15 @@ impl RenderGraph {
                     depth_req.samples = vk::SampleCountFlags::TYPE_1; // single-sampled
                     vb.get_attachment(depth_req)
                 }
+                AttachmentKind::Shadow => {
+                    // Apply current engine setting for shadow map resolution
+                    let res = vb.engine_settings.shadow_map_resolution;
+                    let mut shadow_req = *req;
+                    shadow_req.format = vk::Format::D32_SFLOAT;
+                    shadow_req.extent = vk::Extent2D { width: res, height: res };
+                    shadow_req.samples = vk::SampleCountFlags::TYPE_1;
+                    vb.get_attachment(shadow_req)
+                }
                 _ => vb.get_attachment(*req),
             };
             attachment_handles.insert(req.kind, handle);

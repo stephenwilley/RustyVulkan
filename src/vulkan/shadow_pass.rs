@@ -27,7 +27,7 @@ pub struct ShadowPass {
 
 impl ShadowPass {
     pub fn new() -> Self {
-        // Fixed-size 1024² depth texture for the shadow map to start simple.
+        // Default request; actual size is overridden by the render graph from engine settings.
         let req = AttachmentRequest {
             kind: AttachmentKind::Shadow,
             format: vk::Format::D32_SFLOAT,
@@ -40,102 +40,8 @@ impl ShadowPass {
             pipeline: vk::Pipeline::null(),
         }
     }
-}
 
-impl RenderPass for ShadowPass {
-    fn execute(&mut self, ctx: &mut RenderCtx) -> Result<(), Box<dyn std::error::Error>> {
-        // Acquire the per-frame shadow attachment and set up depth-only rendering.
-        let cmd = ctx.frame.cmd_buf;
-
-        // Lazy-create depth-only pipeline
-        if self.pipeline == vk::Pipeline::null() {
-            self.create_pipeline(&ctx.vulkan_base.device)?;
-        }
-
-        let device = &ctx.vulkan_base.device;
-
-        let shadow_att = ctx.attachments[&AttachmentKind::Shadow];
-
-        // Clear to far (1.0) so empty map yields no shadowing later.
-        let clear_depth = vk::ClearValue {
-            depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
-        };
-
-        let depth_attachment_info = vk::RenderingAttachmentInfo::default()
-            .image_view(shadow_att.view)
-            .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::STORE)
-            .clear_value(clear_depth);
-
-        let rendering_info = vk::RenderingInfo::default()
-            .render_area(vk::Rect2D {
-                offset: vk::Offset2D { x: 0, y: 0 },
-                extent: vk::Extent2D { width: 1024, height: 1024 },
-            })
-            .layer_count(1)
-            .depth_attachment(&depth_attachment_info);
-
-        unsafe {
-            device.cmd_begin_rendering(cmd, &rendering_info);
-            // Bind pipeline
-            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
-
-            // Draw all scene meshes with light MVP push constants
-            let light_vp = self.compute_light_vp(ctx);
-            for obj in &ctx.scene.objects {
-                // Build model matrix and push [mvp, mv_unused]
-                let model = obj.transform.model_matrix();
-                let mvp = light_vp * model;
-                let mv_unused = Matrix4::<f32>::identity();
-                let push = Self::flatten_two_mat4(mvp, mv_unused);
-                device.cmd_push_constants(
-                    cmd,
-                    self.pipeline_layout,
-                    vk::ShaderStageFlags::VERTEX,
-                    0,
-                    &push,
-                );
-
-                ctx.mesh_manager.meshes[obj.mesh_id].record(device, cmd);
-            }
-            device.cmd_end_rendering(cmd);
-        }
-
-        Ok(())
-    }
-
-    fn attachments(&self) -> &[AttachmentRequest] {
-        &self.attachments
-    }
-
-    fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags) {
-        match kind {
-            AttachmentKind::Shadow => (
-                vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-            ),
-            _ => (vk::ImageLayout::UNDEFINED, vk::AccessFlags::empty()),
-        }
-    }
-
-    fn cleanup(&mut self, device: &ash::Device) {
-        unsafe {
-            if self.pipeline != vk::Pipeline::null() {
-                device.destroy_pipeline(self.pipeline, None);
-                self.pipeline = vk::Pipeline::null();
-            }
-            if self.pipeline_layout != vk::PipelineLayout::null() {
-                device.destroy_pipeline_layout(self.pipeline_layout, None);
-                self.pipeline_layout = vk::PipelineLayout::null();
-            }
-        }
-    }
-}
-
-impl ShadowPass {
     fn create_pipeline(&mut self, device: &ash::Device) -> Result<(), Box<dyn std::error::Error>> {
-
         // Push constants: two mat4 (mvp, mv)
         let push_range = vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::VERTEX,
@@ -174,14 +80,14 @@ impl ShadowPass {
             ..Default::default()
         };
 
-        // Fixed viewport/scissor for 1024x1024
-        let viewport = vk::Viewport { x: 0.0, y: 0.0, width: 1024.0, height: 1024.0, min_depth: 0.0, max_depth: 1.0 };
-        let scissor = vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent: vk::Extent2D { width: 1024, height: 1024 } };
+        // Viewport/scissor are dynamic; provide dummy state here
+        let dummy_viewport = vk::Viewport { x: 0.0, y: 0.0, width: 1.0, height: 1.0, min_depth: 0.0, max_depth: 1.0 };
+        let dummy_scissor = vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent: vk::Extent2D { width: 1, height: 1 } };
         let viewport_state = vk::PipelineViewportStateCreateInfo {
             viewport_count: 1,
-            p_viewports: &viewport,
+            p_viewports: &dummy_viewport,
             scissor_count: 1,
-            p_scissors: &scissor,
+            p_scissors: &dummy_scissor,
             ..Default::default()
         };
 
@@ -224,6 +130,14 @@ impl ShadowPass {
             ..Default::default()
         };
 
+        // Enable dynamic viewport and scissor states
+        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dynamic_state = vk::PipelineDynamicStateCreateInfo {
+            dynamic_state_count: dynamic_states.len() as u32,
+            p_dynamic_states: dynamic_states.as_ptr(),
+            ..Default::default()
+        };
+
         let mut pipeline_info = vk::GraphicsPipelineCreateInfo {
             stage_count: stages.len() as u32,
             p_stages: stages.as_ptr(),
@@ -233,6 +147,7 @@ impl ShadowPass {
             p_rasterization_state: &rasterizer,
             p_multisample_state: &multisampling,
             p_depth_stencil_state: &depth_stencil,
+            p_dynamic_state: &dynamic_state,
             layout: self.pipeline_layout,
             render_pass: vk::RenderPass::null(),
             subpass: 0,
@@ -290,5 +205,103 @@ impl ShadowPass {
         push(a);
         push(b);
         bytes
+    }
+}
+
+impl RenderPass for ShadowPass {
+    fn execute(&mut self, ctx: &mut RenderCtx) -> Result<(), Box<dyn std::error::Error>> {
+        // Acquire the per-frame shadow attachment and set up depth-only rendering.
+        let cmd = ctx.frame.cmd_buf;
+
+        // Lazy-create depth-only pipeline
+        if self.pipeline == vk::Pipeline::null() {
+            self.create_pipeline(&ctx.vulkan_base.device)?;
+        }
+
+        let device = &ctx.vulkan_base.device;
+
+        let shadow_att = ctx.attachments[&AttachmentKind::Shadow];
+        let res = ctx.vulkan_base.engine_settings.shadow_map_resolution;
+
+        // Clear to far (1.0) so empty map yields no shadowing later.
+        let clear_depth = vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
+        };
+
+        let depth_attachment_info = vk::RenderingAttachmentInfo::default()
+            .image_view(shadow_att.view)
+            .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(clear_depth);
+
+        let rendering_info = vk::RenderingInfo::default()
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D { width: res, height: res },
+            })
+            .layer_count(1)
+            .depth_attachment(&depth_attachment_info);
+
+        unsafe {
+            device.cmd_begin_rendering(cmd, &rendering_info);
+            // Bind pipeline
+            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+
+            // Dynamic viewport/scissor to match current resolution
+            let viewport = vk::Viewport { x: 0.0, y: 0.0, width: res as f32, height: res as f32, min_depth: 0.0, max_depth: 1.0 };
+            let scissor = vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent: vk::Extent2D { width: res, height: res } };
+            device.cmd_set_viewport(cmd, 0, &[viewport]);
+            device.cmd_set_scissor(cmd, 0, &[scissor]);
+
+            // Draw all scene meshes with light MVP push constants
+            let light_vp = self.compute_light_vp(ctx);
+            for obj in &ctx.scene.objects {
+                // Build model matrix and push [mvp, mv_unused]
+                let model = obj.transform.model_matrix();
+                let mvp = light_vp * model;
+                let mv_unused = Matrix4::<f32>::identity();
+                let push = Self::flatten_two_mat4(mvp, mv_unused);
+                device.cmd_push_constants(
+                    cmd,
+                    self.pipeline_layout,
+                    vk::ShaderStageFlags::VERTEX,
+                    0,
+                    &push,
+                );
+
+                ctx.mesh_manager.meshes[obj.mesh_id].record(device, cmd);
+            }
+            device.cmd_end_rendering(cmd);
+        }
+
+        Ok(())
+    }
+
+    fn attachments(&self) -> &[AttachmentRequest] {
+        &self.attachments
+    }
+
+    fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags) {
+        match kind {
+            AttachmentKind::Shadow => (
+                vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            ),
+            _ => (vk::ImageLayout::UNDEFINED, vk::AccessFlags::empty()),
+        }
+    }
+
+    fn cleanup(&mut self, device: &ash::Device) {
+        unsafe {
+            if self.pipeline != vk::Pipeline::null() {
+                device.destroy_pipeline(self.pipeline, None);
+                self.pipeline = vk::Pipeline::null();
+            }
+            if self.pipeline_layout != vk::PipelineLayout::null() {
+                device.destroy_pipeline_layout(self.pipeline_layout, None);
+                self.pipeline_layout = vk::PipelineLayout::null();
+            }
+        }
     }
 }

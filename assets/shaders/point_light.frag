@@ -63,11 +63,21 @@ float shadow_factor(vec3 fragPosView) {
         return 1.0;
     }
 
-    // Small receiver bias to reduce acne (keep tiny; raster bias handles most)
+    // Small receiver bias to reduce acne (raster depth bias handles most)
     float bias = 0.0005;
-    float shadowMapDepth = texture(shadowMap, uv).r;
-    // If our depth is greater than stored (plus bias), we are in shadow
-    return depth - bias <= shadowMapDepth ? 1.0 : 0.0; // rely on scene ambient instead of extra term
+
+    // Percentage-Closer Filtering (3x3)
+    ivec2 texSize = textureSize(shadowMap, 0);
+    vec2 texel = 1.0 / vec2(texSize);
+    float sum = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            vec2 uvOffset = uv + vec2(x, y) * texel;
+            float sm = texture(shadowMap, uvOffset).r;
+            sum += (depth - bias <= sm) ? 1.0 : 0.0;
+        }
+    }
+    return sum / 9.0;
 }
 
 void main() {

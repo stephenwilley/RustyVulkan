@@ -16,7 +16,7 @@ use cgmath::{Matrix4, prelude::*};
 
 /// Main rendering pass that draws all scene objects
 pub struct MainPass {
-    attachments: [AttachmentRequest; 4],
+    attachments: [AttachmentRequest; 5],
 }
 
 impl MainPass {
@@ -27,6 +27,8 @@ impl MainPass {
             AttachmentRequest::new(AttachmentKind::MsaaDepth),
             AttachmentRequest::new(AttachmentKind::SwapchainColor),
             AttachmentRequest::new(AttachmentKind::Depth),
+            // Read-only shadow map so the graph can manage transitions
+            AttachmentRequest::new(AttachmentKind::Shadow),
         ];
         Self { attachments }
     }
@@ -172,6 +174,10 @@ impl RenderPass for MainPass {
             AttachmentKind::MsaaDepth | AttachmentKind::Depth => (
                 vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                 vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            ),
+            AttachmentKind::Shadow => (
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                vk::AccessFlags::SHADER_READ,
             ),
             _ => (
                 vk::ImageLayout::UNDEFINED,

@@ -12,5 +12,8 @@ layout(location = 0) in vec2 frag_uv;
 layout(location = 1) in vec4 frag_color;
 layout(location = 0) out vec4 out_color;
 void main() {
-    out_color = frag_color * texture(Texture, frag_uv);
+    vec4 tex = texture(Texture, frag_uv);
+    // Replicate red channel to RGB so single-channel textures (e.g., depth) show as grayscale
+    vec4 gray = vec4(tex.rrr, tex.a);
+    out_color = frag_color * gray;
 }

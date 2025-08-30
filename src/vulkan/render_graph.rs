@@ -12,12 +12,15 @@ use crate::app::app::{App, WorldControls, MAX_LIGHTS};
 use crate::app::scene::Scene;
 use crate::graphics::camera::Camera;
 use crate::vulkan::base::{GlobalUbo, GpuLight, GpuDirLight}; 
-use cgmath::{Matrix4, Vector4};
+use cgmath::{Matrix4, Vector4, Vector3, Point3};
+use cgmath::{InnerSpace, SquareMatrix};
+use cgmath::ortho;
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::meshmanager::MeshManager;
 use crate::vulkan::attachments::{AttachmentHandle, AttachmentKind, AttachmentRequest};
 use crate::vulkan::base::{FrameCtx, ImageTransition, VulkanBase};
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
+use crate::vulkan::shadow_pass::ShadowPass;
 use crate::vulkan::main_pass::MainPass;
 use crate::vulkan::ui_pass::UiPass;
 use ash::vk;
@@ -94,6 +97,10 @@ pub trait RenderPass {
 
     /// Provides the graph with the required layout and access mask for a given attachment.
     fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags);
+
+    /// Optional cleanup hook for passes that own GPU objects (pipelines, layouts, etc.).
+    /// Default is no-op.
+    fn cleanup(&mut self, _device: &ash::Device) {}
 }
 
 /// Simple render graph that executes a linear sequence of render passes and
@@ -153,6 +160,45 @@ impl RenderGraph {
                 };
             }
         }
+
+        // --- Compute simple directional-light view-projection (orthographic) ---
+        // For now, cover a fixed box around the origin; we will refine later.
+        let dir_world = Vector3::new(world.sun_direction[0], world.sun_direction[1], world.sun_direction[2]);
+        let dir_len = dir_world.magnitude().max(1e-6);
+        let dir = dir_world / dir_len;
+
+        // Place the light some distance along -direction looking toward origin
+        let center = Point3::new(0.0, 0.0, 0.0);
+        let eye = Point3::new(
+            center.x - dir.x * 10.0,
+            center.y - dir.y * 10.0,
+            center.z - dir.z * 10.0,
+        );
+        let up = Vector3::new(0.0, 1.0, 0.0);
+        let light_view = Matrix4::look_at_rh(eye, center, up);
+        // Simple ortho box; we will make this camera/scene-aware later.
+        let light_proj_gl = ortho(-10.0, 10.0, -10.0, 10.0, 0.1, 50.0);
+        // Vulkan depth correction: map GL NDC z [-1,1] to Vulkan [0,1]
+        let zcorr = Matrix4::from_cols(
+            cgmath::Vector4::new(1.0, 0.0, 0.0, 0.0),
+            cgmath::Vector4::new(0.0, 1.0, 0.0, 0.0),
+            cgmath::Vector4::new(0.0, 0.0, 0.5, 0.0),
+            cgmath::Vector4::new(0.0, 0.0, 0.5, 1.0),
+        );
+        let light_proj = zcorr * light_proj_gl;
+        // Compose a transform from VIEW space to LIGHT CLIP space so the shader can use vFragPosView directly.
+        // light_vp_view = light_proj_vk * light_view * inverse(view)
+        let inv_view = view.invert().unwrap_or(Matrix4::identity());
+        let light_vp = light_proj * light_view * inv_view;
+
+        // Store as column-major [[f32;4];4] matching GLSL/std140 default (Matrix4 fields are columns)
+        let m = light_vp; // no transpose
+        ubo.light_vp = [
+            [m.x.x, m.x.y, m.x.z, m.x.w],
+            [m.y.x, m.y.y, m.y.z, m.y.w],
+            [m.z.x, m.z.y, m.z.z, m.z.w],
+            [m.w.x, m.w.y, m.w.z, m.w.w],
+        ];
 
         ubo
     }
@@ -240,6 +286,11 @@ impl RenderGraph {
                     stage: vk::PipelineStageFlags::TOP_OF_PIPE,
                 },
             );
+        }
+
+        // If a shadow attachment exists in this frame, update set=0 binding=1 to reference it
+        if let Some(shadow_handle) = attachment_handles.get(&AttachmentKind::Shadow) {
+            vb.update_shadow_descriptor(image_index, shadow_handle.view);
         }
 
         // --- 3. Execute passes with transitions ---
@@ -333,7 +384,7 @@ impl RenderGraph {
     pub fn add(&mut self, render_pass: RenderPassNode) {
         let pass: Box<dyn RenderPass> = match render_pass {
             RenderPassNode::Main => Box::new(MainPass::new()),
-            RenderPassNode::Shadow => unimplemented!(),
+            RenderPassNode::Shadow => Box::new(ShadowPass::new()),
             RenderPassNode::UI => Box::new(UiPass::new()),
         };
         let new_key = pass_order(render_pass);
@@ -353,6 +404,13 @@ impl RenderGraph {
             }
         } else {
             self.render_passes.retain(|(n, _)| *n != node);
+        }
+    }
+
+    /// Explicitly clean up GPU resources owned by passes. Call before destroying the device.
+    pub fn cleanup(&mut self, device: &ash::Device) {
+        for (_node, pass) in &mut self.render_passes {
+            pass.cleanup(device);
         }
     }
 }

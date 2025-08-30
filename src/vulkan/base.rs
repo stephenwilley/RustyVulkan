@@ -101,6 +101,8 @@ pub struct VulkanBase {
     ubo_buffers: Vec<vk::Buffer>,
     /// Allocations backing each per-image UBO buffer.
     pub ubo_allocations: Vec<Allocation>,
+    /// Sampler for the directional shadow map (set=0, binding=1)
+    pub shadow_sampler: vk::Sampler,
     // -- Synchronization objects --
     image_available_semaphores: Vec<vk::Semaphore>,
     render_finished_semaphores: Vec<vk::Semaphore>,
@@ -359,6 +361,26 @@ impl VulkanBase {
             );
             self.allocator.as_ref().unwrap().unmap_memory(allocation);
         }
+    }
+
+    /// Update set=0 binding=1 to point at the current frame's shadow image view
+    pub fn update_shadow_descriptor(&self, image_index: usize, image_view: vk::ImageView) {
+        let set = self.set0_descriptor_sets[image_index];
+        let image_info = vk::DescriptorImageInfo {
+            sampler: self.shadow_sampler,
+            image_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        };
+        let write = vk::WriteDescriptorSet {
+            dst_set: set,
+            dst_binding: 1,
+            dst_array_element: 0,
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            p_image_info: &image_info,
+            ..Default::default()
+        };
+        unsafe { self.device.update_descriptor_sets(&[write], &[]) };
     }
 
     /// Apply any queued surface-dependent changes (like MSAA) at a frame boundary.
@@ -676,11 +698,11 @@ impl VulkanBase {
     ) -> (vk::DescriptorPool, Vec<vk::DescriptorSet>) {
         let count = ubo_buffers.len() as u32;
 
-        // Pool
-        let pool_sizes = [vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::UNIFORM_BUFFER,
-            descriptor_count: count,
-        }];
+        // Pool: one UBO and one sampler per set
+        let pool_sizes = [
+            vk::DescriptorPoolSize { ty: vk::DescriptorType::UNIFORM_BUFFER, descriptor_count: count },
+            vk::DescriptorPoolSize { ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER, descriptor_count: count },
+        ];
         let pool_info = vk::DescriptorPoolCreateInfo {
             pool_size_count: pool_sizes.len() as u32,
             p_pool_sizes: pool_sizes.as_ptr(),
@@ -950,7 +972,7 @@ impl VulkanBase {
         allocator_info.flags |= vk_mem::AllocatorCreateFlags::EXT_MEMORY_BUDGET;
         let allocator = unsafe { Allocator::new(allocator_info)? };
 
-        // --- Global set-0 layout: reserve binding 0 for a per-frame/per-image UBO ---
+        // --- Global set-0 layout: binding 0 = UBO, binding 1 = shadow map sampler ---
         let ubo_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
             descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
@@ -959,13 +981,22 @@ impl VulkanBase {
             p_immutable_samplers: std::ptr::null(),
             ..Default::default()
         };
+        let shadow_binding = vk::DescriptorSetLayoutBinding {
+            binding: 1,
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+            p_immutable_samplers: std::ptr::null(),
+            ..Default::default()
+        };
+        let bindings = [ubo_binding, shadow_binding];
         let set0_info = vk::DescriptorSetLayoutCreateInfo {
-            binding_count: 1,
-            p_bindings: &ubo_binding,
+            binding_count: bindings.len() as u32,
+            p_bindings: bindings.as_ptr(),
             ..Default::default()
         };
         let set0_global_layout = unsafe { device.create_descriptor_set_layout(&set0_info, None)? };
-        println!("🔧 Created global set=0 layout (binding 0 = UBO)");
+        println!("🔧 Created global set=0 layout (binding 0 = UBO, binding 1 = shadow)");
 
         let swapchain = Swapchain::new(
             &instance,
@@ -984,6 +1015,20 @@ impl VulkanBase {
         let (ubo_buffers, ubo_allocations) = Self::create_uniform_buffers(&allocator, image_count);
         let (set0_descriptor_pool, set0_descriptor_sets) =
             Self::create_set0_descriptor_pool_and_sets(&device, set0_global_layout, &ubo_buffers);
+
+        // Create a simple shadow sampler (no compare yet)
+        let sampler_info = vk::SamplerCreateInfo {
+            mag_filter: vk::Filter::LINEAR,
+            min_filter: vk::Filter::LINEAR,
+            address_mode_u: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+            address_mode_v: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+            address_mode_w: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+            border_color: vk::BorderColor::FLOAT_OPAQUE_WHITE,
+            unnormalized_coordinates: vk::FALSE,
+            compare_enable: vk::FALSE,
+            ..Default::default()
+        };
+        let shadow_sampler = unsafe { device.create_sampler(&sampler_info, None)? };
         let mut image_available_semaphores = Vec::with_capacity(INFLIGHT_FRAMES);
         let mut in_flight_fences = Vec::with_capacity(INFLIGHT_FRAMES);
         let semaphore_info = vk::SemaphoreCreateInfo::default();
@@ -1029,6 +1074,7 @@ impl VulkanBase {
             set0_descriptor_sets,
             ubo_buffers,
             ubo_allocations,
+            shadow_sampler,
             // sync
             image_available_semaphores,
             render_finished_semaphores,
@@ -1124,6 +1170,7 @@ impl Drop for VulkanBase {
             }
             self.device
                 .destroy_descriptor_pool(self.set0_descriptor_pool, None);
+            self.device.destroy_sampler(self.shadow_sampler, None);
             self.device.destroy_command_pool(self.command_pool, None);
             // 👉 ensure VMA frees its VkDeviceMemory blocks before we destroy the device
             if let Some(alloc) = self.allocator.take() {
@@ -1179,7 +1226,10 @@ pub struct GpuDirLight {
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Default)]
 pub struct GlobalUbo {
+    // Directional light + shadow matrix first for clarity
     pub dir_light: GpuDirLight,                          // single directional light (sun)
+    pub light_vp: [[f32; 4]; 4],                         // light view-projection (column-major)
+    // Then the array of point lights (std140 array of structs)
     pub lights: [GpuLight; crate::app::app::MAX_LIGHTS], // array of point lights
     pub light_count: u32,                                // number of active point lights
     pub _pad0: [u32; 3],                                 // pad to 16B multiple (std140)

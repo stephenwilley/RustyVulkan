@@ -15,3 +15,4 @@ pub mod render_graph;
 pub mod main_pass;
 pub mod ui_pass;
 pub mod attachments;
+pub mod shadow_pass;

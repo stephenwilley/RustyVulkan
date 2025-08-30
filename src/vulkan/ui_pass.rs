@@ -19,6 +19,7 @@ pub struct UiPass {
     show_point_lights_window: bool,
     show_sun_window: bool,
     show_ground_window: bool,
+    show_shadow_map_window: bool,
 }
 
 impl UiPass {
@@ -29,6 +30,7 @@ impl UiPass {
             show_point_lights_window: false,
             show_sun_window: false,
             show_ground_window: false,
+            show_shadow_map_window: false,
         }
     }
 
@@ -89,6 +91,9 @@ impl RenderPass for UiPass {
                     if ui.menu_item_config("Wireframe").selected(wireframe).build() {
                         ctx.vulkan_base.toggle_wireframe();
                     }
+                    if ui.menu_item("Show Shadow Map") {
+                        self.show_shadow_map_window = true;
+                    }
                     _engine_menu.end();
                 }
 
@@ -101,6 +106,40 @@ impl RenderPass for UiPass {
 
                 _menu_bar.end();
             }
+        }
+
+        // Shadow Map debug window
+        if self.show_shadow_map_window {
+            // Prepare/refresh the texture ID outside the closure to avoid borrowing issues
+            let shadow_tex_id_opt: Option<imgui::TextureId> = ctx
+                .attachments
+                .get(&AttachmentKind::Shadow)
+                .map(|handle| {
+                    let id = ui_ctx.renderer.ensure_texture(
+                        ctx.vulkan_base,
+                        ctx.vulkan_base.shadow_sampler,
+                        handle.view,
+                        ui_ctx.renderer.shadow_tex_id,
+                    );
+                    ui_ctx.renderer.shadow_tex_id = Some(id);
+                    id
+                });
+
+            let mut open = true;
+            ui.window("Shadow Map")
+                .opened(&mut open)
+                .always_auto_resize(true)
+                .build(|| {
+                    if let Some(tex_id) = shadow_tex_id_opt {
+                        imgui::Image::new(tex_id, [256.0, 256.0])
+                            .uv0([0.0, 1.0])
+                            .uv1([1.0, 0.0])
+                            .build(&ui);
+                    } else {
+                        ui.text("Shadow attachment not available");
+                    }
+                });
+            if !open { self.show_shadow_map_window = false; }
         }
 
         if self.show_point_lights_window {

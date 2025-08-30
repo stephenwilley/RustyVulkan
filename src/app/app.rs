@@ -259,6 +259,7 @@ impl ApplicationHandler for App {
 
         self.set_up_scene();
 
+        self.render_graph.add(RenderPassNode::Shadow);
         self.render_graph.add(RenderPassNode::Main);
         let show = self.vulkan_base.as_ref().unwrap().engine_settings.show_ui;
         self.render_graph.set_pass_enabled(RenderPassNode::UI, show);
@@ -295,6 +296,9 @@ impl Drop for App {
             unsafe {
                 let _ = vb.device.device_wait_idle();
             }
+
+            // Ensure render passes free their GPU objects before the device is destroyed
+            self.render_graph.cleanup(&vb.device);
 
             self.material_manager.cleanup(&vb.device, vb.allocator.as_ref().unwrap());
             self.mesh_manager.cleanup(vb.allocator.as_ref().unwrap());

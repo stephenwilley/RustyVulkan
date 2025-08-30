@@ -52,6 +52,10 @@ pub struct ImGuiRenderer {
     device:                ash::Device,
     vert_stage:            Option<ShaderStageInfo>,
     frag_stage:            Option<ShaderStageInfo>,
+    // Extra textures support (for Image widgets):
+    texture_pool:         vk::DescriptorPool,
+    textures:             Vec<vk::DescriptorSet>,
+    pub shadow_tex_id:        Option<imgui::TextureId>,
 }
 
 impl ImGuiRenderer {
@@ -340,15 +344,15 @@ impl ImGuiRenderer {
     /// * `base` - The VulkanBase instance.
     /// # Returns
     /// * `vk::DescriptorPool` - The created descriptor pool.
-    fn create_imgui_descriptor_pool(base: &VulkanBase) -> vk::DescriptorPool {
+    fn create_imgui_descriptor_pool(base: &VulkanBase, max_sets: u32) -> vk::DescriptorPool {
         let pool_sizes = [vk::DescriptorPoolSize {
             ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: 1,
+            descriptor_count: max_sets,
         }];
         let pool_info = vk::DescriptorPoolCreateInfo {
             pool_size_count: pool_sizes.len() as u32,
             p_pool_sizes: pool_sizes.as_ptr(),
-            max_sets: 1,
+            max_sets,
             ..Default::default()
         };
         unsafe { base.device.create_descriptor_pool(&pool_info, None).unwrap() }
@@ -400,11 +404,48 @@ impl ImGuiRenderer {
     fn init_imgui_descriptor_resources(&mut self, base: &VulkanBase) {
         // Layout
         self.descriptor_set_layout = Self::create_imgui_descriptor_set_layout(base);
-        // Pool
-        self.descriptor_pool = Self::create_imgui_descriptor_pool(base);
+        // Pool (font set)
+        self.descriptor_pool = Self::create_imgui_descriptor_pool(base, 1);
+        // Separate pool for user textures (keep simple for now)
+        self.texture_pool = Self::create_imgui_descriptor_pool(base, 8);
         // Allocate
         self.descriptor_set = self.allocate_imgui_descriptor_set(base);
         // The write to bind image+sampler will happen later when fonts are uploaded
+        self.textures = Vec::new();
+        self.shadow_tex_id = None;
+    }
+
+    /// Register or update a texture descriptor for displaying images in ImGui.
+    /// Returns a stable TextureId that can be used with ui.image(...).
+    pub fn ensure_texture(&mut self, base: &VulkanBase, sampler: vk::Sampler, view: vk::ImageView, existing: Option<imgui::TextureId>) -> imgui::TextureId {
+        let device = &base.device;
+        if let Some(id) = existing {
+            let idx = (id.id() - 1) as usize;
+            if let Some(&set) = self.textures.get(idx) {
+                let info = vk::DescriptorImageInfo { sampler, image_view: view, image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL };
+                let write = vk::WriteDescriptorSet {
+                    dst_set: set,
+                    dst_binding: 0,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    p_image_info: &info,
+                    ..Default::default()
+                };
+                unsafe { device.update_descriptor_sets(&[write], &[]) };
+                return id;
+            }
+        }
+        // Allocate new set
+        let layouts = [self.descriptor_set_layout];
+        let alloc_info = vk::DescriptorSetAllocateInfo { descriptor_pool: self.texture_pool, descriptor_set_count: 1, p_set_layouts: layouts.as_ptr(), ..Default::default() };
+        let set = unsafe { device.allocate_descriptor_sets(&alloc_info).unwrap()[0] };
+        let info = vk::DescriptorImageInfo { sampler, image_view: view, image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL };
+        let write = vk::WriteDescriptorSet { dst_set: set, dst_binding: 0, dst_array_element: 0, descriptor_count: 1, descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER, p_image_info: &info, ..Default::default() };
+        unsafe { device.update_descriptor_sets(&[write], &[]) };
+        self.textures.push(set);
+        // Reserve ID space: 1..=textures.len(), where 0 is font
+        imgui::TextureId::new(self.textures.len() as usize)
     }
 
     // ----------------------------------------------------------
@@ -803,6 +844,9 @@ impl ImGuiRenderer {
             device,
             vert_stage: None,
             frag_stage: None,
+            texture_pool: vk::DescriptorPool::null(),
+            textures: Vec::new(),
+            shadow_tex_id: None,
         };
 
         // 8) Initialize descriptor layout, pool, and set for ImGui
@@ -855,6 +899,9 @@ impl ImGuiRenderer {
             }
 
             // Descriptor resources and pipeline
+            if self.texture_pool != vk::DescriptorPool::null() {
+                self.device.destroy_descriptor_pool(self.texture_pool, None);
+            }
             self.device.destroy_descriptor_pool(self.descriptor_pool, None);
             self.device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             if self.vk_pipeline != vk::Pipeline::null() {
@@ -910,14 +957,6 @@ impl ImGuiRenderer {
                 vk::PipelineBindPoint::GRAPHICS,
                 self.vk_pipeline,
             );
-            device.cmd_bind_descriptor_sets(
-                cmd_buf,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.pipeline_layout,
-                0,
-                &[self.descriptor_set],
-                &[],
-            );
         }
         // Set dynamic viewport for UI
         let viewport = vk::Viewport {
@@ -957,9 +996,19 @@ impl ImGuiRenderer {
         unsafe {
             let mut vertex_offset: i32 = 0;
             let mut index_offset: u32 = 0;
+            let mut bound_set: vk::DescriptorSet = self.descriptor_set;
+            // Bind the default font set initially
+            device.cmd_bind_descriptor_sets(cmd_buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline_layout, 0, &[bound_set], &[]);
             for draw_list in draw_data.draw_lists() {
                 for cmd in draw_list.commands() {
                     if let imgui::DrawCmd::Elements { count, cmd_params } = cmd {
+                        // Switch texture if needed
+                        let tex_id = cmd_params.texture_id.id();
+                        let desired_set = if tex_id == 0 { self.descriptor_set } else { self.textures.get(tex_id - 1).copied().unwrap_or(self.descriptor_set) };
+                        if desired_set != bound_set {
+                            device.cmd_bind_descriptor_sets(cmd_buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline_layout, 0, &[desired_set], &[]);
+                            bound_set = desired_set;
+                        }
                         // Set scissor rectangle from ImGui clip rect
                         let clip = cmd_params.clip_rect;
                         // Convert logical clip rect to physical pixels

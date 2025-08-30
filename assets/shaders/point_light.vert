@@ -27,11 +27,11 @@ struct DirLight {
     float _pad1;
 };
 
-layout(set = 0, binding = 0) uniform GlobalUBO {
-    DirLight sun;
-    Light    lights[MAX_LIGHTS];
-    uint     light_count;
-    uvec3    _pad0;
+layout(std140, set = 0, binding = 0) uniform GlobalUBO {
+    DirLight sun;                                  // directional light first
+    mat4     light_vp;                             // light VP
+    Light    lights[MAX_LIGHTS];                   // array of point lights
+    uint     light_count; uvec3 _pad0;             // count + pad
 } ubo;
 
 layout(location = 0) in vec3 inPos;

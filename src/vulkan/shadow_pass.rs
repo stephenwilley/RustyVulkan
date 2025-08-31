@@ -12,13 +12,14 @@
 //! --------------------------------------------------------------------------------------
 
 use crate::graphics::mesh::Vertex;
+use crate::graphics::shadow_math::compute_tight_light_mats;
 use crate::graphics::shaders::{ShaderModule, ShaderStageInfo};
 use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use ash::vk;
-use cgmath::Matrix4;
-use cgmath::InnerSpace;
+use cgmath::{Matrix4, Matrix};
 
+/// Depth-only pass that renders from the sun’s point of view into a shadow map.
 pub struct ShadowPass {
     attachments: [AttachmentRequest; 1],
     pipeline_layout: vk::PipelineLayout,
@@ -26,6 +27,8 @@ pub struct ShadowPass {
 }
 
 impl ShadowPass {
+    /// Creates a new shadow pass with a default depth request. The render graph
+    /// overrides the extent/format based on engine settings.
     pub fn new() -> Self {
         // Default request; actual size is overridden by the render graph from engine settings.
         let req = AttachmentRequest {
@@ -171,43 +174,16 @@ impl ShadowPass {
         Ok(())
     }
 
-    fn compute_light_vp(&self, ctx: &RenderCtx) -> Matrix4<f32> {
-        use cgmath::{Point3, Vector3};
-        use cgmath::ortho;
-
-        const LIGHT_DISTANCE: f32 = 10.0;
-        const ORTHO_EXTENT: f32 = 10.0;
-        const NEAR_PLANE: f32 = 0.1;
-        const FAR_PLANE: f32 = 50.0;
-
-        let dir = Vector3::new(
-            ctx.world_controls.sun_direction[0],
-            ctx.world_controls.sun_direction[1],
-            ctx.world_controls.sun_direction[2],
-        );
-        let dir = dir / dir.magnitude().max(1e-6);
-        let center = Point3::new(0.0, 0.0, 0.0);
-        let eye = center - dir * LIGHT_DISTANCE;
-        let up = Vector3::new(0.0, 1.0, 0.0);
-        let view = Matrix4::look_at_rh(eye, center, up);
-        let proj_gl = ortho(-ORTHO_EXTENT, ORTHO_EXTENT, -ORTHO_EXTENT, ORTHO_EXTENT, NEAR_PLANE, FAR_PLANE);
-        // Vulkan depth correction to map z from [-1,1] to [0,1]
-        let zcorr = Matrix4::from_cols(
-            cgmath::Vector4::new(1.0, 0.0, 0.0, 0.0),
-            cgmath::Vector4::new(0.0, 1.0, 0.0, 0.0),
-            cgmath::Vector4::new(0.0, 0.0, 0.5, 0.0),
-            cgmath::Vector4::new(0.0, 0.0, 0.5, 1.0),
-        );
-        let proj = zcorr * proj_gl;
-        proj * view
-    }
+    // Removed old compute_light_vp; using shared shadow_math instead.
 
     fn flatten_mat4(m: Matrix4<f32>) -> Vec<u8> {
-        // Flatten to a byte array in column-major order to match GLSL.
+        // Match main pass packing: write in column-major order explicitly.
         let mut bytes = Vec::with_capacity(16 * 4);
-        let m_ref: &[f32; 16] = m.as_ref();
-        for &float in m_ref {
-            bytes.extend_from_slice(&float.to_ne_bytes());
+        let cols = m.transpose();
+        for row in 0..4 {
+            for col in 0..4 {
+                bytes.extend_from_slice(&cols[col][row].to_ne_bytes());
+            }
         }
         bytes
     }
@@ -260,7 +236,13 @@ impl RenderPass for ShadowPass {
             device.cmd_set_scissor(cmd, 0, &[scissor]);
 
             // Draw all scene meshes with light MVP push constants
-            let light_vp = self.compute_light_vp(ctx);
+            let mats = compute_tight_light_mats(
+                ctx.camera,
+                ctx.world_controls.sun_direction,
+                res,
+                ctx.vulkan_base.engine_settings.shadow_distance,
+            );
+            let light_vp = mats.world_to_light_clip;
             for obj in &ctx.scene.objects {
                 // Build model matrix and push mvp
                 let model = obj.transform.model_matrix();

@@ -20,14 +20,14 @@ pub struct Transform {
 
 impl Transform {
     /// Creates an identity transform (no translation, no rotation, scale 1.0).
-    pub fn identity() -> Self {
+    /*pub fn identity() -> Self {
         Self {
             translation: Vector3::new(0.0, 0.0, 0.0),
             rotation:    Quaternion::new(1.0, 0.0, 0.0, 0.0),
             scale:       1.0,
         }
-    }
-
+    }*/
+    
     /// Creates a new Transform from Euler angles (degrees) about X, Y, and Z axes.
     /// # Arguments
     /// * `translation` - The position of the transform.

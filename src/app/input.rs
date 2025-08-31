@@ -18,6 +18,7 @@ use winit::window::WindowId;
 
 use crate::app::app::App;
 
+/// Tracks simple movement and mouselook state.
 #[derive(Default, Clone, Copy)]
 pub struct InputState {
     pub moving_forward: bool,
@@ -28,6 +29,7 @@ pub struct InputState {
     pub mouselook_enabled: bool,
 }
 
+/// Handles raw device events (mouse motion) to rotate the camera when enabled.
 pub fn handle_device_event(app: &mut App, event: DeviceEvent) {
     if let DeviceEvent::MouseMotion { delta } = event {
         if app.input.mouselook_enabled {
@@ -38,6 +40,7 @@ pub fn handle_device_event(app: &mut App, event: DeviceEvent) {
     }
 }
 
+/// Handles window events and routes them to ImGui, window management, movement, and rendering.
 pub fn handle_window_event(
     app: &mut App,
     event_loop: &ActiveEventLoop,

@@ -47,7 +47,7 @@ impl Camera {
             fov_deg:    45.0,
             aspect:     16.0/9.0,
             near:       0.5,
-            far:        75.0,
+            far:        30.0,
         };
         cam.rebuild_projection();
         cam.set_view_yxz(cam.position, cam.yaw, cam.pitch, cam.roll);
@@ -165,6 +165,18 @@ impl Camera {
     pub fn get_view(&self) -> &Matrix4<f32> {
         &self.view
     }
+
+    /// Returns the vertical field of view in degrees.
+    pub fn get_fov_deg(&self) -> f32 { self.fov_deg }
+
+    /// Returns the current aspect ratio (width/height).
+    pub fn get_aspect(&self) -> f32 { self.aspect }
+
+    /// Returns the near clipping plane distance.
+    pub fn get_near(&self) -> f32 { self.near }
+
+    /// Returns the far clipping plane distance.
+    pub fn get_far(&self) -> f32 { self.far }
 }
 
 impl Default for Camera {

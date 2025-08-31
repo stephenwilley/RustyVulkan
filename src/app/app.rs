@@ -33,6 +33,11 @@ use crate::vulkan::render_graph::{RenderGraph, RenderPassNode};
 use super::input;
 use super::input::InputState;
 
+/// Top-level application state that wires windowing, rendering, and scene.
+///
+/// Owns the window, Vulkan backend, scene graph, camera, UI, and managers
+/// for meshes and materials. Implements `ApplicationHandler` to drive the
+/// event loop.
 pub struct App {
     pub window: Option<Window>,
     pub vulkan_base: Option<VulkanBase>,
@@ -58,6 +63,7 @@ pub struct App {
 }
 
 impl App {
+    /// Constructs a new `App` with default state. Call `run()` to start.
     pub fn new() -> Self {
         App {
             window: None,
@@ -83,6 +89,7 @@ impl App {
         }
     }
 
+    /// Runs the winit event loop until exit.
     pub fn run(mut self) -> Result<(), Box<dyn Error>> {
         let event_loop = EventLoop::new()?;
         event_loop.set_control_flow(ControlFlow::Poll);
@@ -341,6 +348,7 @@ impl Drop for App {
 
 pub const MAX_LIGHTS: usize = 8;
 
+/// Per-point-light controls exposed in the UI and mirrored to GPU.
 #[derive(Clone, Copy)]
 pub struct LightCtrl {
     pub position: [f32; 3],   // x, y, z in world space
@@ -348,6 +356,7 @@ pub struct LightCtrl {
     pub color: [f32; 3],
 }
 
+/// Global world controls (sun, lights, ground material toggle).
 #[derive(Clone, Copy)]
 pub struct WorldControls {
     pub lights: [LightCtrl; MAX_LIGHTS],

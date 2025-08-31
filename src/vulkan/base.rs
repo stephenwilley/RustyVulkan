@@ -855,6 +855,7 @@ impl VulkanBase {
         opts.iter().copied().rev().find(|&n| n <= desired).unwrap_or(opts[0])
     }
 
+    /// Returns the list of supported MSAA sample counts for the current device.
     pub fn supported_msaa_samples(&self) -> Vec<u32> {
         let supported = self.sample_count_flags_supported;
         Self::MSAA_CHOICES
@@ -863,10 +864,13 @@ impl VulkanBase {
             .collect()
     }
 
+    /// Requests a new MSAA sample count. The swapchain/pipelines will be
+    /// recreated on the next safe point to apply the change.
     pub fn request_msaa_samples(&mut self, desired: u32) {
         self.pending_msaa_samples = Some(self.clamp_msaa_samples(desired));
     }
 
+    /// Current MSAA sample count in effect.
     pub fn get_msaa_samples(&self) -> u32 {
         self.engine_settings.msaa_samples
     }
@@ -902,6 +906,7 @@ impl VulkanBase {
             show_ui: true, // UI enabled by default
             msaa_samples: 4,
             shadow_map_resolution: 1024,
+            shadow_distance: 30.0,
         };
 
         let entry = Entry::linked();
@@ -1201,6 +1206,7 @@ pub struct EngineSettings {
     pub show_ui: bool,
     pub msaa_samples: u32,
     pub shadow_map_resolution: u32,
+    pub shadow_distance: f32,
 }
 
 #[repr(C)]

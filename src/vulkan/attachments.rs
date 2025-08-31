@@ -2,6 +2,7 @@ use ash::vk;
 use std::collections::HashMap;
 use vk_mem::{Alloc, Allocation, AllocationCreateInfo, Allocator, MemoryUsage};
 
+/// Distinct attachment usages the graph can create and manage.
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum AttachmentKind {
@@ -15,6 +16,7 @@ pub enum AttachmentKind {
     MsaaDepth,
 }
 
+/// Request describing an attachment to retrieve or create.
 #[derive(Clone, Copy, Debug)]
 pub struct AttachmentRequest {
     pub kind: AttachmentKind,
@@ -24,6 +26,7 @@ pub struct AttachmentRequest {
 }
 
 impl AttachmentRequest {
+    /// Creates a new request with unspecified format/extent and 1x sampling.
     pub fn new(kind: AttachmentKind) -> Self {
         Self {
             kind,
@@ -37,6 +40,7 @@ impl AttachmentRequest {
     }
 }
 
+/// Lightweight handle for an attachment's VkImage and VkImageView.
 #[derive(Clone, Copy, Debug)]
 pub struct AttachmentHandle {
     pub image: vk::Image,
@@ -69,12 +73,14 @@ impl From<AttachmentRequest> for AttachmentKey {
     }
 }
 
+/// Manages per-swapchain-image transient attachments (color/depth/shadow).
 pub struct AttachmentManager {
     image_count: usize,
     attachments: HashMap<AttachmentKey, Vec<AttachmentInternal>>,
 }
 
 impl AttachmentManager {
+    /// Creates a new manager sized for `image_count` swapchain images.
     pub fn new(image_count: usize) -> Self {
         Self {
             image_count,
@@ -82,6 +88,7 @@ impl AttachmentManager {
         }
     }
 
+    /// Gets or lazily creates an attachment matching the request for a given image index.
     pub fn get_attachment(
         &mut self,
         device: &ash::Device,
@@ -174,6 +181,7 @@ impl AttachmentManager {
         )
     }
 
+    /// Destroys all created attachments and clears internal storage.
     pub fn cleanup(&mut self, device: &ash::Device, allocator: &Allocator) {
         for (_key, mut vec) in self.attachments.drain() {
             for mut att in vec.drain(..) {

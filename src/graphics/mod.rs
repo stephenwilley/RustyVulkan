@@ -18,3 +18,4 @@ pub mod materialmanager;
 pub mod meshmanager;
 pub mod gltf_loader;
 pub mod camera;
+pub mod shadow_math;

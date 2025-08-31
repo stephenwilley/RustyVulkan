@@ -12,9 +12,7 @@ use crate::app::app::{App, WorldControls, MAX_LIGHTS};
 use crate::app::scene::Scene;
 use crate::graphics::camera::Camera;
 use crate::vulkan::base::{GlobalUbo, GpuLight, GpuDirLight}; 
-use cgmath::{Matrix4, Vector4, Vector3, Point3};
-use cgmath::{InnerSpace, SquareMatrix};
-use cgmath::ortho;
+use cgmath::{Matrix4, Vector4};
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::meshmanager::MeshManager;
 use crate::vulkan::attachments::{AttachmentHandle, AttachmentKind, AttachmentRequest};
@@ -23,6 +21,7 @@ use crate::vulkan::imgui_renderer::ImGuiRenderer;
 use crate::vulkan::shadow_pass::ShadowPass;
 use crate::vulkan::main_pass::MainPass;
 use crate::vulkan::ui_pass::UiPass;
+use crate::graphics::shadow_math::compute_tight_light_mats;
 use ash::vk;
 use imgui::Context as ImGuiContext;
 use imgui_winit_support::WinitPlatform;
@@ -120,7 +119,7 @@ impl RenderGraph {
     }
 
     /// Prepares the global uniform buffer data for the current frame.
-    fn prepare_global_ubo(&self, world: &WorldControls, camera: &Camera) -> GlobalUbo {
+    fn prepare_global_ubo(&self, world: &WorldControls, camera: &Camera, shadow_res: u32, shadow_distance: f32) -> GlobalUbo {
         let mut ubo = GlobalUbo::default();
         ubo.light_count = world.light_count.min(MAX_LIGHTS) as u32;
 
@@ -161,35 +160,9 @@ impl RenderGraph {
             }
         }
 
-        // --- Compute simple directional-light view-projection (orthographic) ---
-        // For now, cover a fixed box around the origin; we will refine later.
-        let dir_world = Vector3::new(world.sun_direction[0], world.sun_direction[1], world.sun_direction[2]);
-        let dir_len = dir_world.magnitude().max(1e-6);
-        let dir = dir_world / dir_len;
-
-        // Place the light some distance along -direction looking toward origin
-        let center = Point3::new(0.0, 0.0, 0.0);
-        let eye = Point3::new(
-            center.x - dir.x * 10.0,
-            center.y - dir.y * 10.0,
-            center.z - dir.z * 10.0,
-        );
-        let up = Vector3::new(0.0, 1.0, 0.0);
-        let light_view = Matrix4::look_at_rh(eye, center, up);
-        // Simple ortho box; we will make this camera/scene-aware later.
-        let light_proj_gl = ortho(-10.0, 10.0, -10.0, 10.0, 0.1, 50.0);
-        // Vulkan depth correction: map GL NDC z [-1,1] to Vulkan [0,1]
-        const OPENGL_TO_VULKAN_MATRIX: Matrix4<f32> = Matrix4::new(
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0, 0.0,
-            0.0, 0.0, 0.5, 0.0,
-            0.0, 0.0, 0.5, 1.0,
-        );
-        let light_proj = OPENGL_TO_VULKAN_MATRIX * light_proj_gl;
-        // Compose a transform from VIEW space to LIGHT CLIP space so the shader can use vFragPosView directly.
-        // light_vp_view = light_proj_vk * light_view * inverse(view)
-        let inv_view = view.invert().unwrap_or(Matrix4::identity());
-        let light_vp = light_proj * light_view * inv_view;
+        // --- Compute a tight directional-light VP that follows the camera frustum ---
+        let mats = compute_tight_light_mats(camera, world.sun_direction, shadow_res, shadow_distance);
+        let light_vp = mats.view_to_light_clip;
 
         // Store as column-major [[f32;4];4] matching GLSL/std140 default (Matrix4 fields are columns)
         let m = light_vp; // no transpose
@@ -202,6 +175,8 @@ impl RenderGraph {
 
         ubo
     }
+
+    
 
     /// Execute all passes in insertion order for the current frame.
     pub fn execute(&mut self, app: &mut App) -> Result<(), Box<dyn Error>> {
@@ -237,7 +212,12 @@ impl RenderGraph {
         }
 
         // Prepare and update frame-global data
-        let ubo = self.prepare_global_ubo(&app.world_controls, &app.camera);
+        let ubo = self.prepare_global_ubo(
+            &app.world_controls,
+            &app.camera,
+            vb.engine_settings.shadow_map_resolution,
+            vb.engine_settings.shadow_distance,
+        );
         vb.update_global_ubo(image_index, &ubo);
 
         let mut attachment_handles: HashMap<AttachmentKind, AttachmentHandle> = HashMap::new();
@@ -405,6 +385,7 @@ impl RenderGraph {
         self.render_passes.insert(idx, (render_pass, pass));
     }
 
+    /// Enables or disables a pass by node. Inserts/removes it from the graph.
     pub fn set_pass_enabled(&mut self, node: RenderPassNode, enabled: bool) {
         let has_node = self.render_passes.iter().any(|(n, _)| *n == node);
         if enabled {
@@ -423,6 +404,18 @@ impl RenderGraph {
         }
     }
 }
+
+/// Computes a light view-projection that tightly fits the camera frustum.
+///
+/// Steps (kept simple and documented to be easy to understand):
+/// - Invert the camera's view-projection to reconstruct the 8 world-space frustum corners
+///   from NDC cube corners (x,y in [-1,1], z in [0,1] for Vulkan).
+/// - Choose a light view that looks from the sun direction toward the frustum center.
+///   We place the light eye a couple of frustum radii away along -dir.
+/// - Transform the 8 corners into light view space and compute an AABB (min/max in x,y,z).
+/// - Optionally snap the AABB center to the shadow map texel grid to reduce shimmering.
+/// - Build an orthographic projection from the AABB extents and correct for Vulkan depth (0..1).
+// moved tight light math into graphics::shadow_math
 
 impl Default for RenderGraph {
     fn default() -> Self {

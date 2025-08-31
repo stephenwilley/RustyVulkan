@@ -20,13 +20,13 @@ pub struct Transform {
 
 impl Transform {
     /// Creates an identity transform (no translation, no rotation, scale 1.0).
-    /*pub fn identity() -> Self {
+    pub fn identity() -> Self {
         Self {
             translation: Vector3::new(0.0, 0.0, 0.0),
             rotation:    Quaternion::new(1.0, 0.0, 0.0, 0.0),
             scale:       1.0,
         }
-    }*/
+    }
     
     /// Creates a new Transform from Euler angles (degrees) about X, Y, and Z axes.
     /// # Arguments
@@ -57,12 +57,27 @@ impl Transform {
     }
 }
 
-/// One thing in your world that you can draw:
-pub struct SceneObject {
+impl Default for Transform {
+    fn default() -> Self { Self::identity() }
+}
+
+/// A drawable sub-part of a SceneObject (e.g., a glTF primitive)
+pub struct ScenePart {
+    /// Transform in the object's local/model space
     pub transform: Transform,
     pub material_id: usize,
     pub mesh_id: usize,
 }
+
+/// One thing in your world that you can draw. Holds a world-space transform and N parts.
+pub struct SceneObject {
+    /// World/scene-space transform for the object root
+    pub transform: Transform,
+    /// Collection of draw parts (mesh+material) with optional local transforms
+    pub parts: Vec<ScenePart>,
+}
+
+// No special constructor helpers; create SceneObject with parts explicitly.
 
 /// A container holding *all* the drawables:
 #[derive(Default)]

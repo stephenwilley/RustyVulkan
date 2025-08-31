@@ -244,19 +244,22 @@ impl RenderPass for ShadowPass {
             );
             let light_vp = mats.world_to_light_clip;
             for obj in &ctx.scene.objects {
-                // Build model matrix and push mvp
-                let model = obj.transform.model_matrix();
-                let mvp = light_vp * model;
-                let push = Self::flatten_mat4(mvp);
-                device.cmd_push_constants(
-                    cmd,
-                    self.pipeline_layout,
-                    vk::ShaderStageFlags::VERTEX,
-                    0,
-                    &push,
-                );
+                let obj_model = obj.transform.model_matrix();
+                for part in &obj.parts {
+                    // Build model matrix and push mvp
+                    let model = obj_model * part.transform.model_matrix();
+                    let mvp = light_vp * model;
+                    let push = Self::flatten_mat4(mvp);
+                    device.cmd_push_constants(
+                        cmd,
+                        self.pipeline_layout,
+                        vk::ShaderStageFlags::VERTEX,
+                        0,
+                        &push,
+                    );
 
-                ctx.mesh_manager.meshes[obj.mesh_id].record(device, cmd);
+                    ctx.mesh_manager.meshes[part.mesh_id].record(device, cmd);
+                }
             }
             device.cmd_end_rendering(cmd);
         }

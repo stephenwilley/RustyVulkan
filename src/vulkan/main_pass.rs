@@ -116,43 +116,46 @@ impl RenderPass for MainPass {
 
             let mut current_pipeline_id = usize::MAX;
             for obj in &ctx.scene.objects {
-                let model_matrix = obj.transform.model_matrix();
-                let material = &ctx.material_manager.materials[obj.material_id];
-                let push_bytes = compute_push_constant_per_obj(ctx.camera, &model_matrix, material.uv_tiling);
+                let obj_model = obj.transform.model_matrix();
+                for part in &obj.parts {
+                    let model_matrix = obj_model * part.transform.model_matrix();
+                    let material = &ctx.material_manager.materials[part.material_id];
+                    let push_bytes = compute_push_constant_per_obj(ctx.camera, &model_matrix, material.uv_tiling);
 
-                if current_pipeline_id != obj.material_id {
-                    let material = &ctx.material_manager.materials[obj.material_id];
-                    device.cmd_bind_pipeline(
+                    if current_pipeline_id != part.material_id {
+                        let material = &ctx.material_manager.materials[part.material_id];
+                        device.cmd_bind_pipeline(
+                            cmd,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            material.pipeline.vk_pipeline,
+                        );
+                        let set0 = ctx.vulkan_base.set0_descriptor_sets[image_index];
+                        let sets_to_bind = if material.textures.is_some() {
+                            vec![set0, material.texture_descriptor_set]
+                        } else {
+                            vec![set0]
+                        };
+                        device.cmd_bind_descriptor_sets(
+                            cmd,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            material.pipeline.vk_layout,
+                            0,
+                            &sets_to_bind,
+                            &[],
+                        );
+                        current_pipeline_id = part.material_id;
+                    }
+
+                    device.cmd_push_constants(
                         cmd,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        material.pipeline.vk_pipeline,
-                    );
-                    let set0 = ctx.vulkan_base.set0_descriptor_sets[image_index];
-                    let sets_to_bind = if material.textures.is_some() {
-                        vec![set0, material.texture_descriptor_set]
-                    } else {
-                        vec![set0]
-                    };
-                    device.cmd_bind_descriptor_sets(
-                        cmd,
-                        vk::PipelineBindPoint::GRAPHICS,
                         material.pipeline.vk_layout,
+                        vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                         0,
-                        &sets_to_bind,
-                        &[],
+                        &push_bytes,
                     );
-                    current_pipeline_id = obj.material_id;
+
+                    ctx.mesh_manager.meshes[part.mesh_id].record(device, cmd);
                 }
-
-                device.cmd_push_constants(
-                    cmd,
-                    material.pipeline.vk_layout,
-                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                    0,
-                    &push_bytes,
-                );
-
-                ctx.mesh_manager.meshes[obj.mesh_id].record(device, cmd);
             }
 
             device.cmd_end_rendering(cmd);

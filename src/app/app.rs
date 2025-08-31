@@ -25,7 +25,7 @@ use crate::graphics::camera::Camera;
 use crate::graphics::gltf_loader::import_gltf;
 use crate::graphics::materialmanager::{MaterialManager, MaterialProperties};
 use crate::graphics::meshmanager::MeshManager;
-use crate::app::scene::{Scene, SceneObject, Transform as SceneTransform};
+use crate::app::scene::{Scene, SceneObject, ScenePart, Transform as SceneTransform};
 use crate::vulkan::base::VulkanBase;
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
 use crate::vulkan::render_graph::{RenderGraph, RenderPassNode};
@@ -152,17 +152,10 @@ impl App {
                 cgmath::Vector3::new(0.0, 0.0, 0.0),
                 500.0,
             ),
-            material_id: infinite_plane_mat_id,
-            mesh_id: ground_mesh_id,
+            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: infinite_plane_mat_id, mesh_id: ground_mesh_id }],
         };
 
-        let cube = SceneObject {
-            transform: SceneTransform::from_euler(
-                cgmath::Vector3::new(0.0, 1.0, 0.0),
-                cgmath::Vector3::new(0.0, 0.0, 0.0),
-                1.0,
-            ),
-            material_id: self.material_manager.request_material(
+        let cube_mat_id = self.material_manager.request_material(
                 vulkan_base,
                 MaterialProperties {
                     name: "Cube1Material".into(),
@@ -173,20 +166,21 @@ impl App {
                     depth_write: true,
                     uv_tiling: None,
                 },
+            );
+        let cube_mesh_id = self
+            .mesh_manager
+            .request_cube(vulkan_base)
+            .expect("Failed to load cube mesh");
+        let cube = SceneObject {
+            transform: SceneTransform::from_euler(
+                cgmath::Vector3::new(0.0, 1.0, 0.0),
+                cgmath::Vector3::new(0.0, 0.0, 0.0),
+                1.0,
             ),
-            mesh_id: self
-                .mesh_manager
-                .request_cube(vulkan_base)
-                .expect("Failed to load cube mesh"),
+            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: cube_mat_id, mesh_id: cube_mesh_id }],
         };
 
-        let cube2 = SceneObject {
-            transform: SceneTransform::from_euler(
-                cgmath::Vector3::new(2.0, 1.2, -4.0),
-                cgmath::Vector3::new(0.0, 15.0, 0.0),
-                1.2,
-            ),
-            material_id: self.material_manager.request_material(
+        let cube2_mat_id = self.material_manager.request_material(
                 vulkan_base,
                 MaterialProperties {
                     name: "Cube2Material".into(),
@@ -197,11 +191,18 @@ impl App {
                     depth_write: true,
                     uv_tiling: None,
                 },
+            );
+        let cube2_mesh_id = self
+            .mesh_manager
+            .request_cube(vulkan_base)
+            .expect("Failed to load cube mesh");
+        let cube2 = SceneObject {
+            transform: SceneTransform::from_euler(
+                cgmath::Vector3::new(2.0, 1.2, -4.0),
+                cgmath::Vector3::new(0.0, 15.0, 0.0),
+                1.2,
             ),
-            mesh_id: self
-                .mesh_manager
-                .request_cube(vulkan_base)
-                .expect("Failed to load cube mesh"),
+            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: cube2_mat_id, mesh_id: cube2_mesh_id }],
         };
 
         let prims = import_gltf(
@@ -219,8 +220,7 @@ impl App {
                 cgmath::Vector3::new(0.0, -90.0, 0.0),
                 0.015,
             ),
-            material_id: duck_prim.mat_id,
-            mesh_id: duck_prim.mesh_id,
+            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: duck_prim.mat_id, mesh_id: duck_prim.mesh_id }],
         };
 
         let prims2 = import_gltf(
@@ -238,8 +238,7 @@ impl App {
                 cgmath::Vector3::new(0.0, 0.0, 0.0),
                 1.0,
             ),
-            material_id: sphere_prim.mat_id,
-            mesh_id: sphere_prim.mesh_id,
+            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: sphere_prim.mat_id, mesh_id: sphere_prim.mesh_id }],
         };
 
         self.scene = Scene::new();

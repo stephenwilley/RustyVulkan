@@ -208,7 +208,10 @@ impl RenderGraph {
             } else {
                 app.infinite_plane_material_id
             };
-            app.scene.objects[gi].material_id = desired_mat;
+            // Set all parts of the ground object (usually one)
+            for p in &mut app.scene.objects[gi].parts {
+                p.material_id = desired_mat;
+            }
         }
 
         // Prepare and update frame-global data

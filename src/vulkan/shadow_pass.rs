@@ -42,11 +42,11 @@ impl ShadowPass {
     }
 
     fn create_pipeline(&mut self, device: &ash::Device) -> Result<(), Box<dyn std::error::Error>> {
-        // Push constants: two mat4 (mvp, mv)
+        // Push constants: one mat4 (mvp)
         let push_range = vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::VERTEX,
             offset: 0,
-            size: (std::mem::size_of::<[[f32; 4]; 4]>() * 2) as u32,
+            size: std::mem::size_of::<[[f32; 4]; 4]>() as u32,
         };
 
         let layout_info = vk::PipelineLayoutCreateInfo {
@@ -64,9 +64,14 @@ impl ShadowPass {
         let vs_stage = ShaderStageInfo { stage: vk::ShaderStageFlags::VERTEX, shader_module: vs, entry_name: entry };
         let stages = [vs_stage.to_create_info()];
 
-        // Vertex input
+        // Vertex input: just position
         let binding_descs = [Vertex::binding_description()];
-        let attribute_descs = Vertex::attribute_descriptions();
+        let attribute_descs = [vk::VertexInputAttributeDescription {
+            location: 0,
+            binding: 0,
+            format: vk::Format::R32G32B32_SFLOAT,
+            offset: 0,
+        }];
         let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
             vertex_binding_description_count: binding_descs.len() as u32,
             p_vertex_binding_descriptions: binding_descs.as_ptr(),
@@ -169,6 +174,12 @@ impl ShadowPass {
     fn compute_light_vp(&self, ctx: &RenderCtx) -> Matrix4<f32> {
         use cgmath::{Point3, Vector3};
         use cgmath::ortho;
+
+        const LIGHT_DISTANCE: f32 = 10.0;
+        const ORTHO_EXTENT: f32 = 10.0;
+        const NEAR_PLANE: f32 = 0.1;
+        const FAR_PLANE: f32 = 50.0;
+
         let dir = Vector3::new(
             ctx.world_controls.sun_direction[0],
             ctx.world_controls.sun_direction[1],
@@ -176,10 +187,10 @@ impl ShadowPass {
         );
         let dir = dir / dir.magnitude().max(1e-6);
         let center = Point3::new(0.0, 0.0, 0.0);
-        let eye = center - dir * 10.0;
+        let eye = center - dir * LIGHT_DISTANCE;
         let up = Vector3::new(0.0, 1.0, 0.0);
         let view = Matrix4::look_at_rh(eye, center, up);
-        let proj_gl = ortho(-10.0, 10.0, -10.0, 10.0, 0.1, 50.0);
+        let proj_gl = ortho(-ORTHO_EXTENT, ORTHO_EXTENT, -ORTHO_EXTENT, ORTHO_EXTENT, NEAR_PLANE, FAR_PLANE);
         // Vulkan depth correction to map z from [-1,1] to [0,1]
         let zcorr = Matrix4::from_cols(
             cgmath::Vector4::new(1.0, 0.0, 0.0, 0.0),
@@ -191,19 +202,13 @@ impl ShadowPass {
         proj * view
     }
 
-    fn flatten_two_mat4(a: Matrix4<f32>, b: Matrix4<f32>) -> Vec<u8> {
-        // Column-major flatten to match GLSL mat4 layout used elsewhere.
-        let mut bytes = Vec::with_capacity(2 * 16 * 4);
-        let mut push = |m: Matrix4<f32>| {
-            let cols = m.transpose();
-            for r in 0..4 {
-                for c in 0..4 {
-                    bytes.extend_from_slice(&cols[c][r].to_ne_bytes());
-                }
-            }
-        };
-        push(a);
-        push(b);
+    fn flatten_mat4(m: Matrix4<f32>) -> Vec<u8> {
+        // Flatten to a byte array in column-major order to match GLSL.
+        let mut bytes = Vec::with_capacity(16 * 4);
+        let m_ref: &[f32; 16] = m.as_ref();
+        for &float in m_ref {
+            bytes.extend_from_slice(&float.to_ne_bytes());
+        }
         bytes
     }
 }
@@ -257,11 +262,10 @@ impl RenderPass for ShadowPass {
             // Draw all scene meshes with light MVP push constants
             let light_vp = self.compute_light_vp(ctx);
             for obj in &ctx.scene.objects {
-                // Build model matrix and push [mvp, mv_unused]
+                // Build model matrix and push mvp
                 let model = obj.transform.model_matrix();
                 let mvp = light_vp * model;
-                let mv_unused = Matrix4::<f32>::identity();
-                let push = Self::flatten_two_mat4(mvp, mv_unused);
+                let push = Self::flatten_mat4(mvp);
                 device.cmd_push_constants(
                     cmd,
                     self.pipeline_layout,

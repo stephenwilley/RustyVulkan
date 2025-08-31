@@ -117,7 +117,8 @@ impl RenderPass for MainPass {
             let mut current_pipeline_id = usize::MAX;
             for obj in &ctx.scene.objects {
                 let model_matrix = obj.transform.model_matrix();
-                let push_bytes = compute_push_constant_per_obj(ctx.camera, &model_matrix);
+                let material = &ctx.material_manager.materials[obj.material_id];
+                let push_bytes = compute_push_constant_per_obj(ctx.camera, &model_matrix, material.uv_tiling);
 
                 if current_pipeline_id != obj.material_id {
                     let material = &ctx.material_manager.materials[obj.material_id];
@@ -143,7 +144,6 @@ impl RenderPass for MainPass {
                     current_pipeline_id = obj.material_id;
                 }
 
-                let material = &ctx.material_manager.materials[obj.material_id];
                 device.cmd_push_constants(
                     cmd,
                     material.pipeline.vk_layout,
@@ -188,14 +188,14 @@ impl RenderPass for MainPass {
 }
 
 /// Compute push constants for a single object
-pub fn compute_push_constant_per_obj(camera: &Camera, model_matrix: &Matrix4<f32>) -> Vec<u8> {
+pub fn compute_push_constant_per_obj(camera: &Camera, model_matrix: &Matrix4<f32>, uv_tiling: [f32; 2]) -> Vec<u8> {
     let proj: Matrix4<f32> = *camera.get_projection();
     let view: Matrix4<f32> = *camera.get_view();
 
     let mv = view * model_matrix;
     let mvp = proj * mv;
 
-    let mut bytes = Vec::with_capacity((16 + 16) * 4);
+    let mut bytes = Vec::with_capacity((16 + 16 + 4) * 4);
     let flatten_mat4 = |m: Matrix4<f32>, buf: &mut Vec<u8>| {
         let cols = m.transpose();
         for row in 0..4 {
@@ -207,6 +207,12 @@ pub fn compute_push_constant_per_obj(camera: &Camera, model_matrix: &Matrix4<f32
 
     flatten_mat4(mvp, &mut bytes);
     flatten_mat4(mv, &mut bytes);
+
+    // Append uv_tiling as a vec4 (xy used, zw padding) for alignment
+    bytes.extend_from_slice(&uv_tiling[0].to_ne_bytes());
+    bytes.extend_from_slice(&uv_tiling[1].to_ne_bytes());
+    bytes.extend_from_slice(&0.0f32.to_ne_bytes());
+    bytes.extend_from_slice(&0.0f32.to_ne_bytes());
 
     bytes
 }

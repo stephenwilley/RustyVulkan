@@ -117,6 +117,7 @@ impl App {
                 diffuse_texture_path: None,
                 normalmap_texture_path: None,
                 depth_write: false,
+                uv_tiling: None,
             },
         );
         let sand_plane_mat_id = self.material_manager.request_material(
@@ -128,6 +129,7 @@ impl App {
                 diffuse_texture_path: Some("assets/textures/sand/color.jpg".into()),
                 normalmap_texture_path: Some("assets/textures/sand/normal.png".into()),
                 depth_write: true,
+                uv_tiling: Some([100.0, 100.0]),
             },
         );
 
@@ -141,7 +143,7 @@ impl App {
             transform: SceneTransform::from_euler(
                 cgmath::Vector3::new(0.0, 0.0, 0.0),
                 cgmath::Vector3::new(0.0, 0.0, 0.0),
-                10.0,
+                500.0,
             ),
             material_id: infinite_plane_mat_id,
             mesh_id: ground_mesh_id,
@@ -162,6 +164,7 @@ impl App {
                     diffuse_texture_path: Some("assets/textures/cube1/diffuse.png".into()),
                     normalmap_texture_path: Some("assets/textures/cube1/normal.png".into()),
                     depth_write: true,
+                    uv_tiling: None,
                 },
             ),
             mesh_id: self

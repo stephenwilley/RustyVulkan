@@ -120,7 +120,8 @@ pub fn import_gltf(
                 fs_path: "assets/shaders/spv/point_light.frag.spv".into(),
                 diffuse_texture_path: base_color,
                 normalmap_texture_path: normal_map,
-                depth_write: true
+                depth_write: true,
+                uv_tiling: None,
             }
         );
         material_ids.push(mat_id);
@@ -135,7 +136,8 @@ pub fn import_gltf(
                 fs_path: "assets/shaders/spv/lambert_no_tex.frag.spv".into(),
                 diffuse_texture_path: None,
                 normalmap_texture_path: None,
-                depth_write: true
+                depth_write: true,
+                uv_tiling: None,
             }
         );
         material_ids.push(default_id);

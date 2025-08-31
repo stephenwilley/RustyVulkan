@@ -59,11 +59,13 @@ impl Pipeline {
     ) -> Result<Self, Box<dyn Error>> {
         // 1 - Define a PushConstantRange covering 2 4×4 MVP matrices (16 floats = 64 bytes) for MV and MVP, a
         // light position vector (3 floats = 12 bytes) and a light intensity float (1 float = 4 bytes)
+        // Reserve space for two mat4 (mvp, mv) plus a vec4 for UV tiling (xy used, zw padding)
         let push_constant_range = vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             offset:      0,
-            size:        std::mem::size_of::<[[f32; 4]; 4]>() as u32
-                       + std::mem::size_of::<[[f32; 4]; 4]>() as u32,
+            size:        (std::mem::size_of::<[[f32; 4]; 4]>()
+                        + std::mem::size_of::<[[f32; 4]; 4]>()
+                        + std::mem::size_of::<[f32; 4]>()) as u32,
         };
 
         // 2 - Build your PipelineLayoutCreateInfo with that push-constant baked in and descriptor set layouts

@@ -28,6 +28,7 @@ pub struct Material {
     pub texture_descriptor_set: vk::DescriptorSet,
     shaders: LoadedShaders,
     pub textures: Option<LoadedTextures>,
+    pub uv_tiling: [f32; 2],
 }
 
 impl Material {
@@ -129,6 +130,7 @@ impl Material {
         diffuse_texture_path: Option<String>,
         normalmap_texture_path: Option<String>,
         depth_write: bool,
+        uv_tiling: [f32; 2],
     ) -> Result<Self, Box<dyn Error>> {
         let texturing_enabled = diffuse_texture_path.is_some();
 
@@ -189,6 +191,7 @@ impl Material {
             texture_descriptor_set,
             shaders,
             textures,
+            uv_tiling,
         };
 
         if texturing_enabled {

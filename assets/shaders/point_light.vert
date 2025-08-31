@@ -10,7 +10,7 @@
 // Keep in sync with Rust `MAX_LIGHTS`
 #define MAX_LIGHTS 8
 
-layout(push_constant) uniform Push { mat4 mvp; mat4 mv; } pc;
+layout(push_constant) uniform Push { mat4 mvp; mat4 mv; vec4 uv_tiling; } pc;
 
 // Declare Light before using it in UBO
 struct Light {
@@ -56,6 +56,8 @@ void main() {
     vT = normalize(mv3 * inTangent);
     vB = normalize(mv3 * inBitangent);
     vN = normalize(mv3 * inNormal);
-    UV    = vec2(inUV.x, 1.0 - inUV.y); // flip Y for Vulkan
+    // Apply UV tiling (xy), keep z,w unused; also flip Y for Vulkan
+    vec2 uvScaled = inUV * pc.uv_tiling.xy;
+    UV    = vec2(uvScaled.x, 1.0 - uvScaled.y);
     gl_Position = pc.mvp * vec4(inPos, 1.0);
 }

@@ -28,6 +28,8 @@ pub struct MaterialProperties {
     pub diffuse_texture_path: Option<String>,
     pub normalmap_texture_path: Option<String>,
     pub depth_write: bool,
+    // Optional per-material UV tiling factor (x, y). Defaults to [1,1] if None.
+    pub uv_tiling: Option<[f32; 2]>,
 }
 
 impl MaterialManager {
@@ -77,7 +79,8 @@ impl MaterialManager {
                 props.fs_path,
                 props.diffuse_texture_path,
                 props.normalmap_texture_path,
-                props.depth_write
+                props.depth_write,
+                props.uv_tiling.unwrap_or([1.0, 1.0]),
             ).unwrap();
             self.materials.push(mat);
             self.materials.len() - 1

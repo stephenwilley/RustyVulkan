@@ -290,7 +290,7 @@ pub fn import_gltf_as_object(
             }
         }
 
-        return Ok(SceneObject { transform: if roots.len() == 1 { object_transform } else { SceneTransform::identity() }, parts });
+        return Ok(SceneObject { transform: if roots.len() == 1 { object_transform } else { SceneTransform::identity() }, parts, visible: true });
     } else {
         // Fallback: some glTFs lack a default/first scene; in that case, just emit all meshes
         // at identity, matching the behavior of the previous flat importer.
@@ -305,5 +305,5 @@ pub fn import_gltf_as_object(
         }
     }
 
-    Ok(SceneObject { transform: SceneTransform::identity(), parts })
+    Ok(SceneObject { transform: SceneTransform::identity(), parts, visible: true })
 }

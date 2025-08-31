@@ -202,16 +202,11 @@ impl RenderGraph {
         let image_index = frame.image_index as usize;
 
         // --- 1. Handle per-frame app state & UBO ---
-        if let Some(gi) = app.ground_obj_index {
-            let desired_mat = if app.world_controls.use_sand_ground {
-                app.sand_plane_material_id
-            } else {
-                app.infinite_plane_material_id
-            };
-            // Set all parts of the ground object (usually one)
-            for p in &mut app.scene.objects[gi].parts {
-                p.material_id = desired_mat;
-            }
+        // Toggle visibility of ground variants rather than swapping materials
+        if let (Some(inf_idx), Some(sand_idx)) = (app.infinite_plane_obj_index, app.sand_plane_obj_index) {
+            let use_sand = app.world_controls.use_sand_ground;
+            app.scene.objects[inf_idx].visible = !use_sand;
+            app.scene.objects[sand_idx].visible = use_sand;
         }
 
         // Prepare and update frame-global data

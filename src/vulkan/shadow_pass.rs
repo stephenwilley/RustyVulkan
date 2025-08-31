@@ -244,6 +244,7 @@ impl RenderPass for ShadowPass {
             );
             let light_vp = mats.world_to_light_clip;
             for obj in &ctx.scene.objects {
+                if !obj.visible { continue; }
                 let obj_model = obj.transform.model_matrix();
                 for part in &obj.parts {
                     // Build model matrix and push mvp

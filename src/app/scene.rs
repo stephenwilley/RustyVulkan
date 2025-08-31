@@ -75,6 +75,8 @@ pub struct SceneObject {
     pub transform: Transform,
     /// Collection of draw parts (mesh+material) with optional local transforms
     pub parts: Vec<ScenePart>,
+    /// Whether this object should be drawn
+    pub visible: bool,
 }
 
 // No special constructor helpers; create SceneObject with parts explicitly.

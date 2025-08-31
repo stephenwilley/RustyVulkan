@@ -56,8 +56,9 @@ pub struct App {
     pub world_controls: WorldControls,
     pub render_graph: RenderGraph,
     pub exit_flag: Arc<AtomicBool>,
-    // Ground switching
-    pub ground_obj_index: Option<usize>,
+    // Ground switching (two objects toggled via visibility)
+    pub infinite_plane_obj_index: Option<usize>,
+    pub sand_plane_obj_index: Option<usize>,
     pub infinite_plane_material_id: usize,
     pub sand_plane_material_id: usize,
 }
@@ -83,7 +84,8 @@ impl App {
             world_controls: WorldControls::default(),
             render_graph: RenderGraph::new(),
             exit_flag: Arc::new(AtomicBool::new(false)),
-            ground_obj_index: None,
+            infinite_plane_obj_index: None,
+            sand_plane_obj_index: None,
             infinite_plane_material_id: 0,
             sand_plane_material_id: 0,
         }
@@ -147,12 +149,14 @@ impl App {
             .expect("Failed to load unit plane mesh");
 
         let infinite_plane = SceneObject {
+            // Keep transform identity so the infinite grid shader sees stable derivatives
             transform: SceneTransform::from_euler(
                 cgmath::Vector3::new(0.0, 0.0, 0.0),
                 cgmath::Vector3::new(0.0, 0.0, 0.0),
-                500.0,
+                1.0,
             ),
             parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: infinite_plane_mat_id, mesh_id: ground_mesh_id }],
+            visible: !self.world_controls.use_sand_ground,
         };
 
         let cube_mat_id = self.material_manager.request_material(
@@ -178,6 +182,7 @@ impl App {
                 1.0,
             ),
             parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: cube_mat_id, mesh_id: cube_mesh_id }],
+            visible: true,
         };
 
         let cube2_mat_id = self.material_manager.request_material(
@@ -203,6 +208,7 @@ impl App {
                 1.2,
             ),
             parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: cube2_mat_id, mesh_id: cube2_mesh_id }],
+            visible: true,
         };
 
         let mut duck = import_gltf_as_object(
@@ -217,6 +223,7 @@ impl App {
             cgmath::Vector3::new(0.0, -90.0, 0.0),
             0.015,
         );
+        duck.visible = true;
 
         let mut sphere = import_gltf_as_object(
             "assets/meshes/sphere.gltf",
@@ -230,16 +237,31 @@ impl App {
             cgmath::Vector3::new(0.0, 0.0, 0.0),
             1.0,
         );
+        sphere.visible = true;
+
+        // Also build a sand plane object (scaled world plane with tiled material)
+        let sand_plane = SceneObject {
+            transform: SceneTransform::from_euler(
+                cgmath::Vector3::new(0.0, 0.0, 0.0),
+                cgmath::Vector3::new(0.0, 0.0, 0.0),
+                500.0,
+            ),
+            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: sand_plane_mat_id, mesh_id: ground_mesh_id }],
+            visible: self.world_controls.use_sand_ground,
+        };
 
         self.scene = Scene::new();
         self.scene.add(cube);
         self.scene.add(cube2);
         self.scene.add(duck);
         self.scene.add(sphere);
-        // Record index of ground object after pushing
-        let ground_index = self.scene.objects.len();
+        // Push both ground variants and track indices
+        let inf_idx = self.scene.objects.len();
         self.scene.add(infinite_plane);
-        self.ground_obj_index = Some(ground_index);
+        let sand_idx = self.scene.objects.len();
+        self.scene.add(sand_plane);
+        self.infinite_plane_obj_index = Some(inf_idx);
+        self.sand_plane_obj_index = Some(sand_idx);
         self.infinite_plane_material_id = infinite_plane_mat_id;
         self.sand_plane_material_id = sand_plane_mat_id;
 

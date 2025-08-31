@@ -116,6 +116,7 @@ impl RenderPass for MainPass {
 
             let mut current_pipeline_id = usize::MAX;
             for obj in &ctx.scene.objects {
+                if !obj.visible { continue; }
                 let obj_model = obj.transform.model_matrix();
                 for part in &obj.parts {
                     let model_matrix = obj_model * part.transform.model_matrix();

@@ -22,7 +22,7 @@ use winit::window::{Window, WindowAttributes};
 use winit::dpi::LogicalSize;
 
 use crate::graphics::camera::Camera;
-use crate::graphics::gltf_loader::import_gltf;
+use crate::graphics::gltf_loader::import_gltf_as_object;
 use crate::graphics::materialmanager::{MaterialManager, MaterialProperties};
 use crate::graphics::meshmanager::MeshManager;
 use crate::app::scene::{Scene, SceneObject, ScenePart, Transform as SceneTransform};
@@ -205,41 +205,31 @@ impl App {
             parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: cube2_mat_id, mesh_id: cube2_mesh_id }],
         };
 
-        let prims = import_gltf(
+        let mut duck = import_gltf_as_object(
             "assets/meshes/duck.gltf",
             vulkan_base,
             &mut self.mesh_manager,
             &mut self.material_manager,
         )
-        .expect("Failed to import glTF mesh");
-        let duck_prim = &prims[0];
+        .expect("Failed to import glTF object");
+        duck.transform = SceneTransform::from_euler(
+            cgmath::Vector3::new(3.0, 0.0, 0.0),
+            cgmath::Vector3::new(0.0, -90.0, 0.0),
+            0.015,
+        );
 
-        let duck = SceneObject {
-            transform: SceneTransform::from_euler(
-                cgmath::Vector3::new(3.0, 0.0, 0.0),
-                cgmath::Vector3::new(0.0, -90.0, 0.0),
-                0.015,
-            ),
-            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: duck_prim.mat_id, mesh_id: duck_prim.mesh_id }],
-        };
-
-        let prims2 = import_gltf(
+        let mut sphere = import_gltf_as_object(
             "assets/meshes/sphere.gltf",
             vulkan_base,
             &mut self.mesh_manager,
             &mut self.material_manager,
         )
-        .expect("Failed to import glTF mesh");
-        let sphere_prim = &prims2[0];
-
-        let sphere = SceneObject {
-            transform: SceneTransform::from_euler(
-                cgmath::Vector3::new(-3.0, 1.0, 0.0),
-                cgmath::Vector3::new(0.0, 0.0, 0.0),
-                1.0,
-            ),
-            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: sphere_prim.mat_id, mesh_id: sphere_prim.mesh_id }],
-        };
+        .expect("Failed to import glTF object");
+        sphere.transform = SceneTransform::from_euler(
+            cgmath::Vector3::new(-3.0, 1.0, 0.0),
+            cgmath::Vector3::new(0.0, 0.0, 0.0),
+            1.0,
+        );
 
         self.scene = Scene::new();
         self.scene.add(cube);

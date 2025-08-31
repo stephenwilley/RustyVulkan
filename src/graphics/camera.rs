@@ -63,25 +63,6 @@ impl Camera {
         self.rebuild_projection();
     }
 
-    /// Sets the perspective projection parameters and rebuilds the projection.
-    ///
-    /// Arguments
-    /// - `fov_deg`: Vertical field of view in degrees.
-    /// - `aspect`:  Width/height ratio.
-    /// - `near`:    Near clipping plane distance (> 0).
-    /// - `far`:     Far clipping plane distance (> `near`).
-    ///
-    /// Notes
-    /// - The resulting matrix is adjusted for Vulkan (Y flipped and depth in 0..1).
-    /// - The values are stored so future calls to [`set_aspect`] only update aspect.
-    pub fn set_perspective_projection(&mut self, fov_deg: f32, aspect: f32, near: f32, far: f32) {
-        self.fov_deg = fov_deg;
-        self.aspect  = aspect;
-        self.near    = near;
-        self.far     = far;
-        self.rebuild_projection();
-    }
-
     /// Rebuilds the projection matrix from stored parameters.
     fn rebuild_projection(&mut self) {
         let mut proj = perspective(Deg(self.fov_deg), self.aspect, self.near, self.far);

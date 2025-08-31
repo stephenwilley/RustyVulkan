@@ -290,14 +290,6 @@ pub fn import_gltf_as_object(
             }
         }
 
-        if cfg!(debug_assertions) {
-            println!(
-                "import_gltf_as_object: parts={}, roots={}, factored_root={}",
-                parts.len(),
-                roots.len(),
-                roots.len() == 1
-            );
-        }
         return Ok(SceneObject { transform: if roots.len() == 1 { object_transform } else { SceneTransform::identity() }, parts });
     } else {
         // Fallback: some glTFs lack a default/first scene; in that case, just emit all meshes
@@ -313,11 +305,5 @@ pub fn import_gltf_as_object(
         }
     }
 
-    if cfg!(debug_assertions) {
-        println!(
-            "import_gltf_as_object: no scene; parts={}",
-            parts.len()
-        );
-    }
     Ok(SceneObject { transform: SceneTransform::identity(), parts })
 }

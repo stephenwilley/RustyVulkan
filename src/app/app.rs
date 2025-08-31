@@ -173,6 +173,30 @@ impl App {
                 .expect("Failed to load cube mesh"),
         };
 
+        let cube2 = SceneObject {
+            transform: SceneTransform::from_euler(
+                cgmath::Vector3::new(2.0, 1.2, -4.0),
+                cgmath::Vector3::new(0.0, 15.0, 0.0),
+                1.2,
+            ),
+            material_id: self.material_manager.request_material(
+                vulkan_base,
+                MaterialProperties {
+                    name: "Cube2Material".into(),
+                    vs_path: "assets/shaders/spv/point_light.vert.spv".into(),
+                    fs_path: "assets/shaders/spv/point_light.frag.spv".into(),
+                    diffuse_texture_path: Some("assets/textures/cube2/diffuse.png".into()),
+                    normalmap_texture_path: Some("assets/textures/cube2/normal.png".into()),
+                    depth_write: true,
+                    uv_tiling: None,
+                },
+            ),
+            mesh_id: self
+                .mesh_manager
+                .request_cube(vulkan_base)
+                .expect("Failed to load cube mesh"),
+        };
+
         let prims = import_gltf(
             "assets/meshes/duck.gltf",
             vulkan_base,
@@ -213,6 +237,7 @@ impl App {
 
         self.scene = Scene::new();
         self.scene.add(cube);
+        self.scene.add(cube2);
         self.scene.add(duck);
         self.scene.add(sphere);
         // Record index of ground object after pushing

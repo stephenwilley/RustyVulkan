@@ -201,7 +201,7 @@ impl RenderPass for UiPass {
                     // Direction sliders in [-1, 1], then normalize
                     let mut dir = ctx.world_controls.sun_direction;
                     ui.slider("Dir X", -1.0, 1.0, &mut dir[0]);
-                    ui.slider("Dir Y", -1.0, 1.0, &mut dir[1]);
+                    ui.slider("Dir Y", -1.0, 0.0, &mut dir[1]);
                     ui.slider("Dir Z", -1.0, 1.0, &mut dir[2]);
 
                     // Normalize to keep it a unit vector

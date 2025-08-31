@@ -84,7 +84,7 @@ float shadow_factor(vec3 fragPosView) {
     for (int i = 0; i < 6; ++i) {
         vec2 uvOff = uv + OFFS[i] * texel * radius;
         float sm = texture(shadowMap, uvOff).r;
-        sum += (depth - bias <= sm) ? 1.0 : 0.0;
+        sum += (depth - bias <= sm) ? 1.0 : 0.4;
     }
     return sum / 6.0;
 }

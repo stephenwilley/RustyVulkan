@@ -677,6 +677,8 @@ impl ImGuiRenderer {
         if vertex_size > self.vertex_buffer_size {
             if self.vertex_buffer != vk::Buffer::null() {
                 if let Some(allocation) = &mut self.vertex_allocation {
+                    // Ensure GPU is idle before destroying buffers that may be in-flight
+                    unsafe { self.device.device_wait_idle().ok(); }
                     unsafe { allocator.destroy_buffer(self.vertex_buffer, allocation); }
                 }
             }
@@ -701,6 +703,8 @@ impl ImGuiRenderer {
         if index_size > self.index_buffer_size {
             if self.index_buffer != vk::Buffer::null() {
                 if let Some(allocation) = &mut self.index_allocation {
+                    // Ensure GPU is idle before destroying buffers that may be in-flight
+                    unsafe { self.device.device_wait_idle().ok(); }
                     unsafe { allocator.destroy_buffer(self.index_buffer, allocation); }
                 }
             }

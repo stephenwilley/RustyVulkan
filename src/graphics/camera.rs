@@ -19,50 +19,93 @@ pub struct Camera {
     yaw:        f32, // degrees
     pitch:      f32,
     roll:       f32,
+    // Persisted projection parameters so callers can adjust aspect without
+    // clobbering near/far or fov.
+    fov_deg:    f32,
+    aspect:     f32,
+    near:       f32,
+    far:        f32,
 }
 
 impl Camera {
-    /// Create a new Camera with default FOV/aspect and looking at the origin.
+    /// Creates a new camera with a default perspective and view.
+    ///
+    /// - Default projection: `fov=45°`, `aspect=16:9`, `near=0.5`, `far=5.0`.
+    /// - Projection is Vulkan-corrected (Y flipped, depth range 0..1).
+    /// - Default view looks toward the origin from `(-2, 3, 8)`.
+    ///
+    /// Use [`set_perspective_projection`] to change fov/near/far/aspect or
+    /// [`set_aspect`] during window resizes to preserve fov/near/far.
     pub fn new() -> Self {
         let mut cam = Camera {
             projection: Matrix4::identity(),
             view:       Matrix4::identity(),
-            position:   Point3::new(-2.0, 3.0, 8.0),
+            position:   Point3::new(-2.0, 3.5, 8.0),
             yaw:        12.0,
             pitch:      -15.0,
             roll:       0.0,
+            fov_deg:    45.0,
+            aspect:     16.0/9.0,
+            near:       0.5,
+            far:        75.0,
         };
-        cam.set_perspective_projection(45.0, 16.0/9.0, 0.1, 100.0);
+        cam.rebuild_projection();
         cam.set_view_yxz(cam.position, cam.yaw, cam.pitch, cam.roll);
         cam
     }
 
-    /// Set up a perspective projection.
-    /// # Arguments
-    /// * `fov_deg` - vertical field of view in degrees  
-    /// * `aspect` - width/height ratio  
-    /// * `near` - near clipping plane  
-    /// * `far` - far clipping plane
-    pub fn set_perspective_projection(
-        &mut self,
-        fov_deg: f32,
-        aspect: f32,
-        near: f32,
-        far: f32,
-    ) {
-        let mut proj = perspective(Deg(fov_deg), aspect, near, far);
-        // Vulkan’s NDC has Y pointing down, so flip it
-        proj.y.y *= -1.0;
-        self.projection = proj;
+    /// Updates only the aspect ratio, preserving `fov/near/far`.
+    ///
+    /// Prefer calling this from a window-resize handler so your chosen
+    /// `near`/`far` are not overwritten.
+    pub fn set_aspect(&mut self, aspect: f32) {
+        self.aspect = aspect;
+        self.rebuild_projection();
     }
 
-    /// Define the camera’s position & orientation using yaw & pitch (degrees).
-    /// We ignore roll for now and build the view via `look_at_rh`.
-    /// # Arguments
-    /// * `position` - The position of the camera.
-    /// * `yaw_deg` - The yaw of the camera in degrees.
-    /// * `pitch_deg` - The pitch of the camera in degrees.
-    /// * `roll_deg` - The roll of the camera in degrees.
+    /// Sets the perspective projection parameters and rebuilds the projection.
+    ///
+    /// Arguments
+    /// - `fov_deg`: Vertical field of view in degrees.
+    /// - `aspect`:  Width/height ratio.
+    /// - `near`:    Near clipping plane distance (> 0).
+    /// - `far`:     Far clipping plane distance (> `near`).
+    ///
+    /// Notes
+    /// - The resulting matrix is adjusted for Vulkan (Y flipped and depth in 0..1).
+    /// - The values are stored so future calls to [`set_aspect`] only update aspect.
+    pub fn set_perspective_projection(&mut self, fov_deg: f32, aspect: f32, near: f32, far: f32) {
+        self.fov_deg = fov_deg;
+        self.aspect  = aspect;
+        self.near    = near;
+        self.far     = far;
+        self.rebuild_projection();
+    }
+
+    /// Rebuilds the projection matrix from stored parameters.
+    fn rebuild_projection(&mut self) {
+        let mut proj = perspective(Deg(self.fov_deg), self.aspect, self.near, self.far);
+        // Flip Y to match Vulkan framebuffer coordinate conventions used here
+        proj.y.y *= -1.0;
+        // Map GL clip-space Z [-1,1] to Vulkan's [0,1]
+        pub const OPENGL_TO_VULKAN_MATRIX: Matrix4<f32> = Matrix4::new(
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 0.5, 0.0,
+            0.0, 0.0, 0.5, 1.0,
+        );
+        self.projection = OPENGL_TO_VULKAN_MATRIX * proj;
+    }
+
+    /// Defines the camera’s position and orientation using yaw–pitch in degrees.
+    ///
+    /// Builds a right-handed view matrix via `look_at_rh` (roll is currently ignored).
+    ///
+    /// Arguments
+    /// - `position`: World position.
+    /// - `yaw_deg`:  Yaw angle in degrees (rotation around +Y).
+    /// - `pitch_deg`: Pitch angle in degrees (rotation around +X).
+    /// - `roll_deg`:  Roll angle in degrees (currently unused).
     pub fn set_view_yxz(
         &mut self,
         position: Point3<f32>,
@@ -78,7 +121,7 @@ impl Camera {
         let yaw_rad: Rad<f32>   = Deg(yaw_deg).into();
         let pitch_rad: Rad<f32> = Deg(pitch_deg).into();        
         let forward = Vector3 {
-            x: yaw_rad.sin()  * pitch_rad.cos(),
+            x: yaw_rad.sin() * pitch_rad.cos(),
             y: pitch_rad.sin(),
             z: -yaw_rad.cos() * pitch_rad.cos(),
         }.normalize();
@@ -91,11 +134,13 @@ impl Camera {
         );
     }
 
-    /// Rotate the camera by the given yaw and pitch angles (in degrees).
-    /// The camera's position will not be changed.
-    /// # Arguments
-    /// * `delta_yaw` - The change in yaw in degrees.
-    /// * `delta_pitch` - The change in pitch in degrees.
+    /// Rotates the camera by yaw/pitch (degrees) without changing position.
+    ///
+    /// Pitch is clamped to `[-89°, 89°]` to avoid gimbal lock.
+    ///
+    /// Arguments
+    /// - `delta_yaw`:   Added to current yaw, in degrees.
+    /// - `delta_pitch`: Added to current pitch, in degrees.
     pub fn rotate(&mut self, delta_yaw: f32, delta_pitch: f32) {
         self.yaw   += delta_yaw;
         self.pitch  = (self.pitch + delta_pitch).clamp(-89.0, 89.0);
@@ -103,18 +148,19 @@ impl Camera {
         self.set_view_yxz(self.position, self.yaw, self.pitch, self.roll);
     }
 
-    /// Move the camera along its local forward and right axes.
-    /// # Arguments
-    /// * `forward_amt` - The amount to move forward. `forward_amt` > 0 moves you “into” the scene, `<0` moves you back.
-    /// * `right_amt` - The amount to move right. `right_amt` > 0 strafes you right,  `<0` strafes you left.
+    /// Moves the camera along its local forward and right axes.
+    ///
+    /// Arguments
+    /// - `forward_amt`: > 0 moves “into” the scene; < 0 moves back.
+    /// - `right_amt`:   > 0 strafes right; < 0 strafes left.
     pub fn translate(&mut self, forward_amt: f32, right_amt: f32) {
         let yaw_rad: Rad<f32> = Deg(self.yaw).into();
         let pitch_rad: Rad<f32> = Deg(self.pitch).into();
         // Forward vector in XZ plane
         let forward_dir = Vector3 {
-            x: yaw_rad.sin(),
+            x: yaw_rad.sin() * pitch_rad.cos(),
             y: pitch_rad.sin(),
-            z: -yaw_rad.cos(),
+            z: -yaw_rad.cos() * pitch_rad.cos(),
         }
         .normalize();
         // Right is cross(forward, up)
@@ -127,12 +173,14 @@ impl Camera {
         self.set_view_yxz(self.position, self.yaw, self.pitch, self.roll);
     }
 
-    /// Get the projection matrix (for your MVP computation).
+    /// Returns the Vulkan-corrected projection matrix.
+    ///
+    /// The matrix has Y flipped and maps clip-space Z to Vulkan’s `[0, 1]`.
     pub fn get_projection(&self) -> &Matrix4<f32> {
         &self.projection
     }
 
-    /// Get the view matrix (for your MVP computation).
+    /// Returns the right-handed view matrix (world → view).
     pub fn get_view(&self) -> &Matrix4<f32> {
         &self.view
     }

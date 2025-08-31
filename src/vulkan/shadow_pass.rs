@@ -16,8 +16,8 @@ use crate::graphics::shaders::{ShaderModule, ShaderStageInfo};
 use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use ash::vk;
-use cgmath::{Matrix4, SquareMatrix};
-use cgmath::{InnerSpace, Matrix};
+use cgmath::Matrix4;
+use cgmath::InnerSpace;
 
 pub struct ShadowPass {
     attachments: [AttachmentRequest; 1],

@@ -124,8 +124,8 @@ impl App {
             vulkan_base,
             MaterialProperties {
                 name: "SandPlaneMaterial".into(),
-                vs_path: "assets/shaders/spv/point_light.vert.spv".into(),
-                fs_path: "assets/shaders/spv/point_light.frag.spv".into(),
+                vs_path: "assets/shaders/spv/main.vert.spv".into(),
+                fs_path: "assets/shaders/spv/main.frag.spv".into(),
                 diffuse_texture_path: Some("assets/textures/sand/color.jpg".into()),
                 normalmap_texture_path: Some("assets/textures/sand/normal.png".into()),
                 depth_write: true,
@@ -159,8 +159,8 @@ impl App {
                 vulkan_base,
                 MaterialProperties {
                     name: "Cube1Material".into(),
-                    vs_path: "assets/shaders/spv/point_light.vert.spv".into(),
-                    fs_path: "assets/shaders/spv/point_light.frag.spv".into(),
+                    vs_path: "assets/shaders/spv/main.vert.spv".into(),
+                    fs_path: "assets/shaders/spv/main.frag.spv".into(),
                     diffuse_texture_path: Some("assets/textures/cube1/diffuse.png".into()),
                     normalmap_texture_path: Some("assets/textures/cube1/normal.png".into()),
                     depth_write: true,
@@ -183,8 +183,8 @@ impl App {
                 vulkan_base,
                 MaterialProperties {
                     name: "Cube2Material".into(),
-                    vs_path: "assets/shaders/spv/point_light.vert.spv".into(),
-                    fs_path: "assets/shaders/spv/point_light.frag.spv".into(),
+                    vs_path: "assets/shaders/spv/main.vert.spv".into(),
+                    fs_path: "assets/shaders/spv/main.frag.spv".into(),
                     diffuse_texture_path: Some("assets/textures/cube2/diffuse.png".into()),
                     normalmap_texture_path: Some("assets/textures/cube2/normal.png".into()),
                     depth_write: true,

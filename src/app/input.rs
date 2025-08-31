@@ -68,7 +68,8 @@ pub fn handle_window_event(
                     if let Some(window) = &app.window {
                         let size = window.inner_size();
                         let aspect = size.width as f32 / size.height as f32;
-                        app.camera.set_perspective_projection(45.0, aspect, 0.1, 100.0);
+                        // Preserve current fov/near/far; adjust only aspect on resize
+                        app.camera.set_aspect(aspect);
                     }
                 }
                 WindowEvent::ModifiersChanged(mods) => {

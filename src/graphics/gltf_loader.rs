@@ -116,8 +116,8 @@ pub fn import_gltf(
             vb,
             MaterialProperties {
                 name,
-                vs_path: "assets/shaders/spv/point_light.vert.spv".into(),
-                fs_path: "assets/shaders/spv/point_light.frag.spv".into(),
+                vs_path: "assets/shaders/spv/main.vert.spv".into(),
+                fs_path: "assets/shaders/spv/main.frag.spv".into(),
                 diffuse_texture_path: base_color,
                 normalmap_texture_path: normal_map,
                 depth_write: true,

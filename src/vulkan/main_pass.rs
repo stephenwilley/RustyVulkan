@@ -179,10 +179,10 @@ impl RenderPass for MainPass {
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                 vk::AccessFlags::SHADER_READ,
             ),
-            _ => (
+            /*_ => (
                 vk::ImageLayout::UNDEFINED,
                 vk::AccessFlags::empty(),
-            ),
+            ),*/
         }
     }
 }

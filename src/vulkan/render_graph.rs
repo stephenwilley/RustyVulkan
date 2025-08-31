@@ -179,13 +179,13 @@ impl RenderGraph {
         // Simple ortho box; we will make this camera/scene-aware later.
         let light_proj_gl = ortho(-10.0, 10.0, -10.0, 10.0, 0.1, 50.0);
         // Vulkan depth correction: map GL NDC z [-1,1] to Vulkan [0,1]
-        let zcorr = Matrix4::from_cols(
-            cgmath::Vector4::new(1.0, 0.0, 0.0, 0.0),
-            cgmath::Vector4::new(0.0, 1.0, 0.0, 0.0),
-            cgmath::Vector4::new(0.0, 0.0, 0.5, 0.0),
-            cgmath::Vector4::new(0.0, 0.0, 0.5, 1.0),
+        const OPENGL_TO_VULKAN_MATRIX: Matrix4<f32> = Matrix4::new(
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 0.5, 0.0,
+            0.0, 0.0, 0.5, 1.0,
         );
-        let light_proj = zcorr * light_proj_gl;
+        let light_proj = OPENGL_TO_VULKAN_MATRIX * light_proj_gl;
         // Compose a transform from VIEW space to LIGHT CLIP space so the shader can use vFragPosView directly.
         // light_vp_view = light_proj_vk * light_view * inverse(view)
         let inv_view = view.invert().unwrap_or(Matrix4::identity());

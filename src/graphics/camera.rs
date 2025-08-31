@@ -47,7 +47,7 @@ impl Camera {
             fov_deg:    45.0,
             aspect:     16.0/9.0,
             near:       0.5,
-            far:        30.0,
+            far:        75.0,
         };
         cam.rebuild_projection();
         cam.set_view_yxz(cam.position, cam.yaw, cam.pitch, cam.roll);

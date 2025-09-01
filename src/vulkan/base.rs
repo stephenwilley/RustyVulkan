@@ -906,7 +906,7 @@ impl VulkanBase {
             show_ui: true, // UI enabled by default
             msaa_samples: 4,
             shadow_map_resolution: 1024,
-            shadow_distance: 30.0,
+            shadow_distance: 20.0,
         };
 
         let entry = Entry::linked();

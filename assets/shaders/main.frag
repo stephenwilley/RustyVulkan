@@ -56,10 +56,15 @@ float shadow_factor(vec3 fragPosView) {
     vec3 ndc = lightPos.xyz / lightPos.w;
     // Convert to [0,1]
     vec2 uv = ndc.xy * 0.5 + 0.5;
-    float depth = ndc.z; // already in [0,1] after Vulkan depth correction in CPU
+    float depth = ndc.z; // [0,1] inside light frustum after Vulkan correction
 
-    // Outside shadow map
+    // Outside shadow map footprint in UV
     if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        return 1.0;
+    }
+
+    // Outside light depth range -> treat as lit (not covered by the shadow map)
+    if (depth <= 0.0 || depth >= 1.0) {
         return 1.0;
     }
 

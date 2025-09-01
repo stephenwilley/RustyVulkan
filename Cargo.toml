@@ -16,9 +16,14 @@ imgui-winit-support = "0.13"
 memoffset = "0.9.1"
 image = "0.25.6"
 fmt = "0.1.0"
-gltf = "1.4.1"
-mikktspace = "0.3.0"
 vk-mem = "0.5"
+russimp = { version = "*", optional = true }
+
+[features]
+# Enable Assimp-based importing by default
+default = ["russimp"]
+# Assimp-based importing via the optional russimp dependency
+russimp = ["dep:russimp"]
 
 [build-dependencies]
 shaderc = "0.9.1"

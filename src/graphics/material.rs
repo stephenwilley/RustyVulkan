@@ -132,7 +132,8 @@ impl Material {
         depth_write: bool,
         uv_tiling: [f32; 2],
     ) -> Result<Self, Box<dyn Error>> {
-        let texturing_enabled = diffuse_texture_path.is_some();
+        // Enable texturing if either a diffuse or normal map is provided
+        let texturing_enabled = diffuse_texture_path.is_some() || normalmap_texture_path.is_some();
 
         // If texturing is enabled but no normal map was provided, use a default normal map
         let normalmap_texture_path = if texturing_enabled && normalmap_texture_path.is_none() {

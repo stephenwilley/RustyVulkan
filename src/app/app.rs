@@ -22,7 +22,7 @@ use winit::window::{Window, WindowAttributes};
 use winit::dpi::LogicalSize;
 
 use crate::graphics::camera::Camera;
-use crate::graphics::gltf_loader::import_gltf_as_object;
+use crate::graphics::import::import_model_as_object;
 use crate::graphics::materialmanager::{MaterialManager, MaterialProperties};
 use crate::graphics::meshmanager::MeshManager;
 use crate::app::scene::{Scene, SceneObject, ScenePart, Transform as SceneTransform};
@@ -211,13 +211,13 @@ impl App {
             visible: true,
         };
 
-        let mut duck = import_gltf_as_object(
+        let mut duck = import_model_as_object(
             "assets/meshes/duck.gltf",
             vulkan_base,
             &mut self.mesh_manager,
             &mut self.material_manager,
         )
-        .expect("Failed to import glTF object");
+        .expect("Failed to import model");
         duck.transform = SceneTransform::from_euler(
             cgmath::Vector3::new(3.0, 0.0, 0.0),
             cgmath::Vector3::new(0.0, -90.0, 0.0),
@@ -225,13 +225,13 @@ impl App {
         );
         duck.visible = true;
 
-        let mut sphere = import_gltf_as_object(
+        let mut sphere = import_model_as_object(
             "assets/meshes/sphere.gltf",
             vulkan_base,
             &mut self.mesh_manager,
             &mut self.material_manager,
         )
-        .expect("Failed to import glTF object");
+        .expect("Failed to import model");
         sphere.transform = SceneTransform::from_euler(
             cgmath::Vector3::new(-3.0, 1.0, 0.0),
             cgmath::Vector3::new(0.0, 0.0, 0.0),

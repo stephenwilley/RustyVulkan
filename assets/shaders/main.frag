@@ -97,8 +97,18 @@ void main() {
     // Tangent-space normal from normal map
     vec3 normalTangent = normalize(texture(normalMap, UV).rgb * 2.0 - 1.0);
 
+    // Build a stable, orthonormal TBN with correct handedness across UV seams.
+    // Use the provided bitangent only to determine the sign of the handedness, then
+    // orthonormalize T to N and reconstruct B as sign * cross(N, T).
+    vec3 T = normalize(vT);
+    vec3 N = normalize(vN);
+    // Gram-Schmidt: make T perpendicular to N to reduce artifacts near seams
+    T = normalize(T - N * dot(N, T));
+    float tSign = (dot(cross(N, T), normalize(vB)) < 0.0) ? -1.0 : 1.0;
+    vec3 B = normalize(tSign * cross(N, T));
+
     // Build TBN and view dir in tangent space
-    mat3 TBN = transpose(mat3(vT, vB, vN));
+    mat3 TBN = transpose(mat3(T, B, N));
     vec3 V = normalize(TBN * (-vFragPosView));
 
     float shininess = 64.0;

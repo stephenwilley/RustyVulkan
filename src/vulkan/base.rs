@@ -103,6 +103,13 @@ pub struct VulkanBase {
     pub ubo_allocations: Vec<Allocation>,
     /// Sampler for the directional shadow map (set=0, binding=1)
     pub shadow_sampler: vk::Sampler,
+    // --- Timing (GPU timestamp queries) ---
+    timestamp_query_pool: vk::QueryPool,
+    timestamp_period_ns: f32,
+    /// Last frame's measured GPU time in milliseconds (if available)
+    last_gpu_ms: Option<f32>,
+    /// For each CPU frame-in-flight slot, which swapchain image index it last submitted
+    last_image_per_slot: Vec<Option<u32>>,
     // -- Synchronization objects --
     image_available_semaphores: Vec<vk::Semaphore>,
     render_finished_semaphores: Vec<vk::Semaphore>,
@@ -183,6 +190,30 @@ impl VulkanBase {
             self.device
                 .wait_for_fences(&[self.in_flight_fences[slot]], true, u64::MAX)?;
 
+            // After the fence is signaled, GPU work for that slot is complete.
+            // If we have a previous image index for this slot, read back its timestamps.
+            if let Some(prev_image_index) = self.last_image_per_slot[slot] {
+                let base = self.image_query_base(prev_image_index);
+                let mut data: [u64; 2] = [0; 2];
+                let res = self.device.get_query_pool_results(
+                    self.timestamp_query_pool,
+                    base,
+                    &mut data,
+                    vk::QueryResultFlags::TYPE_64,
+                );
+                if res.is_ok() {
+                    let start = data[0];
+                    let end = data[1];
+                    if end > start {
+                        let delta_ticks = end - start;
+                        let ns = (delta_ticks as f64) * (self.timestamp_period_ns as f64);
+                        self.last_gpu_ms = Some((ns / 1_000_000.0) as f32);
+                    }
+                }
+                // Clear the record; we'll set it again on submit
+                self.last_image_per_slot[slot] = None;
+            }
+
             // Acquire an image; signal when it's ready via the per-slot image-available semaphore.
             let (image_index, _is_suboptimal) = match self.swapchain_loader.acquire_next_image(
                 self.swapchain.handle,
@@ -213,6 +244,8 @@ impl VulkanBase {
 
             let begin_info = vk::CommandBufferBeginInfo::default();
             self.device.begin_command_buffer(cmd_buf, &begin_info)?;
+
+            // Queries are reset when we begin GPU timing for this image
 
             Ok(Some(FrameCtx {
                 cmd_buf,
@@ -329,6 +362,12 @@ impl VulkanBase {
 
             // Advance to next CPU slot
             self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len();
+
+            // Record which image this slot just submitted, so on next begin_frame we can read timestamps
+            if self.last_image_per_slot.len() != self.image_available_semaphores.len() {
+                self.last_image_per_slot = vec![None; self.image_available_semaphores.len()];
+            }
+            self.last_image_per_slot[frame.frame_slot] = Some(frame.image_index);
         }
         Ok(())
     }
@@ -343,6 +382,48 @@ impl VulkanBase {
             request,
         )
     }
+
+    /// Helpers for GPU timing around command recording.
+    pub fn begin_gpu_timing(&self, cmd: vk::CommandBuffer, image_index: u32) {
+        unsafe {
+            let base = self.image_query_base(image_index);
+            self.device
+                .cmd_reset_query_pool(cmd, self.timestamp_query_pool, base, 2);
+            self.device.cmd_write_timestamp(
+                cmd,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                self.timestamp_query_pool,
+                base, // frame start
+            );
+        }
+    }
+
+    pub fn end_gpu_timing(&self, cmd: vk::CommandBuffer, image_index: u32) {
+        unsafe {
+            let q1 = self.frame_end_index(image_index);
+            self.device.cmd_write_timestamp(
+                cmd,
+                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                self.timestamp_query_pool,
+                q1,
+            );
+        }
+    }
+
+    // Per-pass GPU timing methods removed for simplicity
+
+    /// Latest GPU ms measured (from the previous submission that completed)
+    pub fn latest_gpu_ms(&self) -> Option<f32> {
+        self.last_gpu_ms
+    }
+
+    #[inline]
+    fn image_query_base(&self, image_index: u32) -> u32 { image_index * 2 }
+
+    #[inline]
+    fn frame_end_index(&self, image_index: u32) -> u32 { self.image_query_base(image_index) + 1 }
+
+    pub fn timestamp_period_ns(&self) -> f32 { self.timestamp_period_ns }
 
     /// Update the global UBO with lighting data
     pub fn update_global_ubo(&mut self, image_index: usize, ubo: &GlobalUbo) {
@@ -836,6 +917,18 @@ impl VulkanBase {
         self.attachment_manager
             .cleanup(&self.device, self.allocator.as_ref().unwrap());
         self.attachment_manager = AttachmentManager::new(new_image_count);
+        // Recreate the timestamp query pool to match new image count (two queries per image)
+        unsafe { self.device.destroy_query_pool(self.timestamp_query_pool, None); }
+        let qp_info = vk::QueryPoolCreateInfo {
+            query_type: vk::QueryType::TIMESTAMP,
+            query_count: (new_image_count as u32) * 2,
+            ..Default::default()
+        };
+        self.timestamp_query_pool = unsafe { self.device.create_query_pool(&qp_info, None)? };
+        // Invalidate last GPU time reading since the pool was recreated
+        self.last_gpu_ms = None;
+        // Avoid reading uninitialized queries on the next frame after recreation
+        self.last_image_per_slot = vec![None; self.image_available_semaphores.len()];
         // Bump pipeline generation (swapchain/image count change affects pipelines)
         self.pipeline_generation = self.pipeline_generation.saturating_add(1);
         Ok(())
@@ -1068,6 +1161,15 @@ impl VulkanBase {
 
         let attachment_manager = AttachmentManager::new(image_count);
 
+        // Create a timestamp query pool: 2 queries per swapchain image (frame start/end)
+        let timestamps_per_image: u32 = 2;
+        let query_pool_info = vk::QueryPoolCreateInfo {
+            query_type: vk::QueryType::TIMESTAMP,
+            query_count: (image_count as u32) * timestamps_per_image,
+            ..Default::default()
+        };
+        let timestamp_query_pool = unsafe { device.create_query_pool(&query_pool_info, None)? };
+
         let vulkan_base = Self {
             instance,
             physical_device,
@@ -1081,6 +1183,10 @@ impl VulkanBase {
             ubo_buffers,
             ubo_allocations,
             shadow_sampler,
+            timestamp_query_pool,
+            timestamp_period_ns: chosen_props.limits.timestamp_period,
+            last_gpu_ms: None,
+            last_image_per_slot: vec![None; INFLIGHT_FRAMES],
             // sync
             image_available_semaphores,
             render_finished_semaphores,
@@ -1166,6 +1272,7 @@ impl Drop for VulkanBase {
             for &fence in &self.in_flight_fences {
                 self.device.destroy_fence(fence, None);
             }
+            self.device.destroy_query_pool(self.timestamp_query_pool, None);
             for &buffer in &self.command_buffers {
                 self.device
                     .free_command_buffers(self.command_pool, &[buffer]);

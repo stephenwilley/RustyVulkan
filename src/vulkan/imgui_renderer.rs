@@ -56,6 +56,7 @@ pub struct ImGuiRenderer {
     texture_pool:         vk::DescriptorPool,
     textures:             Vec<vk::DescriptorSet>,
     pub shadow_tex_id:        Option<imgui::TextureId>,
+    pub last_shadow_view:     Option<vk::ImageView>,
 }
 
 impl ImGuiRenderer {
@@ -350,6 +351,7 @@ impl ImGuiRenderer {
             descriptor_count: max_sets,
         }];
         let pool_info = vk::DescriptorPoolCreateInfo {
+            flags: vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
             pool_size_count: pool_sizes.len() as u32,
             p_pool_sizes: pool_sizes.as_ptr(),
             max_sets,
@@ -406,8 +408,8 @@ impl ImGuiRenderer {
         self.descriptor_set_layout = Self::create_imgui_descriptor_set_layout(base);
         // Pool (font set)
         self.descriptor_pool = Self::create_imgui_descriptor_pool(base, 1);
-        // Separate pool for user textures (keep simple for now)
-        self.texture_pool = Self::create_imgui_descriptor_pool(base, 8);
+        // Separate pool for user textures (increase capacity to reduce exhaustion)
+        self.texture_pool = Self::create_imgui_descriptor_pool(base, 32);
         // Allocate
         self.descriptor_set = self.allocate_imgui_descriptor_set(base);
         // The write to bind image+sampler will happen later when fonts are uploaded
@@ -851,6 +853,7 @@ impl ImGuiRenderer {
             texture_pool: vk::DescriptorPool::null(),
             textures: Vec::new(),
             shadow_tex_id: None,
+            last_shadow_view: None,
         };
 
         // 8) Initialize descriptor layout, pool, and set for ImGui

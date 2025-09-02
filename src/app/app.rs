@@ -10,6 +10,7 @@
 
 use std::error::Error;
 use std::time::Instant;
+use std::collections::VecDeque;
 use std::sync::{Arc, atomic::AtomicBool};
 
 use imgui::Context as ImGuiContext;
@@ -53,9 +54,13 @@ pub struct App {
     pub mesh_manager: MeshManager,
     pub start_of_frame_time: Instant,
     pub current_ms_per_frame: f32,
+    pub current_gpu_ms_per_frame: Option<f32>,
     pub world_controls: WorldControls,
     pub render_graph: RenderGraph,
     pub exit_flag: Arc<AtomicBool>,
+    // Rolling ms history for ImGui graphs
+    pub cpu_ms_history: VecDeque<f32>,
+    pub gpu_ms_history: VecDeque<f32>,
     // Ground switching (two objects toggled via visibility)
     pub infinite_plane_obj_index: Option<usize>,
     pub sand_plane_obj_index: Option<usize>,
@@ -81,9 +86,12 @@ impl App {
             mesh_manager: MeshManager::new(),
             start_of_frame_time: Instant::now(),
             current_ms_per_frame: 0.0,
+            current_gpu_ms_per_frame: None,
             world_controls: WorldControls::default(),
             render_graph: RenderGraph::new(),
             exit_flag: Arc::new(AtomicBool::new(false)),
+            cpu_ms_history: VecDeque::new(),
+            gpu_ms_history: VecDeque::new(),
             infinite_plane_obj_index: None,
             sand_plane_obj_index: None,
             infinite_plane_material_id: 0,

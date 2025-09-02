@@ -176,9 +176,7 @@ pub fn handle_window_event(
                     }
                     app.render_graph = graph;
 
-                    let now = Instant::now();
-                    let elapsed = now.duration_since(app.start_of_frame_time);
-                    app.current_ms_per_frame = elapsed.as_millis() as f32;
+                    // CPU recording time is measured inside the render graph now.
                 }
                 _ => {}
             }

@@ -26,6 +26,7 @@ use ash::vk;
 use imgui::Context as ImGuiContext;
 use imgui_winit_support::WinitPlatform;
 use std::collections::HashMap;
+use std::time::Instant;
 use std::error::Error;
 use winit::window::Window;
 use std::sync::Arc;
@@ -53,7 +54,10 @@ fn pass_order(node: RenderPassNode) -> u8 {
 /// Context passed to the UI pass.  Bundles the bits and pieces ImGui needs
 /// to render a frame.
 pub struct UiCtx<'a> {
-    pub ms_per_frame: f32,
+    pub cpu_ms_per_frame: f32,
+    pub gpu_ms_per_frame: Option<f32>,
+    pub cpu_ms_history: Vec<f32>,
+    pub gpu_ms_history: Vec<f32>,
     pub imgui: &'a mut ImGuiContext,
     pub window: &'a Window,
     pub platform: &'a mut WinitPlatform,
@@ -201,6 +205,23 @@ impl RenderGraph {
 
         let image_index = frame.image_index as usize;
 
+        // Start CPU timing after we've acquired the image and waited on fences.
+        // This measures only command recording and per-frame CPU work, not vsync/present.
+        let cpu_record_start = Instant::now();
+
+        // Begin GPU timing: reset + write start timestamp for this image
+        vb.begin_gpu_timing(frame.cmd_buf, frame.image_index);
+
+        // Refresh total GPU ms from the previous submission now so UI sees it this frame
+        app.current_gpu_ms_per_frame = vb.latest_gpu_ms();
+
+        // Push history samples (use last frame's CPU ms and latest GPU ms)
+        const HIST_CAP: usize = 300; // ~5s at 60 FPS
+        if app.cpu_ms_history.len() >= HIST_CAP { app.cpu_ms_history.pop_front(); }
+        app.cpu_ms_history.push_back(app.current_ms_per_frame);
+        if app.gpu_ms_history.len() >= HIST_CAP { app.gpu_ms_history.pop_front(); }
+        app.gpu_ms_history.push_back(app.current_gpu_ms_per_frame.unwrap_or(0.0));
+
         // --- 1. Handle per-frame app state & UBO ---
         // Toggle visibility of ground variants rather than swapping materials
         if let (Some(inf_idx), Some(sand_idx)) = (app.infinite_plane_obj_index, app.sand_plane_obj_index) {
@@ -316,7 +337,10 @@ impl RenderGraph {
 
             let ui_ctx = if *pass_node == RenderPassNode::UI {
                 Some(UiCtx {
-                    ms_per_frame: app.current_ms_per_frame,
+                    cpu_ms_per_frame: app.current_ms_per_frame,
+                    gpu_ms_per_frame: app.current_gpu_ms_per_frame,
+                    cpu_ms_history: app.cpu_ms_history.iter().copied().collect(),
+                    gpu_ms_history: app.gpu_ms_history.iter().copied().collect(),
                     imgui: app.imgui.as_mut().unwrap(),
                     window: app.window.as_ref().unwrap(),
                     platform: app.platform.as_mut().unwrap(),
@@ -341,6 +365,7 @@ impl RenderGraph {
             };
 
             pass.execute(&mut ctx)?;
+
         }
 
         // --- 4. Final transition for presentation ---
@@ -363,7 +388,17 @@ impl RenderGraph {
             );
         }
 
+        // Write end timestamp for GPU timing
+        vb.end_gpu_timing(frame.cmd_buf, frame.image_index);
+
+        // Stop CPU timing just before submitting/presenting.
+        let cpu_record_ms = cpu_record_start.elapsed().as_secs_f32() * 1000.0;
+
         vb.end_frame(frame)?;
+
+        // Store current-frame CPU total
+        app.current_ms_per_frame = cpu_record_ms;
+        // Store previous frame's total GPU ms already propagated above
         Ok(())
     }
 

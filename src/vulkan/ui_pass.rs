@@ -12,6 +12,7 @@ use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use ash::vk;
 use std::sync::atomic::Ordering;
+use imgui::PlotLines;
 
 /// Render pass responsible for drawing the ImGui user interface.
 pub struct UiPass {
@@ -20,6 +21,7 @@ pub struct UiPass {
     show_sun_window: bool,
     show_ground_window: bool,
     show_shadow_map_window: bool,
+    show_profiler_window: bool,
 }
 
 impl UiPass {
@@ -31,6 +33,7 @@ impl UiPass {
             show_sun_window: false,
             show_ground_window: false,
             show_shadow_map_window: false,
+            show_profiler_window: false,
         }
     }
 
@@ -71,7 +74,7 @@ impl RenderPass for UiPass {
                     _world_menu.end();
                 }
 
-                if let Some(_engine_menu) = ui.begin_menu("Engine Settings") {
+                if let Some(_engine_menu) = ui.begin_menu("Engine") {
                     if let Some(_msaa_menu) = ui.begin_menu("MSAA") {
                         let options = ctx.vulkan_base.supported_msaa_samples();
                         let mut current = ctx.vulkan_base.get_msaa_samples() as i32;
@@ -108,11 +111,17 @@ impl RenderPass for UiPass {
                     if ui.menu_item("Show Shadow Map") {
                         self.show_shadow_map_window = true;
                     }
+                    if ui.menu_item("Profiler") {
+                        self.show_profiler_window = true;
+                    }
                     _engine_menu.end();
                 }
 
-                // Right-align the text
-                let text = format!("Redraw ms: {:.2}", ui_ctx.ms_per_frame);
+                // Right-align the text with CPU and optional GPU time
+                let text = match ui_ctx.gpu_ms_per_frame {
+                    Some(g) => format!("CPU: {:.2} ms | GPU: {:.2} ms", ui_ctx.cpu_ms_per_frame, g),
+                    None => format!("CPU: {:.2} ms | GPU: --", ui_ctx.cpu_ms_per_frame),
+                };
                 let text_size = ui.calc_text_size(&text);
                 let menu_bar_width = ui.content_region_avail()[0];
                 ui.set_cursor_pos([menu_bar_width - text_size[0], 0.0]);
@@ -122,6 +131,61 @@ impl RenderPass for UiPass {
             }
         }
 
+        if self.show_profiler_window {
+            let mut open = true;
+            ui.window("Profiler")
+                .opened(&mut open)
+                .always_auto_resize(true)
+                .build(|| {
+                    ui.text("Frame Timings");
+                    ui.separator();
+                    match ui_ctx.gpu_ms_per_frame {
+                        Some(g) => ui.text(format!("Total GPU: {:.2} ms", g)),
+                        None => ui.text("Total GPU: --"),
+                    }
+                    ui.text(format!("Total CPU record: {:.2} ms", ui_ctx.cpu_ms_per_frame));
+
+                    ui.new_line();
+                    ui.text("CPU ms (last ~5s)");
+                    if !ui_ctx.cpu_ms_history.is_empty() {
+                        let cpu_max = ui_ctx
+                            .cpu_ms_history
+                            .iter()
+                            .cloned()
+                            .fold(0.0_f32, f32::max);
+                        let cpu_overlay = format!("max {:.1} ms", cpu_max);
+                        PlotLines::new(&ui, "CPU", &ui_ctx.cpu_ms_history)
+                            .graph_size([300.0, 80.0])
+                            .scale_min(0.0)
+                            .scale_max(33.0)
+                            .overlay_text(&cpu_overlay)
+                            .build();
+                    } else {
+                        ui.text("(no data yet)");
+                    }
+
+                    ui.new_line();
+                    ui.text("GPU ms (last ~5s)");
+                    if !ui_ctx.gpu_ms_history.is_empty() {
+                        let gpu_max = ui_ctx
+                            .gpu_ms_history
+                            .iter()
+                            .cloned()
+                            .fold(0.0_f32, f32::max);
+                        let gpu_overlay = format!("max {:.1} ms", gpu_max);
+                        PlotLines::new(&ui, "GPU", &ui_ctx.gpu_ms_history)
+                            .graph_size([300.0, 80.0])
+                            .scale_min(0.0)
+                            .scale_max(33.0)
+                            .overlay_text(&gpu_overlay)
+                            .build();
+                    } else {
+                        ui.text("(no data yet)");
+                    }
+                });
+            if !open { self.show_profiler_window = false; }
+        }
+
         // Shadow Map debug window
         if self.show_shadow_map_window {
             // Prepare/refresh the texture ID outside the closure to avoid borrowing issues
@@ -129,14 +193,30 @@ impl RenderPass for UiPass {
                 .attachments
                 .get(&AttachmentKind::Shadow)
                 .map(|handle| {
-                    let id = ui_ctx.renderer.ensure_texture(
-                        ctx.vulkan_base,
-                        ctx.vulkan_base.shadow_sampler,
-                        handle.view,
-                        ui_ctx.renderer.shadow_tex_id,
-                    );
-                    ui_ctx.renderer.shadow_tex_id = Some(id);
-                    id
+                    let view = handle.view;
+                    if ui_ctx.renderer.last_shadow_view != Some(view) {
+                        // If we already have a set, wait for GPU to be idle, then safely update it.
+                        if let Some(id) = ui_ctx.renderer.shadow_tex_id {
+                            unsafe { ctx.vulkan_base.device.device_wait_idle().ok(); }
+                            let _ = ui_ctx.renderer.ensure_texture(
+                                ctx.vulkan_base,
+                                ctx.vulkan_base.shadow_sampler,
+                                view,
+                                Some(id),
+                            );
+                        } else {
+                            // First-time creation.
+                            let id = ui_ctx.renderer.ensure_texture(
+                                ctx.vulkan_base,
+                                ctx.vulkan_base.shadow_sampler,
+                                view,
+                                None,
+                            );
+                            ui_ctx.renderer.shadow_tex_id = Some(id);
+                        }
+                        ui_ctx.renderer.last_shadow_view = Some(view);
+                    }
+                    ui_ctx.renderer.shadow_tex_id.unwrap()
                 });
 
             let mut open = true;

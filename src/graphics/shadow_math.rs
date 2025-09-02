@@ -127,11 +127,12 @@ pub fn compute_tight_light_mats(
     let top = center_y + half_h;
     // Convert light-view z (negative in front) to positive near/far distances as
     // expected by a right-handed orthographic projection (like OpenGL).
-    // Points in front: z_l in [-far_z, -near_z]. We want: near = near_z (>0), far = far_z (>near).
-    let min_z = min_l.z; // typically most negative (furthest in front)
-    let max_z = max_l.z; // typically least negative (closest in front); can be > 0 if box crosses the eye
+    // Points in front: z_l in [-far_z, -near_z].
+    // IMPORTANT: fix near to a small constant to avoid near-plane clipping of casters
+    // when the distribution of corners makes max_l.z quite negative.
+    let min_z = min_l.z; // most negative (furthest forward along light look direction)
     let eps = 1e-3;
-    let near = if max_z < 0.0 { (-max_z).max(eps) } else { eps };
+    let near = eps; // keep tiny near; ortho precision impact is negligible
     let mut far = (-min_z).max(near + eps);
     // A little extra padding to be safe on far
     far += 0.5;

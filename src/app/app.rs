@@ -185,7 +185,7 @@ impl App {
             .expect("Failed to load cube mesh");
         let cube = SceneObject {
             transform: SceneTransform::from_euler(
-                cgmath::Vector3::new(0.0, 1.0, 0.0),
+                cgmath::Vector3::new(2.0, 1.0, 0.0),
                 cgmath::Vector3::new(0.0, 0.0, 0.0),
                 1.0,
             ),
@@ -211,27 +211,27 @@ impl App {
             .expect("Failed to load cube mesh");
         let cube2 = SceneObject {
             transform: SceneTransform::from_euler(
-                cgmath::Vector3::new(2.0, 1.2, -4.0),
+                cgmath::Vector3::new(1.5, 0.8, -6.0),
                 cgmath::Vector3::new(0.0, 15.0, 0.0),
-                1.2,
+                0.8,
             ),
             parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: cube2_mat_id, mesh_id: cube2_mesh_id }],
             visible: true,
         };
 
-        let mut duck = import_model_as_object(
-            "assets/meshes/duck.gltf",
+        let mut sponza = import_model_as_object(
+            "assets/meshes/sponza/Sponza.gltf",
             vulkan_base,
             &mut self.mesh_manager,
             &mut self.material_manager,
         )
         .expect("Failed to import model");
-        duck.transform = SceneTransform::from_euler(
-            cgmath::Vector3::new(3.0, 0.0, 0.0),
+        sponza.transform = SceneTransform::from_euler(
+            cgmath::Vector3::new(0.0, 0.0, 0.0),
             cgmath::Vector3::new(0.0, -90.0, 0.0),
             0.015,
         );
-        duck.visible = true;
+        sponza.visible = true;
 
         let mut sphere = import_model_as_object(
             "assets/meshes/sphere.gltf",
@@ -241,7 +241,7 @@ impl App {
         )
         .expect("Failed to import model");
         sphere.transform = SceneTransform::from_euler(
-            cgmath::Vector3::new(-3.0, 1.0, 0.0),
+            cgmath::Vector3::new(-6.0, 1.0, 0.0),
             cgmath::Vector3::new(0.0, 0.0, 0.0),
             1.0,
         );
@@ -250,7 +250,7 @@ impl App {
         // Also build a sand plane object (scaled world plane with tiled material)
         let sand_plane = SceneObject {
             transform: SceneTransform::from_euler(
-                cgmath::Vector3::new(0.0, 0.0, 0.0),
+                cgmath::Vector3::new(0.0, -10.0, 0.0),
                 cgmath::Vector3::new(0.0, 0.0, 0.0),
                 500.0,
             ),
@@ -261,7 +261,7 @@ impl App {
         self.scene = Scene::new();
         self.scene.add(cube);
         self.scene.add(cube2);
-        self.scene.add(duck);
+        self.scene.add(sponza);
         self.scene.add(sphere);
         // Push both ground variants and track indices
         let inf_idx = self.scene.objects.len();
@@ -419,7 +419,7 @@ impl Default for WorldControls {
         });
 
         // Reasonable default sun: slightly from above-left, white-ish
-        let mut sdir = [-0.5f32, -1.0, -0.3];
+        let mut sdir = [0.117f32, -0.846, -0.520];
         let len = (sdir[0]*sdir[0] + sdir[1]*sdir[1] + sdir[2]*sdir[2]).sqrt().max(1e-6);
         sdir[0] /= len; sdir[1] /= len; sdir[2] /= len;
 
@@ -427,7 +427,7 @@ impl Default for WorldControls {
             lights,
             light_count,
             sun_direction: sdir,
-            sun_intensity: 1.5,
+            sun_intensity: 2.0,
             sun_color: [1.0, 1.0, 0.98],
             use_sand_ground: true,
         }

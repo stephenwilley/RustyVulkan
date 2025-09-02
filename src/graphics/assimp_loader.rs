@@ -20,7 +20,7 @@ use crate::app::scene::{SceneObject, ScenePart, Transform as SceneTransform};
 
 /// Import a model via russimp/Assimp into a single `SceneObject`.
 /// When the `russimp` feature is disabled, this returns an error at runtime.
-#[cfg(not(feature = "russimp"))]
+#[cfg(not(feature = "russimp-ng"))]
 pub fn import_model_as_object(
     path: &str,
     _vb: &VulkanBase,
@@ -39,7 +39,7 @@ pub fn import_model_as_object(
 /// NOTE: Implementation to be filled in next pass. The signature and flow match glTF importer
 /// so the app stays decoupled. This compiles when `russimp` is enabled and can be completed
 /// without wider changes.
-#[cfg(feature = "russimp")]
+#[cfg(feature = "russimp-ng")]
 pub fn import_model_as_object(
     path: &str,
     vb: &VulkanBase,
@@ -50,7 +50,7 @@ pub fn import_model_as_object(
     use cgmath::{Rotation, InnerSpace};
 
     // 1) Load the scene with typical preprocessing flags
-    use russimp::scene::{Scene, PostProcess};
+    use russimp_ng::scene::{Scene, PostProcess};
     let scene = Scene::from_file(
         path,
         vec![
@@ -77,7 +77,7 @@ pub fn import_model_as_object(
         let name = format!("{}_mat{}", model_stem, i);
 
         // Best-effort fetch of common texture types; PBR expansion comes next
-        use russimp::material::TextureType;
+        use russimp_ng::material::TextureType;
         const FILENAME_PROPERTY: &str = "$tex.file";
         // Helper to fetch external texture filename from material properties
         let find_tex_path = |semantic: TextureType| -> Option<String> {
@@ -86,7 +86,7 @@ pub fn import_model_as_object(
                 .properties
                 .iter()
                 .find(|p| p.key == FILENAME_PROPERTY && p.semantic == semantic)?;
-            if let russimp::material::PropertyTypeInfo::String(p) = &prop.data {
+            if let russimp_ng::material::PropertyTypeInfo::String(p) = &prop.data {
                 let pth = Path::new(p);
                 let abs = if pth.is_absolute() {
                     p.clone()
@@ -156,24 +156,24 @@ pub fn import_model_as_object(
                 .normals
                 .get(vi)
                 .cloned()
-                .unwrap_or(russimp::Vector3D { x: 0.0, y: 1.0, z: 0.0 });
+                .unwrap_or(russimp_ng::Vector3D { x: 0.0, y: 1.0, z: 0.0 });
             let uv = ai_mesh
                 .texture_coords
                 .get(0)
                 .and_then(|tc| tc.as_ref())
                 .and_then(|tc| tc.get(vi))
                 .cloned()
-                .unwrap_or(russimp::Vector3D { x: 0.0, y: 0.0, z: 0.0 });
+                .unwrap_or(russimp_ng::Vector3D { x: 0.0, y: 0.0, z: 0.0 });
             let tan = ai_mesh
                 .tangents
                 .get(vi)
                 .cloned()
-                .unwrap_or(russimp::Vector3D { x: 0.0, y: 0.0, z: 0.0 });
+                .unwrap_or(russimp_ng::Vector3D { x: 0.0, y: 0.0, z: 0.0 });
             let bit = ai_mesh
                 .bitangents
                 .get(vi)
                 .cloned()
-                .unwrap_or(russimp::Vector3D { x: 0.0, y: 0.0, z: 0.0 });
+                .unwrap_or(russimp_ng::Vector3D { x: 0.0, y: 0.0, z: 0.0 });
 
             cpu.vertices.push(crate::graphics::mesh::Vertex {
                 pos: [p.x as f32, p.y as f32, p.z as f32],
@@ -204,7 +204,7 @@ pub fn import_model_as_object(
     }
 
     // 4) Traverse nodes to gather parts with transforms
-    fn decompose(transform: &russimp::Matrix4x4) -> SceneTransform {
+    fn decompose(transform: &russimp_ng::Matrix4x4) -> SceneTransform {
         // Interpret as row-major with last column = translation (a4,b4,c4)
         let t = CVec3::new(transform.a4 as f32, transform.b4 as f32, transform.c4 as f32);
         // Upper-left 3x3 contains rotation*scale. Treat its columns as basis vectors.
@@ -238,7 +238,7 @@ pub fn import_model_as_object(
         let root_inv = SceneTransform { translation: inv_trans, rotation: inv_rot, scale: inv_scale };
 
         // DFS from the root, accumulating transforms.
-        let mut stack: Vec<(std::rc::Rc<russimp::node::Node>, SceneTransform)> =
+        let mut stack: Vec<(std::rc::Rc<russimp_ng::node::Node>, SceneTransform)> =
             vec![(root.clone(), SceneTransform::identity())];
         while let Some((node_rc, parent_tf)) = stack.pop() {
             let node = node_rc.as_ref();

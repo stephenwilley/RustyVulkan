@@ -423,8 +423,6 @@ impl VulkanBase {
     #[inline]
     fn frame_end_index(&self, image_index: u32) -> u32 { self.image_query_base(image_index) + 1 }
 
-    pub fn timestamp_period_ns(&self) -> f32 { self.timestamp_period_ns }
-
     /// Update the global UBO with lighting data
     pub fn update_global_ubo(&mut self, image_index: usize, ubo: &GlobalUbo) {
         let allocation = &mut self.ubo_allocations[image_index];
@@ -998,8 +996,8 @@ impl VulkanBase {
             wireframe: false,
             show_ui: true, // UI enabled by default
             msaa_samples: 4,
-            shadow_map_resolution: 1024,
-            shadow_distance: 20.0,
+            shadow_map_resolution: 4096,
+            shadow_distance: 75.0,
         };
 
         let entry = Entry::linked();

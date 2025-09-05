@@ -5,10 +5,8 @@
 //! Author: Stephen Willey
 //!
 //! Utilities for importing generic 3D formats using russimp/Assimp and converting them
-//! into meshes/materials + a `SceneObject` compatible with the engine.
-//!
-//! This module is feature-gated behind `russimp`. Without the feature, the main import
-//! function returns an error at runtime explaining how to enable it.
+//! into meshes/materials + a `SceneObject` compatible with the engine. Uses russimp-ng
+//! unconditionally (no feature gate).
 //!
 //! --------------------------------------------------------------------------------------
 
@@ -18,28 +16,7 @@ use crate::graphics::meshmanager::MeshManager;
 use crate::graphics::materialmanager::MaterialManager;
 use crate::app::scene::{SceneObject, ScenePart, Transform as SceneTransform};
 
-/// Import a model via russimp/Assimp into a single `SceneObject`.
-/// When the `russimp` feature is disabled, this returns an error at runtime.
-#[cfg(not(feature = "russimp-ng"))]
-pub fn import_model_as_object(
-    path: &str,
-    _vb: &VulkanBase,
-    _meshes: &mut MeshManager,
-    _mats: &mut MaterialManager,
-) -> Result<SceneObject, Box<dyn Error>> {
-    Err(format!(
-        "russimp feature not enabled. Enable feature 'russimp' to import '{}'.",
-        path
-    )
-    .into())
-}
-
-/// russimp/Assimp-backed importer (skeleton): load scene, build meshes/materials, walk nodes.
-///
-/// NOTE: Implementation to be filled in next pass. The signature and flow match glTF importer
-/// so the app stays decoupled. This compiles when `russimp` is enabled and can be completed
-/// without wider changes.
-#[cfg(feature = "russimp-ng")]
+/// russimp/Assimp-backed importer: load scene, build meshes/materials, walk nodes.
 pub fn import_model_as_object(
     path: &str,
     vb: &VulkanBase,

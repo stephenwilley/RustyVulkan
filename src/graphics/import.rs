@@ -7,7 +7,7 @@
 //! Single entry-point to import a model into a `SceneObject`, selecting the appropriate
 //! backend based on file extension and enabled features.
 //!
-//! - russimp/Assimp importer (behind `russimp` feature)
+//! - russimp-ng/Assimp importer (always enabled)
 //!
 //! This keeps the rest of the app agnostic to the source format while preserving
 //! your scene, materials, and procedural primitives like the infinite plane.

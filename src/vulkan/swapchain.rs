@@ -179,9 +179,6 @@ impl Swapchain {
         allocator: &Allocator,
         msaa_samples: u32,
     ) -> Result<(), Box<dyn Error>> {
-        unsafe {
-            device.device_wait_idle()?;
-        }
         self.cleanup(instance, device, allocator);
 
         let new_swapchain = Swapchain::new(

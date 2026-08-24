@@ -11,7 +11,8 @@
 use crate::app::app::{App, WorldControls, MAX_LIGHTS};
 use crate::app::scene::Scene;
 use crate::graphics::camera::Camera;
-use crate::vulkan::base::{GlobalUbo, GpuLight, GpuDirLight}; 
+use crate::graphics::grass::GrassRenderer;
+use crate::vulkan::base::{GlobalUbo, GpuLight, GpuDirLight, GpuPassTimings};
 use cgmath::{Matrix4, Vector4};
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::meshmanager::MeshManager;
@@ -56,8 +57,9 @@ fn pass_order(node: RenderPassNode) -> u8 {
 pub struct UiCtx<'a> {
     pub cpu_ms_per_frame: f32,
     pub gpu_ms_per_frame: Option<f32>,
-    pub cpu_ms_history: Vec<f32>,
-    pub gpu_ms_history: Vec<f32>,
+    pub gpu_pass_timings: GpuPassTimings,
+    pub cpu_ms_history: &'a [f32],
+    pub gpu_ms_history: &'a [f32],
     pub imgui: &'a mut ImGuiContext,
     pub window: &'a Window,
     pub platform: &'a mut WinitPlatform,
@@ -74,7 +76,11 @@ pub struct RenderCtx<'a> {
     pub scene: &'a Scene,
     pub material_manager: &'a MaterialManager,
     pub mesh_manager: &'a MeshManager,
+    /// Optional specialised renderer for dense instanced vegetation.
+    pub grass_renderer: Option<&'a mut GrassRenderer>,
     pub vulkan_base: &'a mut VulkanBase,
+    /// Elapsed application time, used by procedural animation such as wind.
+    pub time_seconds: f32,
     pub ui_ctx: Option<UiCtx<'a>>,
     pub world_controls: &'a mut WorldControls,
     pub attachments: &'a HashMap<AttachmentKind, AttachmentHandle>,
@@ -97,6 +103,12 @@ pub trait RenderPass {
 
     /// List of attachment requests needed by this pass.
     fn attachments(&self) -> &[AttachmentRequest];
+
+    /// Whether an attachment is active for the current MSAA configuration.
+    /// Most passes use all of their declared attachments.
+    fn uses_attachment(&self, _kind: AttachmentKind, _msaa_samples: u32) -> bool {
+        true
+    }
 
     /// Provides the graph with the required layout and access mask for a given attachment.
     fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags);
@@ -191,7 +203,14 @@ impl RenderGraph {
         // Rebuild pipelines only when engine-signaled generation changes (swapchain/MSAA/wireframe)
         let swap_gen = vb.pipeline_generation();
         if swap_gen != self.swap_gen_seen {
+            // Rebuilding a pipeline invalidates objects referenced by already
+            // submitted command buffers.  Wait once for the whole rebuild,
+            // rather than once per material and again for ImGui.
+            unsafe { vb.device.device_wait_idle()?; }
             app.material_manager.recreate_pipelines(vb)?;
+            if let Some(grass) = app.grass_renderer.as_mut() {
+                grass.recreate_pipeline(vb)?;
+            }
             if let Some(renderer) = app.imgui_renderer.as_mut() {
                 renderer.rebuild_pipeline(vb)?;
             }
@@ -200,7 +219,15 @@ impl RenderGraph {
 
         let frame = match vb.begin_frame()? {
             Some(frame) => frame,
-            None => return Ok(()), // Swapchain out of date
+            None => {
+                if vb.take_swapchain_recreation_request() {
+                    let size = app.window.as_ref().unwrap().inner_size();
+                    if size.width != 0 && size.height != 0 {
+                        vb.recreate_swapchain(app.window.as_ref().unwrap())?;
+                    }
+                }
+                return Ok(());
+            }
         };
 
         let image_index = frame.image_index as usize;
@@ -208,12 +235,15 @@ impl RenderGraph {
         // Start CPU timing after we've acquired the image and waited on fences.
         // This measures only command recording and per-frame CPU work, not vsync/present.
         let cpu_record_start = Instant::now();
+        let time_seconds = app.scene_start_time.elapsed().as_secs_f32();
 
         // Begin GPU timing: reset + write start timestamp for this image
         vb.begin_gpu_timing(frame.cmd_buf, frame.image_index);
 
-        // Refresh total GPU ms from the previous submission now so UI sees it this frame
-        app.current_gpu_ms_per_frame = vb.latest_gpu_ms();
+        // Refresh previous completed-frame timings now.  The total drives the history chart;
+        // the split values go directly to the profiler text in the UI.
+        app.current_gpu_pass_timings = vb.latest_gpu_pass_timings();
+        app.current_gpu_ms_per_frame = app.current_gpu_pass_timings.total_ms;
 
         // Push history samples (use last frame's CPU ms and latest GPU ms)
         const HIST_CAP: usize = 300; // ~5s at 60 FPS
@@ -224,10 +254,10 @@ impl RenderGraph {
 
         // --- 1. Handle per-frame app state & UBO ---
         // Toggle visibility of ground variants rather than swapping materials
-        if let (Some(inf_idx), Some(sand_idx)) = (app.infinite_plane_obj_index, app.sand_plane_obj_index) {
-            let use_sand = app.world_controls.use_sand_ground;
-            app.scene.objects[inf_idx].visible = !use_sand;
-            app.scene.objects[sand_idx].visible = use_sand;
+        if let (Some(inf_idx), Some(terrain_idx)) = (app.infinite_plane_obj_index, app.terrain_obj_index) {
+            let use_terrain = app.world_controls.use_terrain_ground;
+            app.scene.objects[inf_idx].visible = !use_terrain;
+            app.scene.objects[terrain_idx].visible = use_terrain;
         }
 
         // Prepare and update frame-global data
@@ -245,7 +275,11 @@ impl RenderGraph {
         // --- 2. Collect all attachment handles and initial states ---
         let mut all_requests: Vec<&AttachmentRequest> = Vec::new();
         for (_, pass) in &self.render_passes {
-            all_requests.extend(pass.attachments());
+            all_requests.extend(
+                pass.attachments()
+                    .iter()
+                    .filter(|req| pass.uses_attachment(req.kind, vb.engine_settings.msaa_samples)),
+            );
         }
 
         for req in all_requests {
@@ -309,6 +343,9 @@ impl RenderGraph {
 
             let mut transitions: Vec<ImageTransition> = Vec::new();
             for req in pass.attachments() {
+                if !pass.uses_attachment(req.kind, vb.engine_settings.msaa_samples) {
+                    continue;
+                }
                 let (new_layout, new_access) = pass.attachment_info(req.kind);
                 let new_stage = pipeline_stage_for_access(new_access);
 
@@ -336,11 +373,14 @@ impl RenderGraph {
             }
 
             let ui_ctx = if *pass_node == RenderPassNode::UI {
+                // `make_contiguous` lends the deque storage directly to ImGui instead
+                // of allocating and copying two history vectors every frame.
                 Some(UiCtx {
                     cpu_ms_per_frame: app.current_ms_per_frame,
                     gpu_ms_per_frame: app.current_gpu_ms_per_frame,
-                    cpu_ms_history: app.cpu_ms_history.iter().copied().collect(),
-                    gpu_ms_history: app.gpu_ms_history.iter().copied().collect(),
+                    gpu_pass_timings: app.current_gpu_pass_timings,
+                    cpu_ms_history: app.cpu_ms_history.make_contiguous(),
+                    gpu_ms_history: app.gpu_ms_history.make_contiguous(),
                     imgui: app.imgui.as_mut().unwrap(),
                     window: app.window.as_ref().unwrap(),
                     platform: app.platform.as_mut().unwrap(),
@@ -358,13 +398,20 @@ impl RenderGraph {
                 scene: &app.scene,
                 material_manager: &app.material_manager,
                 mesh_manager: &app.mesh_manager,
+                grass_renderer: app.grass_renderer.as_mut(),
                 vulkan_base: vb,
+                time_seconds,
                 ui_ctx,
                 world_controls: &mut app.world_controls,
                 attachments: &attachment_handles,
             };
 
             pass.execute(&mut ctx)?;
+            if *pass_node == RenderPassNode::Shadow {
+                // The following main-pass work is the start of `scene_ms`.
+                ctx.vulkan_base
+                    .mark_shadow_timing_end(frame.cmd_buf, frame.image_index);
+            }
 
         }
 
@@ -395,6 +442,15 @@ impl RenderGraph {
         let cpu_record_ms = cpu_record_start.elapsed().as_secs_f32() * 1000.0;
 
         vb.end_frame(frame)?;
+
+        // Presentation can become out-of-date without an accompanying resize
+        // event (for example, after a display configuration change).
+        if vb.take_swapchain_recreation_request() {
+            let size = app.window.as_ref().unwrap().inner_size();
+            if size.width != 0 && size.height != 0 {
+                vb.recreate_swapchain(app.window.as_ref().unwrap())?;
+            }
+        }
 
         // Store current-frame CPU total
         app.current_ms_per_frame = cpu_record_ms;

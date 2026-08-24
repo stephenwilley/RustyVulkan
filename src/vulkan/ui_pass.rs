@@ -137,11 +137,24 @@ impl RenderPass for UiPass {
                 .opened(&mut open)
                 .always_auto_resize(true)
                 .build(|| {
-                    ui.text("Frame Timings");
+                    ui.text("Previous completed-frame timings");
                     ui.separator();
                     match ui_ctx.gpu_ms_per_frame {
                         Some(g) => ui.text(format!("Total GPU: {:.2} ms", g)),
                         None => ui.text("Total GPU: --"),
+                    }
+                    let timings = ui_ctx.gpu_pass_timings;
+                    match timings.shadow_ms {
+                        Some(ms) => ui.text(format!("  Shadow: {:.2} ms", ms)),
+                        None => ui.text("  Shadow: --"),
+                    }
+                    match timings.scene_ms {
+                        Some(ms) => ui.text(format!("  Scene before vegetation: {:.2} ms", ms)),
+                        None => ui.text("  Scene before vegetation: --"),
+                    }
+                    match timings.vegetation_ms {
+                        Some(ms) => ui.text(format!("  Grass + reeds: {:.2} ms", ms)),
+                        None => ui.text("  Grass + reeds: --"),
                     }
                     ui.text(format!("Total CPU record: {:.2} ms", ui_ctx.cpu_ms_per_frame));
 
@@ -154,7 +167,7 @@ impl RenderPass for UiPass {
                             .cloned()
                             .fold(0.0_f32, f32::max);
                         let cpu_overlay = format!("max {:.1} ms", cpu_max);
-                        PlotLines::new(&ui, "CPU", &ui_ctx.cpu_ms_history)
+                        PlotLines::new(&ui, "CPU", ui_ctx.cpu_ms_history)
                             .graph_size([300.0, 80.0])
                             .scale_min(0.0)
                             .scale_max(33.0)
@@ -173,7 +186,7 @@ impl RenderPass for UiPass {
                             .cloned()
                             .fold(0.0_f32, f32::max);
                         let gpu_overlay = format!("max {:.1} ms", gpu_max);
-                        PlotLines::new(&ui, "GPU", &ui_ctx.gpu_ms_history)
+                        PlotLines::new(&ui, "GPU", ui_ctx.gpu_ms_history)
                             .graph_size([300.0, 80.0])
                             .scale_min(0.0)
                             .scale_max(33.0)
@@ -188,35 +201,18 @@ impl RenderPass for UiPass {
 
         // Shadow Map debug window
         if self.show_shadow_map_window {
-            // Prepare/refresh the texture ID outside the closure to avoid borrowing issues
+            // Each swapchain image uses a separate descriptor set, avoiding a
+            // device-wide idle wait when the shadow view changes frame to frame.
             let shadow_tex_id_opt: Option<imgui::TextureId> = ctx
                 .attachments
                 .get(&AttachmentKind::Shadow)
                 .map(|handle| {
-                    let view = handle.view;
-                    if ui_ctx.renderer.last_shadow_view != Some(view) {
-                        // If we already have a set, wait for GPU to be idle, then safely update it.
-                        if let Some(id) = ui_ctx.renderer.shadow_tex_id {
-                            unsafe { ctx.vulkan_base.device.device_wait_idle().ok(); }
-                            let _ = ui_ctx.renderer.ensure_texture(
-                                ctx.vulkan_base,
-                                ctx.vulkan_base.shadow_sampler,
-                                view,
-                                Some(id),
-                            );
-                        } else {
-                            // First-time creation.
-                            let id = ui_ctx.renderer.ensure_texture(
-                                ctx.vulkan_base,
-                                ctx.vulkan_base.shadow_sampler,
-                                view,
-                                None,
-                            );
-                            ui_ctx.renderer.shadow_tex_id = Some(id);
-                        }
-                        ui_ctx.renderer.last_shadow_view = Some(view);
-                    }
-                    ui_ctx.renderer.shadow_tex_id.unwrap()
+                    ui_ctx.renderer.shadow_texture_id(
+                        ctx.vulkan_base,
+                        ctx.frame.image_index as usize,
+                        ctx.vulkan_base.shadow_sampler,
+                        handle.view,
+                    )
                 });
 
             let mut open = true;
@@ -308,11 +304,11 @@ impl RenderPass for UiPass {
                 .build(|| {
                     ui.text("Choose ground rendering");
                     ui.separator();
-                    let mut use_sand = ctx.world_controls.use_sand_ground;
-                    if ui.radio_button("Infinite Plane", &mut use_sand, false) {}
+                    let mut use_terrain = ctx.world_controls.use_terrain_ground;
+                    if ui.radio_button("Infinite Plane", &mut use_terrain, false) {}
                     ui.same_line();
-                    if ui.radio_button("Sand", &mut use_sand, true) {}
-                    ctx.world_controls.use_sand_ground = use_sand;
+                    if ui.radio_button("Terrain (dirt)", &mut use_terrain, true) {}
+                    ctx.world_controls.use_terrain_ground = use_terrain;
                 });
             if !open {
                 self.show_ground_window = false;

@@ -16,27 +16,31 @@ use winit::keyboard::PhysicalKey::Code;
 use winit::keyboard::KeyCode;
 use winit::window::WindowId;
 
-use crate::app::app::App;
+use crate::app::app::{
+    App, FIRST_PERSON_EYE_HEIGHT, capture_first_person_cursor, release_first_person_cursor,
+};
 
-/// Tracks simple movement and mouselook state.
+/// Tracks first-person movement and whether the pointer is released for UI interaction.
 #[derive(Default, Clone, Copy)]
 pub struct InputState {
     pub moving_forward: bool,
     pub moving_backward: bool,
     pub moving_left: bool,
     pub moving_right: bool,
-    pub toggle_locked: bool,
-    pub mouselook_enabled: bool,
+    /// `true` while ImGui owns a visible, freely moving pointer.
+    pub cursor_released: bool,
+    /// Prevents one physical U press from toggling repeatedly through key repeat events.
+    pub cursor_toggle_locked: bool,
 }
 
-/// Handles raw device events (mouse motion) to rotate the camera when enabled.
+/// Handles raw relative motion only while the cursor is captured for first-person look.
 pub fn handle_device_event(app: &mut App, event: DeviceEvent) {
-    if let DeviceEvent::MouseMotion { delta } = event {
-        if app.input.mouselook_enabled {
-            let (dx, dy) = (delta.0 as f32, delta.1 as f32);
-            let sensitivity = 0.1;
-            app.camera.rotate(dx * sensitivity, -dy * sensitivity);
-        }
+    if !app.input.cursor_released
+        && let DeviceEvent::MouseMotion { delta } = event
+    {
+        let (dx, dy) = (delta.0 as f32, delta.1 as f32);
+        let sensitivity = 0.1;
+        app.camera.rotate(dx * sensitivity, -dy * sensitivity);
     }
 }
 
@@ -63,17 +67,35 @@ pub fn handle_window_event(
                 }
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                     println!("📐 Window resized");
+                    let size = win.inner_size();
+                    // A minimized window has a zero-sized surface.  Vulkan cannot create
+                    // a swapchain for it, and width / height would produce an invalid
+                    // camera aspect ratio.  The next non-zero resize will recreate it.
+                    if size.width == 0 || size.height == 0 {
+                        return;
+                    }
                     if let Some(vulkan_base) = &mut app.vulkan_base {
                         if let Err(e) = vulkan_base.recreate_swapchain(app.window.as_ref().unwrap()) {
                             eprintln!("Failed to recreate swapchain: {}", e);
                         }
                     }
-                    if let Some(window) = &app.window {
-                        let size = window.inner_size();
-                        let aspect = size.width as f32 / size.height as f32;
-                        // Preserve current fov/near/far; adjust only aspect on resize
-                        app.camera.set_aspect(aspect);
-                    }
+                    let aspect = size.width as f32 / size.height as f32;
+                    // Preserve current fov/near/far; adjust only aspect on resize.
+                    app.camera.set_aspect(aspect);
+                }
+                WindowEvent::Focused(false) => {
+                    // Winit does not guarantee key-release events while the window is
+                    // unfocused; clear movement so the camera cannot get "stuck".
+                    app.input.moving_forward = false;
+                    app.input.moving_backward = false;
+                    app.input.moving_left = false;
+                    app.input.moving_right = false;
+                    app.input.cursor_toggle_locked = false;
+                    app.last_movement_update = Instant::now();
+                }
+                WindowEvent::Focused(true) if !app.input.cursor_released => {
+                    // Some window systems release the grab when focus is lost.
+                    capture_first_person_cursor(win);
                 }
                 WindowEvent::ModifiersChanged(mods) => {
                     app.modifiers = mods.state();
@@ -94,15 +116,11 @@ pub fn handle_window_event(
                             win.set_fullscreen(fullscreen);
                             println!("🖥️ Toggled fullscreen");
                         }
-                        (Code(KeyCode::KeyU), Released) => {
-                            app.input.toggle_locked = false;
-                        }
                         (Code(KeyCode::KeyW), Pressed) if !app.modifiers.control_key() => {
                             app.input.moving_forward = true;
                         }
                         (Code(KeyCode::KeyW), Released) => {
                             app.input.moving_forward = false;
-                            app.input.toggle_locked = false;
                         }
                         (Code(KeyCode::KeyS), Pressed) => {
                             app.input.moving_backward = true;
@@ -122,26 +140,19 @@ pub fn handle_window_event(
                         (Code(KeyCode::KeyD), Released) => {
                             app.input.moving_right = false;
                         }
-                        (Code(KeyCode::KeyM), Pressed) if !app.input.toggle_locked => {
-                            app.input.toggle_locked = true;
-                            app.input.mouselook_enabled = !app.input.mouselook_enabled;
-                        }
-                        (Code(KeyCode::KeyM), Released) => {
-                            app.input.toggle_locked = false;
-                        }
                         (Code(KeyCode::KeyU), Pressed)
-                            if !app.input.toggle_locked =>
+                            if !app.input.cursor_toggle_locked =>
                         {
-                            app.input.toggle_locked = true;
-                            if let Some(vb) = &mut app.vulkan_base {
-                                vb.toggle_ui();
-                            }
-                            let show = if let Some(vb) = &app.vulkan_base {
-                                vb.engine_settings.show_ui
+                            app.input.cursor_toggle_locked = true;
+                            app.input.cursor_released = !app.input.cursor_released;
+                            if app.input.cursor_released {
+                                release_first_person_cursor(win);
                             } else {
-                                false
-                            };
-                            app.render_graph.set_pass_enabled(crate::vulkan::render_graph::RenderPassNode::UI, show);
+                                capture_first_person_cursor(win);
+                            }
+                        }
+                        (Code(KeyCode::KeyU), Released) => {
+                            app.input.cursor_toggle_locked = false;
                         }
                         _ => {}
                     }
@@ -154,21 +165,40 @@ pub fn handle_window_event(
                         return;
                     }
 
-                    app.start_of_frame_time = Instant::now();
+                    let now = Instant::now();
+                    // Clamp long pauses (breakpoint, drag, focus loss) so resuming cannot
+                    // make the camera jump through the scene in a single frame.
+                    let delta_seconds = now
+                        .duration_since(app.last_movement_update)
+                        .as_secs_f32()
+                        .min(0.1);
+                    app.last_movement_update = now;
 
-                    let s = app.step;
-                    if app.input.moving_forward {
-                        app.camera.translate(s, 0.0)
+                    let mut forward_input = 0.0_f32;
+                    let mut right_input = 0.0_f32;
+                    if app.input.moving_forward { forward_input += 1.0; }
+                    if app.input.moving_backward { forward_input -= 1.0; }
+                    if app.input.moving_right { right_input += 1.0; }
+                    if app.input.moving_left { right_input -= 1.0; }
+
+                    // Normalize WASD intent: W+D covers the same metres/second as W alone.
+                    let input_length = (forward_input * forward_input + right_input * right_input).sqrt();
+                    if input_length > 0.0 {
+                        let distance = app.walk_speed_mps * delta_seconds / input_length;
+                        app.camera.translate_horizontal(
+                            forward_input * distance,
+                            right_input * distance,
+                        );
                     }
-                    if app.input.moving_backward {
-                        app.camera.translate(-s, 0.0)
-                    }
-                    if app.input.moving_left {
-                        app.camera.translate(0.0, -s)
-                    }
-                    if app.input.moving_right {
-                        app.camera.translate(0.0, s)
-                    }
+
+                    // The terrain function is shared with mesh generation, so the eye is
+                    // always exactly 1.8 m above the surface the player sees.
+                    let camera_position = app.camera.position();
+                    app.camera.set_height_above_ground(
+                        app.terrain_settings
+                            .height_at(camera_position.x, camera_position.z),
+                        FIRST_PERSON_EYE_HEIGHT,
+                    );
 
                     let mut graph = std::mem::take(&mut app.render_graph);
                     if let Err(e) = graph.execute(app) {

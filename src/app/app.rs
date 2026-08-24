@@ -23,16 +23,41 @@ use winit::window::{Window, WindowAttributes};
 use winit::dpi::LogicalSize;
 
 use crate::graphics::camera::Camera;
+use crate::graphics::grass::GrassRenderer;
 use crate::graphics::import::import_model_as_object;
 use crate::graphics::materialmanager::{MaterialManager, MaterialProperties};
 use crate::graphics::meshmanager::MeshManager;
+use crate::graphics::terrain::{TerrainSettings, build_heightfield};
 use crate::app::scene::{Scene, SceneObject, ScenePart, Transform as SceneTransform};
-use crate::vulkan::base::VulkanBase;
+use crate::vulkan::base::{GpuPassTimings, VulkanBase};
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
 use crate::vulkan::render_graph::{RenderGraph, RenderPassNode};
 
 use super::input;
 use super::input::InputState;
+
+/// Enables the cursor mode used while playing in first-person view.
+pub fn capture_first_person_cursor(window: &Window) {
+    // Locked works on most platforms; confined is a useful fallback for window systems
+    // without relative-pointer support.
+    if window
+        .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+        .is_err()
+    {
+        window
+            .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+            .ok();
+    }
+    window.set_cursor_visible(false);
+}
+
+/// Releases the pointer for ImGui without changing whether the UI is rendered.
+pub fn release_first_person_cursor(window: &Window) {
+    window
+        .set_cursor_grab(winit::window::CursorGrabMode::None)
+        .ok();
+    window.set_cursor_visible(true);
+}
 
 /// Top-level application state that wires windowing, rendering, and scene.
 ///
@@ -44,7 +69,12 @@ pub struct App {
     pub vulkan_base: Option<VulkanBase>,
     pub scene: Scene,
     pub camera: Camera,
-    pub step: f32,
+    /// Walking speed in metres per second; input multiplies it by elapsed frame time.
+    pub walk_speed_mps: f32,
+    /// Timestamp used to make input frame-rate independent.
+    pub last_movement_update: Instant,
+    /// Shared terrain settings: scene placement and the first-person camera query it.
+    pub terrain_settings: TerrainSettings,
     pub modifiers: ModifiersState,
     pub input: InputState,
     pub imgui: Option<ImGuiContext>,
@@ -52,9 +82,14 @@ pub struct App {
     pub imgui_renderer: Option<ImGuiRenderer>,
     pub material_manager: MaterialManager,
     pub mesh_manager: MeshManager,
-    pub start_of_frame_time: Instant,
+    /// Separate instanced renderer for the dense outdoor grass field.
+    pub grass_renderer: Option<GrassRenderer>,
+    /// Monotonic scene time for procedural animation (wind, water, and similar effects).
+    pub scene_start_time: Instant,
     pub current_ms_per_frame: f32,
     pub current_gpu_ms_per_frame: Option<f32>,
+    /// Previous completed GPU frame split into shadow, scene, and vegetation work.
+    pub current_gpu_pass_timings: GpuPassTimings,
     pub world_controls: WorldControls,
     pub render_graph: RenderGraph,
     pub exit_flag: Arc<AtomicBool>,
@@ -63,9 +98,9 @@ pub struct App {
     pub gpu_ms_history: VecDeque<f32>,
     // Ground switching (two objects toggled via visibility)
     pub infinite_plane_obj_index: Option<usize>,
-    pub sand_plane_obj_index: Option<usize>,
+    pub terrain_obj_index: Option<usize>,
     pub infinite_plane_material_id: usize,
-    pub sand_plane_material_id: usize,
+    pub terrain_material_id: usize,
 }
 
 impl App {
@@ -76,7 +111,9 @@ impl App {
             vulkan_base: None,
             scene: Scene::new(),
             camera: Camera::new(),
-            step: 0.1,
+            walk_speed_mps: 4.0,
+            last_movement_update: Instant::now(),
+            terrain_settings: TerrainSettings::default(),
             modifiers: ModifiersState::default(),
             input: InputState::default(),
             imgui: None,
@@ -84,18 +121,20 @@ impl App {
             imgui_renderer: None,
             material_manager: MaterialManager::new(),
             mesh_manager: MeshManager::new(),
-            start_of_frame_time: Instant::now(),
+            grass_renderer: None,
+            scene_start_time: Instant::now(),
             current_ms_per_frame: 0.0,
             current_gpu_ms_per_frame: None,
+            current_gpu_pass_timings: GpuPassTimings::default(),
             world_controls: WorldControls::default(),
             render_graph: RenderGraph::new(),
             exit_flag: Arc::new(AtomicBool::new(false)),
             cpu_ms_history: VecDeque::new(),
             gpu_ms_history: VecDeque::new(),
             infinite_plane_obj_index: None,
-            sand_plane_obj_index: None,
+            terrain_obj_index: None,
             infinite_plane_material_id: 0,
-            sand_plane_material_id: 0,
+            terrain_material_id: 0,
         }
     }
 
@@ -115,15 +154,14 @@ impl App {
             .expect("Failed to create window");
         println!("🪟 Window created");
 
-        window
-            .set_cursor_grab(winit::window::CursorGrabMode::None)
-            .ok();
-        window.set_cursor_visible(false);
+        capture_first_person_cursor(&window);
         window
     }
 
-    fn set_up_scene(&mut self) {
-        let vulkan_base = self.vulkan_base.as_mut().unwrap();
+    fn set_up_scene(&mut self) -> Result<(), Box<dyn Error>> {
+        // Scene construction reads VulkanBase but mutates the two managers. Rust
+        // permits those simultaneous borrows because they are disjoint `App` fields.
+        let vulkan_base = self.vulkan_base.as_ref().expect("VulkanBase must exist before scene setup");
         // Create both materials needed for ground
         let infinite_plane_mat_id = self.material_manager.request_material(
             vulkan_base,
@@ -136,25 +174,33 @@ impl App {
                 depth_write: false,
                 uv_tiling: None,
             },
-        );
-        let sand_plane_mat_id = self.material_manager.request_material(
+        )?;
+        let terrain_mat_id = self.material_manager.request_material(
             vulkan_base,
             MaterialProperties {
-                name: "SandPlaneMaterial".into(),
-                vs_path: "assets/shaders/spv/main.vert.spv".into(),
-                fs_path: "assets/shaders/spv/main.frag.spv".into(),
-                diffuse_texture_path: Some("assets/textures/sand/color.jpg".into()),
-                normalmap_texture_path: Some("assets/textures/sand/normal.png".into()),
+                // Terrain carries a subtly varied dark dirt colour in its vertices.
+                name: "TerrainDirtMaterial".into(),
+                vs_path: "assets/shaders/spv/vertex_color.vert.spv".into(),
+                fs_path: "assets/shaders/spv/vertex_color.frag.spv".into(),
+                diffuse_texture_path: None,
+                normalmap_texture_path: None,
                 depth_write: true,
-                uv_tiling: Some([100.0, 100.0]),
+                uv_tiling: None,
             },
-        );
+        )?;
 
-        // Ground mesh: reuse unit plane
-        let ground_mesh_id = self
+        // The grid is generated and uploaded once at startup, just like an imported mesh.
+        let terrain_settings = self.terrain_settings;
+        let terrain_mesh_id = self.mesh_manager.request_mesh_from_cpu(
+            "LowRollingTerrain".into(),
+            vulkan_base,
+            build_heightfield(terrain_settings),
+        )?;
+        // The infinite grid remains a separate, flat debug ground option.
+        let infinite_plane_mesh_id = self
             .mesh_manager
             .request_unit_plane(vulkan_base)
-            .expect("Failed to load unit plane mesh");
+            ?;
 
         let infinite_plane = SceneObject {
             // Keep transform identity so the infinite grid shader sees stable derivatives
@@ -163,8 +209,8 @@ impl App {
                 cgmath::Vector3::new(0.0, 0.0, 0.0),
                 1.0,
             ),
-            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: infinite_plane_mat_id, mesh_id: ground_mesh_id }],
-            visible: !self.world_controls.use_sand_ground,
+            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: infinite_plane_mat_id, mesh_id: infinite_plane_mesh_id }],
+            visible: !self.world_controls.use_terrain_ground,
         };
 
         let cube_mat_id = self.material_manager.request_material(
@@ -178,17 +224,23 @@ impl App {
                     depth_write: true,
                     uv_tiling: None,
                 },
-            );
+            )?;
         let cube_mesh_id = self
             .mesh_manager
             .request_cube(vulkan_base)
-            .expect("Failed to load cube mesh");
+            ?;
+        let mut cube_transform = SceneTransform::from_euler(
+            cgmath::Vector3::new(7.0, 0.0, 0.0),
+            cgmath::Vector3::new(0.0, 0.0, 0.0),
+            // The unit cube spans -1..+1, so scale 0.5 makes it one metre tall.
+            0.5,
+        );
+        cube_transform.place_on_ground(
+            terrain_settings.height_at(cube_transform.translation.x, cube_transform.translation.z),
+            -1.0,
+        );
         let cube = SceneObject {
-            transform: SceneTransform::from_euler(
-                cgmath::Vector3::new(2.0, 1.0, 0.0),
-                cgmath::Vector3::new(0.0, 0.0, 0.0),
-                1.0,
-            ),
+            transform: cube_transform,
             parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: cube_mat_id, mesh_id: cube_mesh_id }],
             visible: true,
         };
@@ -204,77 +256,110 @@ impl App {
                     depth_write: true,
                     uv_tiling: None,
                 },
-            );
+            )?;
         let cube2_mesh_id = self
             .mesh_manager
             .request_cube(vulkan_base)
-            .expect("Failed to load cube mesh");
+            ?;
+        let mut cube2_transform = SceneTransform::from_euler(
+            cgmath::Vector3::new(6.0, 0.0, -6.0),
+            cgmath::Vector3::new(0.0, 15.0, 0.0),
+            // The same two-metre source cube becomes 0.8 m at scale 0.4.
+            0.4,
+        );
+        cube2_transform.place_on_ground(
+            terrain_settings.height_at(cube2_transform.translation.x, cube2_transform.translation.z),
+            -1.0,
+        );
         let cube2 = SceneObject {
-            transform: SceneTransform::from_euler(
-                cgmath::Vector3::new(1.5, 0.8, -6.0),
-                cgmath::Vector3::new(0.0, 15.0, 0.0),
-                0.8,
-            ),
+            transform: cube2_transform,
             parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: cube2_mat_id, mesh_id: cube2_mesh_id }],
             visible: true,
         };
 
-        let mut sponza = import_model_as_object(
-            "assets/meshes/sponza/Sponza.gltf",
+        // A small open-sided hut makes the directional shadow easier to read
+        // than the enclosed Sponza scene.  Scale 10 matches the surrounding
+        // reference objects after the importer's glTF node transform is applied.
+        let mut hut = import_model_as_object(
+            "assets/meshes/hut/hut.glb",
             vulkan_base,
             &mut self.mesh_manager,
             &mut self.material_manager,
-        )
-        .expect("Failed to import model");
-        sponza.transform = SceneTransform::from_euler(
+        )?;
+        hut.transform = SceneTransform::from_euler(
+            // The importer has already applied the source node transform, so
+            // the model's local base is already on the shared ground plane.
+            // The starting camera looks along -Z, so -2 places the hut two
+            // metres farther away without altering its height.
+            cgmath::Vector3::new(0.0, 0.0, -2.0),
             cgmath::Vector3::new(0.0, 0.0, 0.0),
-            cgmath::Vector3::new(0.0, -90.0, 0.0),
-            0.015,
+            10.0,
         );
-        sponza.visible = true;
+        hut.transform.place_on_ground(
+            terrain_settings.height_at(hut.transform.translation.x, hut.transform.translation.z),
+            0.0,
+        );
+        hut.visible = true;
 
         let mut sphere = import_model_as_object(
             "assets/meshes/sphere.gltf",
             vulkan_base,
             &mut self.mesh_manager,
             &mut self.material_manager,
-        )
-        .expect("Failed to import model");
+        )?;
         sphere.transform = SceneTransform::from_euler(
-            cgmath::Vector3::new(-6.0, 1.0, 0.0),
+            cgmath::Vector3::new(-6.0, 0.0, 0.0),
             cgmath::Vector3::new(0.0, 0.0, 0.0),
-            1.0,
+            // The sphere also spans -1..+1, giving it a one-metre diameter.
+            0.5,
+        );
+        sphere.transform.place_on_ground(
+            terrain_settings.height_at(sphere.transform.translation.x, sphere.transform.translation.z),
+            -1.0,
         );
         sphere.visible = true;
 
-        // Also build a sand plane object (scaled world plane with tiled material)
-        let sand_plane = SceneObject {
-            transform: SceneTransform::from_euler(
-                cgmath::Vector3::new(0.0, -10.0, 0.0),
-                cgmath::Vector3::new(0.0, 0.0, 0.0),
-                500.0,
-            ),
-            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: sand_plane_mat_id, mesh_id: ground_mesh_id }],
-            visible: self.world_controls.use_sand_ground,
+        // The terrain vertices already use world-space positions, so no object scaling is
+        // needed.  Keeping its transform at identity preserves its 0.0..0.25 m height range.
+        let terrain = SceneObject {
+            transform: SceneTransform::identity(),
+            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: terrain_mat_id, mesh_id: terrain_mesh_id }],
+            visible: self.world_controls.use_terrain_ground,
         };
 
         self.scene = Scene::new();
         self.scene.add(cube);
         self.scene.add(cube2);
-        self.scene.add(sponza);
+        self.scene.add(hut);
         self.scene.add(sphere);
         // Push both ground variants and track indices
         let inf_idx = self.scene.objects.len();
         self.scene.add(infinite_plane);
-        let sand_idx = self.scene.objects.len();
-        self.scene.add(sand_plane);
+        let terrain_idx = self.scene.objects.len();
+        self.scene.add(terrain);
         self.infinite_plane_obj_index = Some(inf_idx);
-        self.sand_plane_obj_index = Some(sand_idx);
+        self.terrain_obj_index = Some(terrain_idx);
         self.infinite_plane_material_id = infinite_plane_mat_id;
-        self.sand_plane_material_id = sand_plane_mat_id;
+        self.terrain_material_id = terrain_mat_id;
+
+        // Grass owns its own instanced buffers and pipeline, rather than becoming tens of
+        // thousands of ordinary SceneObjects.  It samples the same terrain settings used
+        // above, so every clump starts at the surface height.
+        self.grass_renderer = Some(GrassRenderer::new(vulkan_base, terrain_settings)?);
+
+        // All scene materials have now recorded their texture uploads.  Submit
+        // them together once, before the first frame can sample the images.
+        self.material_manager
+            .finish_loading(vulkan_base)?;
 
         self.camera = Camera::new();
-        self.step = 0.1;
+        let camera_position = self.camera.position();
+        self.camera.set_height_above_ground(
+            terrain_settings.height_at(camera_position.x, camera_position.z),
+            FIRST_PERSON_EYE_HEIGHT,
+        );
+        self.last_movement_update = Instant::now();
+        Ok(())
     }
 }
 
@@ -299,6 +384,7 @@ impl ApplicationHandler for App {
             Err(e) => {
                 eprintln!("Failed to create VulkanBase: {}", e);
                 event_loop.exit();
+                return;
             }
         }
 
@@ -311,7 +397,11 @@ impl ApplicationHandler for App {
         );
         self.imgui_renderer = Some(renderer);
 
-        self.set_up_scene();
+        if let Err(e) = self.set_up_scene() {
+            eprintln!("Failed to set up scene: {}", e);
+            event_loop.exit();
+            return;
+        }
 
         self.render_graph.add(RenderPassNode::Shadow);
         self.render_graph.add(RenderPassNode::Main);
@@ -346,15 +436,26 @@ impl ApplicationHandler for App {
 
 impl Drop for App {
     fn drop(&mut self) {
+        // `take` moves VulkanBase out of the Option.  Its own Drop runs only
+        // after the managers below release resources that depend on its device.
         if let Some(vb) = self.vulkan_base.take() {
             unsafe {
                 let _ = vb.device.device_wait_idle();
             }
 
-            // Ensure render passes free their GPU objects before the device is destroyed
+            // Rust drops fields automatically, but Vulkan handles need this
+            // explicit dependency order: passes -> managers -> renderer -> device.
             self.render_graph.cleanup(&vb.device);
 
-            self.material_manager.cleanup(&vb.device, vb.allocator.as_ref().unwrap());
+            if let Some(mut grass) = self.grass_renderer.take() {
+                grass.cleanup(&vb.device, vb.allocator.as_ref().unwrap());
+            }
+
+            self.material_manager.cleanup(
+                &vb.device,
+                vb.allocator.as_ref().unwrap(),
+                vb.command_pool,
+            );
             self.mesh_manager.cleanup(vb.allocator.as_ref().unwrap());
 
             if let Some(mut renderer) = self.imgui_renderer.take() {
@@ -366,6 +467,8 @@ impl Drop for App {
 }
 
 pub const MAX_LIGHTS: usize = 8;
+/// First-person camera height above the procedural terrain, in metres.
+pub const FIRST_PERSON_EYE_HEIGHT: f32 = 1.8;
 
 /// Per-point-light controls exposed in the UI and mirrored to GPU.
 #[derive(Clone, Copy)]
@@ -383,7 +486,7 @@ pub struct WorldControls {
     pub sun_direction: [f32; 3],
     pub sun_intensity: f32,
     pub sun_color: [f32; 3],
-    pub use_sand_ground: bool,
+    pub use_terrain_ground: bool,
 }
 
 impl Default for WorldControls {
@@ -429,7 +532,7 @@ impl Default for WorldControls {
             sun_direction: sdir,
             sun_intensity: 2.0,
             sun_color: [1.0, 1.0, 0.98],
-            use_sand_ground: true,
+            use_terrain_ground: true,
         }
     }
 }

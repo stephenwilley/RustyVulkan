@@ -10,14 +10,18 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use ash::Device;
+use ash::{Device, vk};
 use crate::graphics::material::Material;
+use crate::graphics::texture::TextureCache;
 use crate::vulkan::base::VulkanBase;
+use std::error::Error;
 use vk_mem::Allocator;
 
 /// Manages materials, ensuring that each material is only created once.
 pub struct MaterialManager {
     pub materials: Vec<Material>,
+    /// Owns shared texture images and accumulates their initial GPU uploads.
+    texture_cache: TextureCache,
 }
 
 /// Properties for creating a new material.
@@ -37,6 +41,7 @@ impl MaterialManager {
     pub fn new() -> MaterialManager {
         MaterialManager {
             materials: Vec::new(),
+            texture_cache: TextureCache::new(),
         }
     }
 
@@ -48,11 +53,9 @@ impl MaterialManager {
     pub fn recreate_pipelines(
         &mut self,
         vb: &VulkanBase
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn Error>> {
         for material in &mut self.materials {
-            if let Err(e) = material.recreate_pipeline(vb) {
-                eprintln!("Failed to recreate pipeline: {}", e);
-            }
+            material.recreate_pipeline(vb)?;
         }
         Ok(())
     }
@@ -63,40 +66,58 @@ impl MaterialManager {
     /// * `vb` - The VulkanBase struct.
     /// * `props` - The properties of the material to create.
     /// # Returns
-    /// * `usize` - The index of the material.
+    /// * `Result<usize, Box<dyn Error>>` - The material index, or the creation error.
     pub fn request_material(
         &mut self,
         vb: &VulkanBase,
         props: MaterialProperties,
-    ) -> usize {
+    ) -> Result<usize, Box<dyn Error>> {
         if let Some(idx) = self.materials.iter().position(|m| m.name == props.name) {
-            idx
+            Ok(idx)
         } else {
+            // `props` is consumed here: its owned Strings move into `Material::new`
+            // without cloning. New textures are queued and submitted after scene setup.
             let mat = Material::new(
                 props.name,
                 vb,
+                &mut self.texture_cache,
                 props.vs_path,
                 props.fs_path,
                 props.diffuse_texture_path,
                 props.normalmap_texture_path,
                 props.depth_write,
                 props.uv_tiling.unwrap_or([1.0, 1.0]),
-            ).unwrap();
+            )?;
             self.materials.push(mat);
-            self.materials.len() - 1
+            Ok(self.materials.len() - 1)
         }
+    }
+
+    /// Submit all texture uploads recorded while materials were created.
+    /// This is called once after scene construction, before any material is drawn.
+    pub fn finish_loading(&mut self, vb: &VulkanBase) -> Result<(), Box<dyn Error>> {
+        self.texture_cache.flush(vb)
     }
 
     /// Cleans up all materials.
     /// # Arguments
     /// * `device` - The Vulkan device.
     /// * `allocator` - The global VMA allocator.
-    pub fn cleanup(&mut self, device: &Device, allocator: &Allocator) {
+    /// * `command_pool` - Frees an unsubmitted texture-upload command buffer, if any.
+    pub fn cleanup(
+        &mut self,
+        device: &Device,
+        allocator: &Allocator,
+        command_pool: vk::CommandPool,
+    ) {
         for material in &mut self.materials {
             println!("🗑️ Cleaning up material {}", material.name);
-            material.cleanup(device, allocator);
+            material.cleanup(device);
         }
+        // The ordering is a Vulkan lifetime rule that raw handles cannot encode:
+        // materials use image views, so destroy their descriptors before the cache images.
         self.materials.clear();
+        self.texture_cache.cleanup(device, allocator, command_pool);
         println!("🗑️ MaterialManager cleaned up");
     }
 }

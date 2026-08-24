@@ -13,11 +13,13 @@ use ash::Device;
 use ash::vk;
 use crate::vulkan::base::VulkanBase;
 use crate::graphics::pipeline::Pipeline;
-use crate::graphics::texture::Texture;
+use crate::graphics::texture::TextureCache;
 use crate::graphics::shaders::{ShaderModule,ShaderStageInfo};
 use std::error::Error;
 use std::fmt;
-use vk_mem::Allocator;
+
+/// Neutral albedo used when a material supplies only a normal map.
+const DEFAULT_DIFFUSE_TEXTURE_PATH: &str = "assets/meshes/sponza/white.png";
 
 /// The Material struct holds the information required to create a material
 pub struct Material {
@@ -40,6 +42,7 @@ impl Material {
     pub fn recreate_pipeline(&mut self, vb: &VulkanBase) -> Result<(), Box<dyn Error>> {
         self.pipeline.recreate(
             &vb.device,
+            vb.pipeline_cache,
             vb.swapchain.extent,
             vb.swapchain.color_format,
             vb.swapchain.depth_format,
@@ -116,6 +119,7 @@ impl Material {
     /// # Arguments
     /// * `name` - The name of the material.
     /// * `vb` - The VulkanBase struct.
+    /// * `texture_cache` - Shares decoded textures and records their startup uploads.
     /// * `vs_path` - The path to the vertex shader.
     /// * `fs_path` - The path to the fragment shader.
     /// * `diffuse_texture_path` - The path to the diffuse texture.
@@ -125,6 +129,7 @@ impl Material {
     pub fn new(
         name: String,
         vb: &VulkanBase,
+        texture_cache: &mut TextureCache,
         vs_path: String,
         fs_path: String,
         diffuse_texture_path: Option<String>,
@@ -140,6 +145,14 @@ impl Material {
             Some("assets/textures/default_normal.png".to_string())
         } else {
             normalmap_texture_path
+        };
+        // A normal-map-only material still needs both bindings in the shader's
+        // texture descriptor set.  Previously this reached `unwrap()` below
+        // and panicked during material creation.
+        let diffuse_texture_path = if texturing_enabled && diffuse_texture_path.is_none() {
+            Some(DEFAULT_DIFFUSE_TEXTURE_PATH.to_string())
+        } else {
+            diffuse_texture_path
         };
 
         // Only create all the texture descriptor stuff if texture paths are there
@@ -174,14 +187,13 @@ impl Material {
 
         let mut textures = None;
         if texturing_enabled {
+            // The cache records copies now; MaterialManager submits the batch after scene setup.
             textures = Some(LoadedTextures::load(
-                &vb.device,
-                vb.allocator.as_ref().unwrap(),
-                vb.command_pool,
-                vb.graphics_queue,
+                texture_cache,
+                vb,
                 diffuse_texture_path.unwrap(),
                 normalmap_texture_path.unwrap()
-            ).expect("Failed to load textures"));
+            )?);
         }
 
         let mut material = Self {
@@ -196,11 +208,11 @@ impl Material {
         };
 
         if texturing_enabled {
-            let tex_diffuse = &material.textures.as_ref().unwrap().diffuse;
-            // Prepare image info pointing to our texture’s sampler and view
+            let diffuse_view = material.textures.as_ref().unwrap().diffuse_view;
+            // Both bindings share the cache sampler but point at different image views.
             let diffuse_info = vk::DescriptorImageInfo {
-                sampler:     tex_diffuse.sampler,
-                image_view:  tex_diffuse.image_view,
+                sampler:     texture_cache.sampler(),
+                image_view:  diffuse_view,
                 image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             };
             // Write it into binding 0 of set 1
@@ -213,11 +225,10 @@ impl Material {
                 p_image_info:      &diffuse_info,
                 ..Default::default()
             };
-            let tex_normal = &material.textures.as_ref().unwrap().normalmap;
-            // Prepare image info pointing to our texture’s sampler and view
+            let normalmap_view = material.textures.as_ref().unwrap().normalmap_view;
             let normal_info = vk::DescriptorImageInfo {
-                sampler:     tex_normal.sampler,
-                image_view:  tex_normal.image_view,
+                sampler:     texture_cache.sampler(),
+                image_view:  normalmap_view,
                 image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             };
             // Write it into binding 1 of set 1
@@ -238,6 +249,7 @@ impl Material {
 
         material.pipeline.create_graphics_pipeline(
             &vb.device,
+            vb.pipeline_cache,
             vb.swapchain.extent,
             vb.swapchain.color_format,
             vb.swapchain.depth_format,
@@ -253,11 +265,11 @@ impl Material {
     /// This should be called when the material is no longer needed.
     /// # Arguments
     /// * `device` - The Vulkan device to use for cleanup.
-    /// * `allocator` - The global VMA allocator.
-    pub fn cleanup(&mut self, device: &Device, allocator: &Allocator) {
-        self.shaders.cleanup();
-        if let Some(textures) = self.textures.as_mut() {
-            textures.cleanup(device, allocator);
+    pub fn cleanup(&mut self, device: &Device) {
+        // `shaders` owns RAII ShaderModules. They drop when this Material is
+        // removed from MaterialManager after its pipeline has been destroyed.
+        if self.textures.is_some() {
+            // Descriptor sets belong to this material; cache-owned images outlive them.
             unsafe {
                 device.free_descriptor_sets(
                     self.texture_descriptor_pool,
@@ -305,62 +317,34 @@ impl LoadedShaders {
             fragment: ShaderStageInfo { stage: vk::ShaderStageFlags::FRAGMENT, shader_module: fs, entry_name: entry },
         })
     }
-
-    /// Frees the Vulkan shader modules.
-    pub fn cleanup(&self) {
-        self.vertex.shader_module.cleanup();
-        self.fragment.shader_module.cleanup();
-    }
 }
 
-/// A struct to hold the loaded textures
+/// Non-owning Vulkan handles used by one material.
+///
+/// These are copied values, not Rust references.  The images remain owned by
+/// `TextureCache`; `MaterialManager::cleanup` destroys materials before the cache.
 pub struct LoadedTextures {
-    pub diffuse: Texture,
-    pub normalmap: Texture,
+    pub diffuse_view: vk::ImageView,
+    pub normalmap_view: vk::ImageView,
 }
 
 impl LoadedTextures {
-    /// Loads the diffuse PNG into a GPU-backed Texture.
+    /// Gets the two texture handles from the cache, queuing first-use uploads as needed.
     /// # Arguments
-    /// * `device` - The Vulkan device.
-    /// * `allocator` - The global VMA allocator.
-    /// * `command_pool` - The command pool to use for creating the texture.
-    /// * `queue` - The queue to use for submitting the texture creation commands.
+    /// * `texture_cache` - Scene-wide texture owner and upload batch.
+    /// * `vb` - Vulkan state used to create images and record copy commands.
     /// * `diffuse_texture_path` - The path to the diffuse texture.
     /// * `normalmap_texture_path` - The path to the normalmap texture.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the loaded textures on success, or an error on failure.
     pub fn load(
-        device: &Device,
-        allocator: &Allocator,
-        command_pool: vk::CommandPool,
-        queue: vk::Queue,
+        texture_cache: &mut TextureCache,
+        vb: &VulkanBase,
         diffuse_texture_path: String,
         normalmap_texture_path: String,
     ) -> Result<Self, Box<dyn Error>> {
-        let diffuse = Texture::new(
-            device,
-            allocator,
-            command_pool,
-            queue,
-            diffuse_texture_path.as_str(),
-        )?;
-        let normalmap = Texture::new(
-            device,
-            allocator,
-            command_pool,
-            queue,
-            normalmap_texture_path.as_str(),
-        )?;
-        Ok(LoadedTextures { diffuse, normalmap })
-    }
-
-    /// Cleans up Vulkan resources for the texture.
-    /// # Arguments
-    /// * `device` - The Vulkan device to use for cleanup.
-    /// * `allocator` - The global VMA allocator.
-    pub fn cleanup(&mut self, device: &Device, allocator: &Allocator) {
-        self.diffuse.cleanup(device, allocator);
-        self.normalmap.cleanup(device, allocator);
+        let diffuse_view = texture_cache.load(vb, diffuse_texture_path.as_str())?;
+        let normalmap_view = texture_cache.load(vb, normalmap_texture_path.as_str())?;
+        Ok(LoadedTextures { diffuse_view, normalmap_view })
     }
 }

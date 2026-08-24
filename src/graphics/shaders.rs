@@ -6,8 +6,8 @@
 //!
 //! This module provides abstractions for loading and managing Vulkan shader modules.
 //! It defines:
-//!   • `ShaderModule` - a wrapper around a VkShaderModule handle that automatically
-//!     destroys the module when dropped.
+//!   • `ShaderModule` - an owning wrapper around a `VkShaderModule` handle that
+//!     destroys the handle automatically when the Rust value is dropped.
 //!   • `ShaderStageInfo` - pairs a shader stage flag (vertex/fragment) with its module
 //!     and entry-point C string.
 //!   • `load_default_stages` - convenience function to load both the vertex and
@@ -27,13 +27,17 @@ use std::error::Error;
 use std::ffi::CStr;
 use std::path::Path;
 
-/// Represents a Vulkan shader module, encapsulating the shader code and its creation.
-/// It is used to create shader modules for the graphics pipeline.
-/// This struct is used by the `Pipeline` to set up the rendering pipeline.
-/// It provides methods to create shader modules from SPIR-V files and clean up resources.
+/// Owns one Vulkan shader-module handle and destroys it in [`Drop`].
+///
+/// `ash::Device::clone()` copies Ash's lightweight Rust wrapper; it does not
+/// create a second Vulkan logical device.  Keeping that wrapper here avoids a
+/// borrowed `&Device` field, which would make this type lifetime-parameterised.
+/// The application still explicitly chooses teardown order because Vulkan raw
+/// handles cannot express “the device must outlive this module” to Rust. That
+/// order guarantees this type's `Drop` runs while its device is still valid.
 pub struct ShaderModule {
     device: Device,
-    pub vk_shader_module: vk::ShaderModule,
+    vk_shader_module: vk::ShaderModule,
 }
 
 impl ShaderModule {
@@ -60,10 +64,12 @@ impl ShaderModule {
         })
     }
 
-    /// Clean up the shader module by destroying it
-    /// # Arguments
-    /// * `self` - The shader module to clean up.
-    pub fn cleanup(&self) {
+}
+
+impl Drop for ShaderModule {
+    fn drop(&mut self) {
+        // This value uniquely owns the Vulkan handle, so its destructor runs
+        // exactly once when a scope ends or an owning field is replaced.
         unsafe { self.device.destroy_shader_module(self.vk_shader_module, None) };
     }
 }

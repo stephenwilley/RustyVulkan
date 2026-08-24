@@ -88,16 +88,16 @@ pub struct VertexBuffer {
 }
 
 impl VertexBuffer {
-    /// Create a new vertex buffer, upload `data` (slice of Vertex)
+    /// Create a new vertex buffer, uploading any POD vertex or instance data.
     /// using HOST_VISIBLE | HOST_COHERENT memory properties.
     /// # Arguments
     /// * `allocator` - Global Vulkan memory allocator.
     /// * `data` - The vertex data to upload.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `VertexBuffer` on success, or an error on failure.
-    pub fn new(
+    pub fn new<T: Pod>(
         allocator: &Allocator,
-        data: &[Vertex],
+        data: &[T],
     ) -> Result<Self, Box<dyn Error>> {
         let size = std::mem::size_of_val(data) as vk::DeviceSize;
 
@@ -116,7 +116,7 @@ impl VertexBuffer {
         let (buffer, mut allocation) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
 
         unsafe {
-            let ptr = allocator.map_memory(&mut allocation)? as *mut Vertex;
+            let ptr = allocator.map_memory(&mut allocation)? as *mut T;
             std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
             allocator.unmap_memory(&mut allocation);
         }

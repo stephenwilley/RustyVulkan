@@ -15,6 +15,25 @@ use crate::vulkan::base::VulkanBase;
 use crate::graphics::meshmanager::MeshManager;
 use crate::graphics::materialmanager::MaterialManager;
 use crate::app::scene::{SceneObject, ScenePart, Transform as SceneTransform};
+use russimp_ng::material::PropertyTypeInfo;
+
+/// Extract a glTF material's constant albedo when it has no image texture.
+/// Assimp exposes glTF's `baseColorFactor` as `$clr.base`.
+fn material_base_color(material: &russimp_ng::material::Material) -> [f32; 3] {
+    for key in ["$clr.base", "$clr.diffuse"] {
+        if let Some(PropertyTypeInfo::FloatArray(color)) = material
+            .properties
+            .iter()
+            .find(|property| property.key == key)
+            .map(|property| &property.data)
+        {
+            if color.len() >= 3 {
+                return [color[0], color[1], color[2]];
+            }
+        }
+    }
+    [1.0, 1.0, 1.0]
+}
 
 /// russimp/Assimp-backed importer: load scene, build meshes/materials, walk nodes.
 pub fn import_model_as_object(
@@ -48,10 +67,12 @@ pub fn import_model_as_object(
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "model".to_string());
 
-    // 2) Materials: map to your MaterialManager (basic albedo + normal for now)
+    // 2) Materials: map textures or constant glTF base colours to the renderer.
     let mut material_ids: Vec<usize> = Vec::with_capacity(scene.materials.len());
+    let mut material_colors: Vec<[f32; 3]> = Vec::with_capacity(scene.materials.len());
     for (i, mat) in scene.materials.iter().enumerate() {
         let name = format!("{}_mat{}", model_stem, i);
+        material_colors.push(material_base_color(mat));
 
         // Best-effort fetch of common texture types; PBR expansion comes next
         use russimp_ng::material::TextureType;
@@ -81,13 +102,16 @@ pub fn import_model_as_object(
         let normal_tex = find_tex_path(TextureType::Normals);
 
         // Choose shader based on texture availability
-        let use_textured = diffuse_tex.is_some();
+        // A normal-map-only material is still textured: `Material::new`
+        // supplies a neutral diffuse texture for its required albedo binding.
+        let use_textured = diffuse_tex.is_some() || normal_tex.is_some();
         let (vs_path, fs_path) = if use_textured {
             ("assets/shaders/spv/main.vert.spv".into(),
              "assets/shaders/spv/main.frag.spv".into())
         } else {
-            ("assets/shaders/spv/passthrough.vert.spv".into(),
-             "assets/shaders/spv/lambert_no_tex.frag.spv".into())
+            // The colour-only path still receives the global shadow map.
+            ("assets/shaders/spv/vertex_color.vert.spv".into(),
+             "assets/shaders/spv/vertex_color.frag.spv".into())
         };
 
         let id = mats.request_material(
@@ -101,7 +125,7 @@ pub fn import_model_as_object(
                 depth_write: true,
                 uv_tiling: None,
             },
-        );
+        )?;
         material_ids.push(id);
     }
     if material_ids.is_empty() {
@@ -116,8 +140,9 @@ pub fn import_model_as_object(
                 depth_write: true,
                 uv_tiling: None,
             },
-        );
+        )?;
         material_ids.push(default_id);
+        material_colors.push([1.0, 1.0, 1.0]);
     }
 
     // 3) Build meshes for each Assimp mesh; store mesh_id by index
@@ -125,6 +150,11 @@ pub fn import_model_as_object(
     for (mi, ai_mesh) in scene.meshes.iter().enumerate() {
         let mut cpu = crate::graphics::mesh::Mesh::new();
         cpu.vertices.reserve(ai_mesh.vertices.len());
+        // Apply the material factor to every vertex for untextured glTF meshes.
+        let vertex_color = material_colors
+            .get(ai_mesh.material_index as usize)
+            .copied()
+            .unwrap_or([1.0, 1.0, 1.0]);
 
         // Extract vertex attributes with safe fallbacks
         for vi in 0..ai_mesh.vertices.len() {
@@ -155,7 +185,7 @@ pub fn import_model_as_object(
             cpu.vertices.push(crate::graphics::mesh::Vertex {
                 pos: [p.x as f32, p.y as f32, p.z as f32],
                 normal: [n.x as f32, n.y as f32, n.z as f32],
-                color: [1.0, 1.0, 1.0],
+                color: vertex_color,
                 uv: [uv.x as f32, uv.y as f32],
                 tangent: [tan.x as f32, tan.y as f32, tan.z as f32],
                 bitangent: [bit.x as f32, bit.y as f32, bit.z as f32],

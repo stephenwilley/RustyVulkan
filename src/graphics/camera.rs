@@ -59,8 +59,12 @@ impl Camera {
     /// Prefer calling this from a window-resize handler so your chosen
     /// `near`/`far` are not overwritten.
     pub fn set_aspect(&mut self, aspect: f32) {
-        self.aspect = aspect;
-        self.rebuild_projection();
+        // Minimized windows report a zero height.  Keeping the last valid
+        // projection avoids NaNs propagating through the renderer.
+        if aspect.is_finite() && aspect > 0.0 {
+            self.aspect = aspect;
+            self.rebuild_projection();
+        }
     }
 
     /// Rebuilds the projection matrix from stored parameters.
@@ -129,29 +133,37 @@ impl Camera {
         self.set_view_yxz(self.position, self.yaw, self.pitch, self.roll);
     }
 
-    /// Moves the camera along its local forward and right axes.
+    /// Moves the camera in the horizontal X/Z plane using its yaw only.
     ///
     /// Arguments
-    /// - `forward_amt`: > 0 moves “into” the scene; < 0 moves back.
-    /// - `right_amt`:   > 0 strafes right; < 0 strafes left.
-    pub fn translate(&mut self, forward_amt: f32, right_amt: f32) {
+    /// - `forward_distance`: > 0 moves forward; < 0 moves back.
+    /// - `right_distance`:   > 0 strafes right; < 0 strafes left.
+    ///
+    /// Looking up or down therefore never makes first-person movement fly or sink.
+    pub fn translate_horizontal(&mut self, forward_distance: f32, right_distance: f32) {
         let yaw_rad: Rad<f32> = Deg(self.yaw).into();
-        let pitch_rad: Rad<f32> = Deg(self.pitch).into();
-        // Forward vector in XZ plane
+        // Discard pitch: WASD movement stays level while the view can look anywhere.
         let forward_dir = Vector3 {
-            x: yaw_rad.sin() * pitch_rad.cos(),
-            y: pitch_rad.sin(),
-            z: -yaw_rad.cos() * pitch_rad.cos(),
-        }
-        .normalize();
-        // Right is cross(forward, up)
+            x: yaw_rad.sin(),
+            y: 0.0,
+            z: -yaw_rad.cos(),
+        };
         let right_dir = forward_dir.cross(Vector3::unit_y()).normalize();
 
-        // Move position
-        self.position += (forward_dir * forward_amt) + (right_dir * right_amt);
+        self.position += (forward_dir * forward_distance) + (right_dir * right_distance);
 
-        // Rebuild view matrix at new position
         self.set_view_yxz(self.position, self.yaw, self.pitch, self.roll);
+    }
+
+    /// Raises the camera to a fixed eye height above a sampled terrain height.
+    pub fn set_height_above_ground(&mut self, ground_height: f32, eye_height: f32) {
+        self.position.y = ground_height + eye_height;
+        self.set_view_yxz(self.position, self.yaw, self.pitch, self.roll);
+    }
+
+    /// Returns the current world-space camera position.
+    pub fn position(&self) -> Point3<f32> {
+        self.position
     }
 
     /// Returns the Vulkan-corrected projection matrix.
@@ -182,5 +194,37 @@ impl Camera {
 impl Default for Camera {
     fn default() -> Self {
         Camera::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Camera;
+
+    #[test]
+    fn invalid_aspect_does_not_replace_the_last_valid_projection() {
+        let mut camera = Camera::new();
+        camera.set_aspect(4.0 / 3.0);
+        let projection = *camera.get_projection();
+
+        camera.set_aspect(0.0);
+        assert_eq!(camera.get_aspect(), 4.0 / 3.0);
+        assert_eq!(*camera.get_projection(), projection);
+
+        camera.set_aspect(f32::NAN);
+        assert_eq!(camera.get_aspect(), 4.0 / 3.0);
+        assert_eq!(*camera.get_projection(), projection);
+    }
+
+    #[test]
+    fn horizontal_motion_and_ground_lock_keep_the_expected_height() {
+        let mut camera = Camera::new();
+        let original_height = camera.position().y;
+
+        camera.translate_horizontal(2.0, 1.0);
+        assert_eq!(camera.position().y, original_height);
+
+        camera.set_height_above_ground(0.25, 1.8);
+        assert_eq!(camera.position().y, 2.05);
     }
 }

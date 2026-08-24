@@ -48,6 +48,16 @@ impl Transform {
         Transform { translation, rotation, scale }
     }
 
+    /// Sets Y so this uniformly scaled, upright object rests on a terrain height.
+    ///
+    /// `local_base_y` is the mesh's lowest local Y coordinate: it is `-1.0`
+    /// for the unit cube and sphere, and `0.0` for the imported hut.  This is
+    /// deliberately not physics or a raycast; pitched/rolled objects need a
+    /// transformed bounding box before their lowest point can be determined.
+    pub fn place_on_ground(&mut self, ground_y: f32, local_base_y: f32) {
+        self.translation.y = ground_y - local_base_y * self.scale;
+    }
+
     /// Builds a 4x4 model matrix (Translation * Rotation * Scale).
     pub fn model_matrix(&self) -> Matrix4<f32> {
         let t = Matrix4::from_translation(self.translation);

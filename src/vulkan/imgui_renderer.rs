@@ -55,8 +55,10 @@ pub struct ImGuiRenderer {
     // Extra textures support (for Image widgets):
     texture_pool:         vk::DescriptorPool,
     textures:             Vec<vk::DescriptorSet>,
-    pub shadow_tex_id:        Option<imgui::TextureId>,
-    pub last_shadow_view:     Option<vk::ImageView>,
+    // Each swapchain image gets its own descriptor set.  Updating the set for
+    // the image currently being recorded is safe because its fence was waited
+    // before command recording began.
+    shadow_tex_ids:        Vec<Option<(vk::ImageView, imgui::TextureId)>>,
 }
 
 impl ImGuiRenderer {
@@ -414,7 +416,7 @@ impl ImGuiRenderer {
         self.descriptor_set = self.allocate_imgui_descriptor_set(base);
         // The write to bind image+sampler will happen later when fonts are uploaded
         self.textures = Vec::new();
-        self.shadow_tex_id = None;
+        self.shadow_tex_ids.clear();
     }
 
     /// Register or update a texture descriptor for displaying images in ImGui.
@@ -448,6 +450,33 @@ impl ImGuiRenderer {
         self.textures.push(set);
         // Reserve ID space: 1..=textures.len(), where 0 is font
         imgui::TextureId::new(self.textures.len() as usize)
+    }
+
+    /// Returns a descriptor-backed texture ID for this frame's shadow image.
+    pub fn shadow_texture_id(
+        &mut self,
+        base: &VulkanBase,
+        image_index: usize,
+        sampler: vk::Sampler,
+        view: vk::ImageView,
+    ) -> imgui::TextureId {
+        // This descriptor belongs to the acquired image, whose fence has already completed.
+        if self.shadow_tex_ids.len() <= image_index {
+            self.shadow_tex_ids.resize(image_index + 1, None);
+        }
+
+        if let Some((cached_view, texture_id)) = self.shadow_tex_ids[image_index] {
+            if cached_view == view {
+                return texture_id;
+            }
+            let texture_id = self.ensure_texture(base, sampler, view, Some(texture_id));
+            self.shadow_tex_ids[image_index] = Some((view, texture_id));
+            return texture_id;
+        }
+
+        let texture_id = self.ensure_texture(base, sampler, view, None);
+        self.shadow_tex_ids[image_index] = Some((view, texture_id));
+        texture_id
     }
 
     // ----------------------------------------------------------
@@ -661,7 +690,7 @@ impl ImGuiRenderer {
         };
         pipeline_info.p_next = &rendering_info as *const _ as *const std::ffi::c_void;
         self.vk_pipeline = unsafe {
-            device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+            device.create_graphics_pipelines(base.pipeline_cache, &[pipeline_info], None)
                   .map_err(|e| e.1).unwrap()[0]
         };
         Ok(())
@@ -674,18 +703,27 @@ impl ImGuiRenderer {
         // Total vertex and index data sizes
         let vertex_size = (draw_data.total_vtx_count as usize * std::mem::size_of::<DrawVert>()) as vk::DeviceSize;
         let index_size  = (draw_data.total_idx_count as usize * std::mem::size_of::<DrawIdx>()) as vk::DeviceSize;
+        let grow_vertex_buffer = vertex_size > self.vertex_buffer_size;
+        let grow_index_buffer = index_size > self.index_buffer_size;
 
-        // Resize vertex buffer if needed
-        if vertex_size > self.vertex_buffer_size {
+        // Reallocation invalidates buffers that may be referenced by previous
+        // frames.  Wait once when either buffer grows, then grow capacity
+        // geometrically to avoid repeating this work for small UI changes.
+        if (grow_vertex_buffer && self.vertex_buffer != vk::Buffer::null())
+            || (grow_index_buffer && self.index_buffer != vk::Buffer::null())
+        {
+            unsafe { self.device.device_wait_idle().expect("wait for ImGui buffer resize"); }
+        }
+
+        if grow_vertex_buffer {
             if self.vertex_buffer != vk::Buffer::null() {
                 if let Some(allocation) = &mut self.vertex_allocation {
-                    // Ensure GPU is idle before destroying buffers that may be in-flight
-                    unsafe { self.device.device_wait_idle().ok(); }
                     unsafe { allocator.destroy_buffer(self.vertex_buffer, allocation); }
                 }
             }
+            let capacity = vertex_size.max(self.vertex_buffer_size.saturating_mul(2)).max(1024);
             let buffer_info = vk::BufferCreateInfo {
-                size: vertex_size,
+                size: capacity,
                 usage: vk::BufferUsageFlags::VERTEX_BUFFER,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 ..Default::default()
@@ -698,20 +736,18 @@ impl ImGuiRenderer {
             let (buf, alloc) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info).expect("create vertex buffer") };
             self.vertex_buffer = buf;
             self.vertex_allocation = Some(alloc);
-            self.vertex_buffer_size = vertex_size;
+            self.vertex_buffer_size = capacity;
         }
 
-        // Resize index buffer if needed
-        if index_size > self.index_buffer_size {
+        if grow_index_buffer {
             if self.index_buffer != vk::Buffer::null() {
                 if let Some(allocation) = &mut self.index_allocation {
-                    // Ensure GPU is idle before destroying buffers that may be in-flight
-                    unsafe { self.device.device_wait_idle().ok(); }
                     unsafe { allocator.destroy_buffer(self.index_buffer, allocation); }
                 }
             }
+            let capacity = index_size.max(self.index_buffer_size.saturating_mul(2)).max(1024);
             let buffer_info = vk::BufferCreateInfo {
-                size: index_size,
+                size: capacity,
                 usage: vk::BufferUsageFlags::INDEX_BUFFER,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
                 ..Default::default()
@@ -724,7 +760,7 @@ impl ImGuiRenderer {
             let (buf, alloc) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info).expect("create index buffer") };
             self.index_buffer = buf;
             self.index_allocation = Some(alloc);
-            self.index_buffer_size = index_size;
+            self.index_buffer_size = capacity;
         }
 
         // Map and copy vertex data
@@ -771,14 +807,13 @@ impl ImGuiRenderer {
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
     pub fn rebuild_pipeline(&mut self, base: &mut VulkanBase) -> Result<(), Box<dyn Error>> {
         unsafe {
-            base.device.device_wait_idle().expect("Failed to wait device idle");
             base.device.destroy_pipeline(self.vk_pipeline, None);
             base.device.destroy_pipeline_layout(self.pipeline_layout, None);
-            if self.vert_stage.is_some() || self.frag_stage.is_some() {
-                self.vert_stage.as_ref().unwrap().shader_module.cleanup();
-                self.frag_stage.as_ref().unwrap().shader_module.cleanup();
-            }
         }
+        // Taking an Option moves its old value out; dropping that value invokes
+        // ShaderModule::drop before the new pipeline stages replace it.
+        drop(self.vert_stage.take());
+        drop(self.frag_stage.take());
         let (vert_stage, frag_stage) = Self::load_shaders(self, base);
         let shader_stages = [
             vert_stage.to_create_info(),
@@ -852,8 +887,7 @@ impl ImGuiRenderer {
             frag_stage: None,
             texture_pool: vk::DescriptorPool::null(),
             textures: Vec::new(),
-            shadow_tex_id: None,
-            last_shadow_view: None,
+            shadow_tex_ids: Vec::new(),
         };
 
         // 8) Initialize descriptor layout, pool, and set for ImGui
@@ -897,14 +931,6 @@ impl ImGuiRenderer {
                 }
             }
 
-            // Shader modules
-            if let Some(stage) = &self.vert_stage {
-                stage.shader_module.cleanup();
-            }
-            if let Some(stage) = &self.frag_stage {
-                stage.shader_module.cleanup();
-            }
-
             // Descriptor resources and pipeline
             if self.texture_pool != vk::DescriptorPool::null() {
                 self.device.destroy_descriptor_pool(self.texture_pool, None);
@@ -918,6 +944,9 @@ impl ImGuiRenderer {
                 self.device.destroy_pipeline_layout(self.pipeline_layout, None);
             }
         }
+        // Keep the Vulkan dependency order visible even though the modules are RAII.
+        drop(self.vert_stage.take());
+        drop(self.frag_stage.take());
     }
 
     /// Records ImGui draw commands: bind pipeline, descriptor set, and push constants.

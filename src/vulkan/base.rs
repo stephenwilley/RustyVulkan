@@ -29,6 +29,8 @@
 
 /// Number of CPU frames-in-flight (slots) for synchronization.
 const INFLIGHT_FRAMES: usize = 2;
+/// Frame start/end plus the boundaries needed to isolate shadow, scene, and vegetation work.
+const TIMESTAMPS_PER_IMAGE: u32 = 5;
 
 use ash::khr::surface;
 use ash::khr::swapchain;
@@ -45,6 +47,30 @@ use winit::window::Window;
 use super::attachments::{AttachmentHandle, AttachmentManager, AttachmentRequest};
 use super::swapchain::Swapchain;
 use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
+
+/// GPU durations measured for the most recently completed frame.
+///
+/// Timestamp queries are asynchronous: these values describe the previous completed frame,
+/// which keeps the profiler from stalling the CPU waiting for the GPU.  `scene_ms` is the
+/// main scene after shadows and before vegetation; `total_ms` also includes the UI pass.
+#[derive(Clone, Copy, Default)]
+pub struct GpuPassTimings {
+    pub total_ms: Option<f32>,
+    pub shadow_ms: Option<f32>,
+    pub scene_ms: Option<f32>,
+    pub vegetation_ms: Option<f32>,
+}
+
+#[repr(u32)]
+/// Query positions within each swapchain image's five-query range.  Keep this order in sync
+/// with the calculations in `begin_frame`.
+enum GpuTimestamp {
+    FrameStart = 0,
+    ShadowEnd = 1,
+    VegetationStart = 2,
+    VegetationEnd = 3,
+    FrameEnd = 4,
+}
 
 /// The debug callback function that prints validation layer messages.
 #[cfg(debug_assertions)]
@@ -88,6 +114,9 @@ pub struct VulkanBase {
     pub physical_device: vk::PhysicalDevice,
     /// Logical device used for all Vulkan calls.
     pub device: ash::Device,
+    /// Reused while creating graphics pipelines to avoid recompiling shared
+    /// pipeline state during runtime rebuilds.
+    pub pipeline_cache: vk::PipelineCache,
     /// Global Vulkan memory allocator (VMA).
     pub allocator: Option<vk_mem::Allocator>,
     /// Graphics queue from the selected family.
@@ -103,11 +132,13 @@ pub struct VulkanBase {
     pub ubo_allocations: Vec<Allocation>,
     /// Sampler for the directional shadow map (set=0, binding=1)
     pub shadow_sampler: vk::Sampler,
+    /// Last shadow view written to each per-image global descriptor set.
+    shadow_descriptor_views: Vec<vk::ImageView>,
     // --- Timing (GPU timestamp queries) ---
     timestamp_query_pool: vk::QueryPool,
     timestamp_period_ns: f32,
-    /// Last frame's measured GPU time in milliseconds (if available)
-    last_gpu_ms: Option<f32>,
+    /// Timings collected from the last completed GPU frame.
+    last_gpu_timings: GpuPassTimings,
     /// For each CPU frame-in-flight slot, which swapchain image index it last submitted
     last_image_per_slot: Vec<Option<u32>>,
     // -- Synchronization objects --
@@ -142,8 +173,15 @@ pub struct VulkanBase {
     /// Generation counter for pipeline-dependent changes (swapchain, MSAA, wireframe, etc)
     pipeline_generation: u64,
     pub sample_count_flags_supported: vk::SampleCountFlags,
+    /// Whether one indirect command can execute several indexed draws.
+    pub supports_multi_draw_indirect: bool,
+    /// Device limit used to split unusually large indirect command lists safely.
+    pub max_draw_indirect_count: u32,
     /// Tracks a pending MSAA sample count change requested by the UI.
     pending_msaa_samples: Option<u32>,
+    /// Set when acquire or presentation reports an out-of-date/suboptimal
+    /// swapchain.  The render graph recreates it at the next safe boundary.
+    swapchain_recreation_needed: bool,
 }
 
 /// Frame context returned by `begin_frame` and consumed by `end_frame`.
@@ -194,7 +232,7 @@ impl VulkanBase {
             // If we have a previous image index for this slot, read back its timestamps.
             if let Some(prev_image_index) = self.last_image_per_slot[slot] {
                 let base = self.image_query_base(prev_image_index);
-                let mut data: [u64; 2] = [0; 2];
+                let mut data = [0_u64; TIMESTAMPS_PER_IMAGE as usize];
                 let res = self.device.get_query_pool_results(
                     self.timestamp_query_pool,
                     base,
@@ -202,29 +240,32 @@ impl VulkanBase {
                     vk::QueryResultFlags::TYPE_64,
                 );
                 if res.is_ok() {
-                    let start = data[0];
-                    let end = data[1];
-                    if end > start {
-                        let delta_ticks = end - start;
-                        let ns = (delta_ticks as f64) * (self.timestamp_period_ns as f64);
-                        self.last_gpu_ms = Some((ns / 1_000_000.0) as f32);
-                    }
+                    self.last_gpu_timings = GpuPassTimings {
+                        total_ms: self.timestamp_delta_ms(data[0], data[4]),
+                        shadow_ms: self.timestamp_delta_ms(data[0], data[1]),
+                        scene_ms: self.timestamp_delta_ms(data[1], data[2]),
+                        vegetation_ms: self.timestamp_delta_ms(data[2], data[3]),
+                    };
                 }
                 // Clear the record; we'll set it again on submit
                 self.last_image_per_slot[slot] = None;
             }
 
             // Acquire an image; signal when it's ready via the per-slot image-available semaphore.
-            let (image_index, _is_suboptimal) = match self.swapchain_loader.acquire_next_image(
+            let (image_index, is_suboptimal) = match self.swapchain_loader.acquire_next_image(
                 self.swapchain.handle,
                 u64::MAX,
                 self.image_available_semaphores[slot],
                 vk::Fence::null(),
             ) {
                 Ok(result) => result,
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Ok(None),
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                    self.swapchain_recreation_needed = true;
+                    return Ok(None);
+                }
                 Err(e) => return Err(e.into()),
             };
+            self.swapchain_recreation_needed |= is_suboptimal;
 
             let idx = image_index as usize;
             self.current_image_index = idx;
@@ -244,8 +285,6 @@ impl VulkanBase {
 
             let begin_info = vk::CommandBufferBeginInfo::default();
             self.device.begin_command_buffer(cmd_buf, &begin_info)?;
-
-            // Queries are reset when we begin GPU timing for this image
 
             Ok(Some(FrameCtx {
                 cmd_buf,
@@ -354,7 +393,8 @@ impl VulkanBase {
                 .swapchain_loader
                 .queue_present(self.graphics_queue, &present_info)
             {
-                Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => { /* caller will recreate if needed */
+                Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                    self.swapchain_recreation_needed = true;
                 }
                 Err(e) => return Err(e.into()),
                 _ => {}
@@ -383,45 +423,72 @@ impl VulkanBase {
         )
     }
 
-    /// Helpers for GPU timing around command recording.
+    /// Starts the frame's timestamp range and clears its per-pass boundaries.
+    ///
+    /// Queries belong to the acquired swapchain image, so an image is never reset while the
+    /// fence protecting that image still has GPU work in flight.
     pub fn begin_gpu_timing(&self, cmd: vk::CommandBuffer, image_index: u32) {
         unsafe {
             let base = self.image_query_base(image_index);
             self.device
-                .cmd_reset_query_pool(cmd, self.timestamp_query_pool, base, 2);
+                .cmd_reset_query_pool(cmd, self.timestamp_query_pool, base, TIMESTAMPS_PER_IMAGE);
             self.device.cmd_write_timestamp(
                 cmd,
                 vk::PipelineStageFlags::TOP_OF_PIPE,
                 self.timestamp_query_pool,
-                base, // frame start
+                base + GpuTimestamp::FrameStart as u32,
             );
         }
     }
 
+    /// Marks the end of the depth-only shadow pass.
+    pub fn mark_shadow_timing_end(&self, cmd: vk::CommandBuffer, image_index: u32) {
+        self.write_gpu_timestamp(cmd, image_index, GpuTimestamp::ShadowEnd);
+    }
+
+    /// Marks the portion of the main pass used by instanced grass and reeds.
+    pub fn mark_vegetation_timing_start(&self, cmd: vk::CommandBuffer, image_index: u32) {
+        self.write_gpu_timestamp(cmd, image_index, GpuTimestamp::VegetationStart);
+    }
+
+    /// Marks the end of instanced vegetation rendering.
+    pub fn mark_vegetation_timing_end(&self, cmd: vk::CommandBuffer, image_index: u32) {
+        self.write_gpu_timestamp(cmd, image_index, GpuTimestamp::VegetationEnd);
+    }
+
+    /// Marks the end of all recorded rendering work, including the UI pass but not present.
     pub fn end_gpu_timing(&self, cmd: vk::CommandBuffer, image_index: u32) {
+        self.write_gpu_timestamp(cmd, image_index, GpuTimestamp::FrameEnd);
+    }
+
+    fn write_gpu_timestamp(&self, cmd: vk::CommandBuffer, image_index: u32, point: GpuTimestamp) {
         unsafe {
-            let q1 = self.frame_end_index(image_index);
             self.device.cmd_write_timestamp(
                 cmd,
                 vk::PipelineStageFlags::BOTTOM_OF_PIPE,
                 self.timestamp_query_pool,
-                q1,
+                self.image_query_base(image_index) + point as u32,
             );
         }
     }
 
-    // Per-pass GPU timing methods removed for simplicity
-
-    /// Latest GPU ms measured (from the previous submission that completed)
-    pub fn latest_gpu_ms(&self) -> Option<f32> {
-        self.last_gpu_ms
+    /// Per-pass timings from the previous completed GPU submission.
+    pub fn latest_gpu_pass_timings(&self) -> GpuPassTimings {
+        self.last_gpu_timings
     }
 
     #[inline]
-    fn image_query_base(&self, image_index: u32) -> u32 { image_index * 2 }
+    fn image_query_base(&self, image_index: u32) -> u32 { image_index * TIMESTAMPS_PER_IMAGE }
 
-    #[inline]
-    fn frame_end_index(&self, image_index: u32) -> u32 { self.image_query_base(image_index) + 1 }
+    /// Converts a monotonic timestamp pair into milliseconds.  An unavailable or invalid pair
+    /// remains `None` instead of producing a misleading profiler value.
+    fn timestamp_delta_ms(&self, start: u64, end: u64) -> Option<f32> {
+        (end > start).then(|| {
+            let delta_ticks = end - start;
+            let ns = (delta_ticks as f64) * (self.timestamp_period_ns as f64);
+            (ns / 1_000_000.0) as f32
+        })
+    }
 
     /// Update the global UBO with lighting data
     pub fn update_global_ubo(&mut self, image_index: usize, ubo: &GlobalUbo) {
@@ -443,7 +510,11 @@ impl VulkanBase {
     }
 
     /// Update set=0 binding=1 to point at the current frame's shadow image view
-    pub fn update_shadow_descriptor(&self, image_index: usize, image_view: vk::ImageView) {
+    pub fn update_shadow_descriptor(&mut self, image_index: usize, image_view: vk::ImageView) {
+        // The view normally stays the same for an image, so avoid a redundant descriptor write.
+        if self.shadow_descriptor_views[image_index] == image_view {
+            return;
+        }
         let set = self.set0_descriptor_sets[image_index];
         let image_info = vk::DescriptorImageInfo {
             sampler: self.shadow_sampler,
@@ -460,6 +531,7 @@ impl VulkanBase {
             ..Default::default()
         };
         unsafe { self.device.update_descriptor_sets(&[write], &[]) };
+        self.shadow_descriptor_views[image_index] = image_view;
     }
 
     /// Apply any queued surface-dependent changes (like MSAA) at a frame boundary.
@@ -551,53 +623,77 @@ impl VulkanBase {
         }
     }
 
-    /// Chooses a suitable physical device.
-    /// Prioritizes discrete GPUs, otherwise selects the first available device.
-    /// # Arguments
-    /// * `instance` - The Vulkan instance.
-    /// * `physical_devices` - A slice of available physical devices.
-    /// # Returns
-    /// * `vk::PhysicalDevice` - The chosen physical device.
-    fn choose_device(
+    /// Selects a device and queue family that can both render and present to
+    /// this window.  A discrete GPU is preferred, but only when it meets all
+    /// requirements; the old code picked the first discrete GPU before
+    /// checking presentation support.
+    fn choose_device_and_queue_family(
         instance: &Instance,
         physical_devices: &[vk::PhysicalDevice],
-    ) -> vk::PhysicalDevice {
-        physical_devices
-            .iter()
-            .find(|&d| {
-                let props = unsafe { instance.get_physical_device_properties(*d) };
-                props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU
-            })
-            .copied()
-            .unwrap_or(physical_devices[0])
-    }
+        surface_loader: &surface::Instance,
+        surface: vk::SurfaceKHR,
+    ) -> Result<(vk::PhysicalDevice, u32), Box<dyn Error>> {
+        for prefer_discrete in [true, false] {
+            for &physical_device in physical_devices {
+                let props = unsafe { instance.get_physical_device_properties(physical_device) };
+                if (props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU) != prefer_discrete {
+                    continue;
+                }
 
-    /// Finds the index of a queue family that supports graphics operations.
-    /// # Arguments
-    /// * `instance` - The Vulkan instance.
-    /// * `physical_device` - The physical device to query.
-    /// # Returns
-    /// * `Result<u32, String>` - The queue family index on success, or an error string if not found.
-    fn find_graphics_queue_family_index(
-        instance: &Instance,
-        physical_device: vk::PhysicalDevice,
-    ) -> Result<u32, String> {
-        let queue_family_properties =
-            unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
+                let extensions = unsafe {
+                    instance.enumerate_device_extension_properties(physical_device)?
+                };
+                let has_extension = |required: &CStr| {
+                    extensions.iter().any(|extension| {
+                        let name = unsafe { CStr::from_ptr(extension.extension_name.as_ptr()) };
+                        name == required
+                    })
+                };
+                if !has_extension(vk::KHR_SWAPCHAIN_NAME) {
+                    continue;
+                }
 
-        let index = queue_family_properties
-            .iter()
-            .enumerate()
-            .find(|(_, info)| info.queue_flags.contains(vk::QueueFlags::GRAPHICS))
-            .map(|(index, _)| index as u32);
+                // Dynamic rendering was promoted to Vulkan 1.3.  Drivers are
+                // not required to advertise the older KHR extension once they
+                // expose the core API, so accept either form.
+                let supports_dynamic_rendering_extension =
+                    has_extension(vk::KHR_DYNAMIC_RENDERING_NAME);
+                if props.api_version < vk::API_VERSION_1_3 && !supports_dynamic_rendering_extension {
+                    continue;
+                }
 
-        match index {
-            Some(i) => {
-                println!("🎯 Found graphics queue family at index {}", i);
-                Ok(i)
+                let supports_dynamic_rendering = unsafe {
+                    let mut features = vk::PhysicalDeviceDynamicRenderingFeatures::default();
+                    let mut features2 = vk::PhysicalDeviceFeatures2::default().push_next(&mut features);
+                    instance.get_physical_device_features2(physical_device, &mut features2);
+                    features.dynamic_rendering == vk::TRUE
+                };
+                if !supports_dynamic_rendering {
+                    continue;
+                }
+
+                let queue_families = unsafe {
+                    instance.get_physical_device_queue_family_properties(physical_device)
+                };
+                for (index, family) in queue_families.iter().enumerate() {
+                    if !family.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                        continue;
+                    }
+                    if unsafe {
+                        surface_loader.get_physical_device_surface_support(
+                            physical_device,
+                            index as u32,
+                            surface,
+                        )?
+                    } {
+                        println!("🎯 Found graphics/present queue family at index {}", index);
+                        return Ok((physical_device, index as u32));
+                    }
+                }
             }
-            None => Err("Could not find a graphics queue family".to_string()),
         }
+
+        Err("No Vulkan device supports graphics, presentation, and dynamic rendering".into())
     }
 
     /// Creates a logical device and retrieves the graphics queue.
@@ -611,12 +707,17 @@ impl VulkanBase {
         instance: &Instance,
         physical_device: vk::PhysicalDevice,
         queue_family_index: u32,
+        enable_multi_draw_indirect: bool,
     ) -> Result<(ash::Device, vk::Queue), vk::Result> {
         let queue_priority = [1.0_f32];
 
-        // Query and enable device features, including sampler anisotropy
-        let mut device_features = unsafe { instance.get_physical_device_features(physical_device) };
-        device_features.sampler_anisotropy = vk::TRUE;
+        // Enable only the features the renderer actually requires.  Copying
+        // all advertised features and forcing anisotropy on made device
+        // creation fail on otherwise usable Vulkan implementations.
+        let device_features = vk::PhysicalDeviceFeatures {
+            multi_draw_indirect: if enable_multi_draw_indirect { vk::TRUE } else { vk::FALSE },
+            ..Default::default()
+        };
 
         let queue_info = vk::DeviceQueueCreateInfo {
             s_type: vk::StructureType::DEVICE_QUEUE_CREATE_INFO,
@@ -637,7 +738,13 @@ impl VulkanBase {
 
         let mut device_extensions: Vec<*const i8> = Vec::new();
         device_extensions.push(vk::KHR_SWAPCHAIN_NAME.as_ptr());
-        device_extensions.push(vk::KHR_DYNAMIC_RENDERING_NAME.as_ptr());
+        let has_dynamic_rendering_extension = supported_dev_exts.iter().any(|e| {
+            let name = unsafe { std::ffi::CStr::from_ptr(e.extension_name.as_ptr()) };
+            name == vk::KHR_DYNAMIC_RENDERING_NAME
+        });
+        if has_dynamic_rendering_extension {
+            device_extensions.push(vk::KHR_DYNAMIC_RENDERING_NAME.as_ptr());
+        }
         if has_portability_subset {
             // Present on MoltenVK, absent on native Windows/NVIDIA
             device_extensions.push(vk::KHR_PORTABILITY_SUBSET_NAME.as_ptr());
@@ -911,24 +1018,26 @@ impl VulkanBase {
         self.ubo_allocations = new_ubo_allocations;
         self.set0_descriptor_pool = new_pool;
         self.set0_descriptor_sets = new_sets;
+        self.shadow_descriptor_views = vec![vk::ImageView::null(); new_image_count];
 
         self.attachment_manager
             .cleanup(&self.device, self.allocator.as_ref().unwrap());
         self.attachment_manager = AttachmentManager::new(new_image_count);
-        // Recreate the timestamp query pool to match new image count (two queries per image)
+        // Recreate the timestamp query pool to match new image count and per-pass markers.
         unsafe { self.device.destroy_query_pool(self.timestamp_query_pool, None); }
         let qp_info = vk::QueryPoolCreateInfo {
             query_type: vk::QueryType::TIMESTAMP,
-            query_count: (new_image_count as u32) * 2,
+            query_count: (new_image_count as u32) * TIMESTAMPS_PER_IMAGE,
             ..Default::default()
         };
         self.timestamp_query_pool = unsafe { self.device.create_query_pool(&qp_info, None)? };
         // Invalidate last GPU time reading since the pool was recreated
-        self.last_gpu_ms = None;
+        self.last_gpu_timings = GpuPassTimings::default();
         // Avoid reading uninitialized queries on the next frame after recreation
         self.last_image_per_slot = vec![None; self.image_available_semaphores.len()];
         // Bump pipeline generation (swapchain/image count change affects pipelines)
         self.pipeline_generation = self.pipeline_generation.saturating_add(1);
+        self.swapchain_recreation_needed = false;
         Ok(())
     }
 
@@ -975,14 +1084,14 @@ impl VulkanBase {
             self.pipeline_generation = self.pipeline_generation.saturating_add(1);
         }
     }
-    /// Toggles the FPS display
-    pub fn toggle_ui(&mut self) {
-        self.engine_settings.show_ui = !self.engine_settings.show_ui;
-    }
-
     /// Returns the current pipeline generation counter.
     pub fn pipeline_generation(&self) -> u64 {
         self.pipeline_generation
+    }
+
+    /// Returns and clears the pending swapchain-recreation request.
+    pub fn take_swapchain_recreation_request(&mut self) -> bool {
+        std::mem::take(&mut self.swapchain_recreation_needed)
     }
 
     /// Creates a new `VulkanBase` instance, initializing Vulkan resources and setting up the swapchain.
@@ -1032,12 +1141,22 @@ impl VulkanBase {
         #[cfg(debug_assertions)]
         let (debug_utils_loader, debug_messenger) = Self::setup_debug_messenger(&entry, &instance)?;
 
+        // Surface capability (including presentation support) is a property
+        // of a physical device, so it must exist before selecting that device.
+        let surface = Self::create_surface(&entry, &instance, window, event_loop)?;
+        let surface_loader = surface::Instance::new(&entry, &instance);
+
         let physical_devices = unsafe { instance.enumerate_physical_devices()? };
 
         #[cfg(debug_assertions)]
         Self::print_physical_devices(&instance, &physical_devices);
 
-        let physical_device = Self::choose_device(&instance, &physical_devices);
+        let (physical_device, graphics_queue_family_index) = Self::choose_device_and_queue_family(
+            &instance,
+            &physical_devices,
+            &surface_loader,
+            surface,
+        )?;
         let chosen_props = unsafe { instance.get_physical_device_properties(physical_device) };
         let chosen_name = unsafe {
             CStr::from_ptr(chosen_props.device_name.as_ptr())
@@ -1047,19 +1166,20 @@ impl VulkanBase {
         let sample_count_flags_supported =
             chosen_props.limits.framebuffer_color_sample_counts
             & chosen_props.limits.framebuffer_depth_sample_counts;
+        let supported_features = unsafe { instance.get_physical_device_features(physical_device) };
+        let supports_multi_draw_indirect = supported_features.multi_draw_indirect == vk::TRUE;
         println!("👉 Selected device for next steps: '{}'", chosen_name);
-
-        let graphics_queue_family_index =
-            Self::find_graphics_queue_family_index(&instance, physical_device)?;
 
         let (device, graphics_queue) = Self::create_logical_device_and_queue(
             &instance,
             physical_device,
             graphics_queue_family_index,
+            supports_multi_draw_indirect,
         )?;
-
-        let surface = Self::create_surface(&entry, &instance, window, event_loop)?;
-        let surface_loader = surface::Instance::new(&entry, &instance);
+        // This cache lives for the device lifetime and is shared by every graphics pipeline.
+        let pipeline_cache = unsafe {
+            device.create_pipeline_cache(&vk::PipelineCacheCreateInfo::default(), None)?
+        };
 
         let command_pool = Self::create_command_pool(&device, graphics_queue_family_index)?;
 
@@ -1159,11 +1279,10 @@ impl VulkanBase {
 
         let attachment_manager = AttachmentManager::new(image_count);
 
-        // Create a timestamp query pool: 2 queries per swapchain image (frame start/end)
-        let timestamps_per_image: u32 = 2;
+        // One query range per swapchain image: frame plus shadow/scene/vegetation boundaries.
         let query_pool_info = vk::QueryPoolCreateInfo {
             query_type: vk::QueryType::TIMESTAMP,
-            query_count: (image_count as u32) * timestamps_per_image,
+            query_count: (image_count as u32) * TIMESTAMPS_PER_IMAGE,
             ..Default::default()
         };
         let timestamp_query_pool = unsafe { device.create_query_pool(&query_pool_info, None)? };
@@ -1172,6 +1291,7 @@ impl VulkanBase {
             instance,
             physical_device,
             device,
+            pipeline_cache,
             allocator: Some(allocator),
             graphics_queue,
             // set 0
@@ -1181,9 +1301,10 @@ impl VulkanBase {
             ubo_buffers,
             ubo_allocations,
             shadow_sampler,
+            shadow_descriptor_views: vec![vk::ImageView::null(); image_count],
             timestamp_query_pool,
             timestamp_period_ns: chosen_props.limits.timestamp_period,
-            last_gpu_ms: None,
+            last_gpu_timings: GpuPassTimings::default(),
             last_image_per_slot: vec![None; INFLIGHT_FRAMES],
             // sync
             image_available_semaphores,
@@ -1209,7 +1330,10 @@ impl VulkanBase {
             current_image_index: 0,
             pipeline_generation: 1,
             sample_count_flags_supported,
+            supports_multi_draw_indirect,
+            max_draw_indirect_count: chosen_props.limits.max_draw_indirect_count,
             pending_msaa_samples: None,
+            swapchain_recreation_needed: false,
         };
 
         println!("✅ VulkanBase initialized successfully");
@@ -1246,6 +1370,8 @@ impl Drop for VulkanBase {
     fn drop(&mut self) {
         println!("💧 Dropping VulkanBase");
         unsafe {
+            // `Drop` gives us `&mut self`, but Vulkan does not know Rust's
+            // ownership graph.  Destroy resources in reverse dependency order.
             self.device
                 .device_wait_idle()
                 .expect("Failed to wait device idle");
@@ -1282,8 +1408,10 @@ impl Drop for VulkanBase {
             self.device
                 .destroy_descriptor_pool(self.set0_descriptor_pool, None);
             self.device.destroy_sampler(self.shadow_sampler, None);
+            self.device.destroy_pipeline_cache(self.pipeline_cache, None);
             self.device.destroy_command_pool(self.command_pool, None);
-            // 👉 ensure VMA frees its VkDeviceMemory blocks before we destroy the device
+            // `Option::take` moves the allocator out while we only have `&mut self`.
+            // Dropping it here frees VMA memory before its Vulkan device disappears.
             if let Some(alloc) = self.allocator.take() {
                 // (optional) quick summary before it goes away
                 if let Ok(stats) = alloc.calculate_statistics() {

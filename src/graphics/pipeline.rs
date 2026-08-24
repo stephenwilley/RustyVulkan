@@ -37,11 +37,13 @@ pub struct Pipeline {
     pub vk_layout: vk::PipelineLayout,
     pub vk_pipeline: vk::Pipeline,
     pub depth_write: bool,
+    /// Opaque pipelines avoid the blending read/modify/write path.
+    pub alpha_blending: bool,
 }
 
 impl Pipeline {
-    /// The Vulkan pipeline layout, defining the interface between shaders and resources.    
-    /// Creates a new `Pipeline` instance, initializing the pipeline layout and shader modules.
+    /// Creates a pipeline layout with alpha blending enabled, preserving the original material
+    /// pipeline behaviour.  Shader modules are supplied later when the graphics pipeline is built.
     /// # Arguments
     /// * `device` - The Vulkan logical device to use for creating the pipeline.
     /// * `set_layouts` - The descriptor set layouts to use for the pipeline.
@@ -49,13 +51,30 @@ impl Pipeline {
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `Pipeline` on success, or an error on failure.
     /// # Errors
-    /// * Returns an error if the shader modules cannot be created or if the pipeline layout cannot be created.
-    /// # Notes
-    /// * The shader modules are loaded from SPIR-V files located in the `assets/shaders` directory.
+    /// * Returns an error if the pipeline layout cannot be created.
     pub fn new(
         device: &ash::Device,
         set_layouts: &[vk::DescriptorSetLayout],
         depth_write: bool
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::new_with_blending(device, set_layouts, depth_write, true)
+    }
+
+    /// Creates a pipeline for geometry whose fragment shader always writes alpha one.
+    /// Dense grass and reeds are opaque ribbons, so they do not need blend state.
+    pub fn new_opaque(
+        device: &ash::Device,
+        set_layouts: &[vk::DescriptorSetLayout],
+        depth_write: bool,
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::new_with_blending(device, set_layouts, depth_write, false)
+    }
+
+    fn new_with_blending(
+        device: &ash::Device,
+        set_layouts: &[vk::DescriptorSetLayout],
+        depth_write: bool,
+        alpha_blending: bool,
     ) -> Result<Self, Box<dyn Error>> {
         // 1 - Define a PushConstantRange covering 2 4×4 MVP matrices (16 floats = 64 bytes) for MV and MVP, a
         // light position vector (3 floats = 12 bytes) and a light intensity float (1 float = 4 bytes)
@@ -85,12 +104,14 @@ impl Pipeline {
             vk_layout,
             vk_pipeline: vk::Pipeline::null(),
             depth_write,
+            alpha_blending,
         })
     }
 
     /// Loads shaders, ties them to the given formats/extent, and creates the pipeline.
     /// # Arguments
     /// * `device` - The Vulkan logical device.
+    /// * `pipeline_cache` - Shared cache that reuses pipeline compilation work.
     /// * `extent` - The extent of the swapchain.
     /// * `color_format` - The color attachment format.
     /// * `depth_format` - The depth attachment format.
@@ -101,15 +122,48 @@ impl Pipeline {
     pub fn create_graphics_pipeline(
         &mut self,
         device: &ash::Device,
+        pipeline_cache: vk::PipelineCache,
         extent: vk::Extent2D,
         color_format: vk::Format,
         depth_format: vk::Format,
         shader_infos: &[&ShaderStageInfo],
         engine_settings: &EngineSettings,
     ) -> Result<(), Box<dyn Error>> {
-        let binding_descs   = [Vertex::binding_description()];
+        let binding_descs = [Vertex::binding_description()];
         let attribute_descs = Vertex::attribute_descriptions();
+        self.create_graphics_pipeline_with_vertex_input(
+            device,
+            pipeline_cache,
+            extent,
+            color_format,
+            depth_format,
+            shader_infos,
+            engine_settings,
+            &binding_descs,
+            &attribute_descs,
+            vk::CullModeFlags::BACK,
+        )
+    }
 
+    /// Creates a graphics pipeline with caller-provided vertex and instance bindings.
+    ///
+    /// Most materials use [`Vertex`]'s single binding through
+    /// [`Self::create_graphics_pipeline`].  Instanced renderers such as grass add a
+    /// second, per-instance binding while sharing all the usual Vulkan state.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_graphics_pipeline_with_vertex_input(
+        &mut self,
+        device: &ash::Device,
+        pipeline_cache: vk::PipelineCache,
+        extent: vk::Extent2D,
+        color_format: vk::Format,
+        depth_format: vk::Format,
+        shader_infos: &[&ShaderStageInfo],
+        engine_settings: &EngineSettings,
+        binding_descs: &[vk::VertexInputBindingDescription],
+        attribute_descs: &[vk::VertexInputAttributeDescription],
+        cull_mode: vk::CullModeFlags,
+    ) -> Result<(), Box<dyn Error>> {
         let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
             vertex_binding_description_count:   binding_descs.len() as u32,
             p_vertex_binding_descriptions:      binding_descs.as_ptr(),
@@ -152,7 +206,7 @@ impl Pipeline {
                 vk::PolygonMode::FILL
             },
             line_width: 1.0,
-            cull_mode: vk::CullModeFlags::BACK,
+            cull_mode,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
             depth_bias_enable: vk::FALSE,
             ..Default::default()
@@ -163,13 +217,13 @@ impl Pipeline {
             ..Default::default()
         };
 
-        // Enable alpha blending for transparency
+        // Most imported materials use alpha blending; opaque specialised geometry can skip it.
         let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
             color_write_mask: vk::ColorComponentFlags::R
                 | vk::ColorComponentFlags::G
                 | vk::ColorComponentFlags::B
                 | vk::ColorComponentFlags::A,
-            blend_enable: vk::TRUE,
+            blend_enable: if self.alpha_blending { vk::TRUE } else { vk::FALSE },
             src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
             dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
             color_blend_op: vk::BlendOp::ADD,
@@ -228,7 +282,7 @@ impl Pipeline {
 
         let pipelines = unsafe {
             device
-                .create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+                .create_graphics_pipelines(pipeline_cache, &[pipeline_info], None)
                 .map_err(|(_, e)| e)?
         };
 
@@ -240,6 +294,7 @@ impl Pipeline {
     /// Recreate the pipeline
     /// # Arguments
     /// * `device` - The Vulkan logical device.
+    /// * `pipeline_cache` - Shared cache that reuses pipeline compilation work.
     /// * `extent` - The extent of the swapchain.
     /// * `color_format` - The color attachment format.
     /// * `depth_format` - The depth attachment format.
@@ -250,6 +305,7 @@ impl Pipeline {
     pub fn recreate(
         &mut self,
         device: &ash::Device,
+        pipeline_cache: vk::PipelineCache,
         extent: vk::Extent2D,
         color_format: vk::Format,
         depth_format: vk::Format,
@@ -257,11 +313,12 @@ impl Pipeline {
         engine_settings: &EngineSettings
     ) -> Result<(), Box<dyn Error>> {
         unsafe {
-            device.device_wait_idle().expect("Failed to wait device idle");
+            // The render graph has already waited for all submitted command buffers.
             device.destroy_pipeline(self.vk_pipeline, None);
         }
         self.create_graphics_pipeline(
             device,
+            pipeline_cache,
             extent,
             color_format,
             depth_format,
@@ -269,6 +326,38 @@ impl Pipeline {
             engine_settings
         )?;
         Ok(())
+    }
+
+    /// Recreates a pipeline that uses custom vertex/instance bindings.
+    #[allow(clippy::too_many_arguments)]
+    pub fn recreate_with_vertex_input(
+        &mut self,
+        device: &ash::Device,
+        pipeline_cache: vk::PipelineCache,
+        extent: vk::Extent2D,
+        color_format: vk::Format,
+        depth_format: vk::Format,
+        shader_infos: &[&ShaderStageInfo],
+        engine_settings: &EngineSettings,
+        binding_descs: &[vk::VertexInputBindingDescription],
+        attribute_descs: &[vk::VertexInputAttributeDescription],
+        cull_mode: vk::CullModeFlags,
+    ) -> Result<(), Box<dyn Error>> {
+        unsafe {
+            device.destroy_pipeline(self.vk_pipeline, None);
+        }
+        self.create_graphics_pipeline_with_vertex_input(
+            device,
+            pipeline_cache,
+            extent,
+            color_format,
+            depth_format,
+            shader_infos,
+            engine_settings,
+            binding_descs,
+            attribute_descs,
+            cull_mode,
+        )
     }
 
     /// Cleans up the pipeline resources, destroying the shader modules and pipeline layout.

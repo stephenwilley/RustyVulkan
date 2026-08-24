@@ -44,7 +44,11 @@ impl ShadowPass {
         }
     }
 
-    fn create_pipeline(&mut self, device: &ash::Device) -> Result<(), Box<dyn std::error::Error>> {
+    fn create_pipeline(
+        &mut self,
+        device: &ash::Device,
+        pipeline_cache: vk::PipelineCache,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // Push constants: one mat4 (mvp)
         let push_range = vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::VERTEX,
@@ -164,13 +168,13 @@ impl ShadowPass {
         pipeline_info.p_next = &rendering_info as *const _ as *const std::ffi::c_void;
 
         let pipelines = unsafe {
-            device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+            device.create_graphics_pipelines(pipeline_cache, &[pipeline_info], None)
                 .map_err(|(_, e)| e)?
         };
         self.pipeline = pipelines[0];
 
-        // We can drop the temporary shader module now
-        vs_stage.shader_module.cleanup();
+        // `vs_stage` drops here automatically. The completed Vulkan pipeline
+        // no longer needs the temporary shader module.
         Ok(())
     }
 
@@ -196,7 +200,7 @@ impl RenderPass for ShadowPass {
 
         // Lazy-create depth-only pipeline
         if self.pipeline == vk::Pipeline::null() {
-            self.create_pipeline(&ctx.vulkan_base.device)?;
+            self.create_pipeline(&ctx.vulkan_base.device, ctx.vulkan_base.pipeline_cache)?;
         }
 
         let device = &ctx.vulkan_base.device;

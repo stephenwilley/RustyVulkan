@@ -131,19 +131,28 @@ impl RenderPass for MainPass {
                             material.pipeline.vk_pipeline,
                         );
                         let set0 = ctx.vulkan_base.set0_descriptor_sets[image_index];
-                        let sets_to_bind = if material.textures.is_some() {
-                            vec![set0, material.texture_descriptor_set]
+                        // Use stack arrays here: this hot path no longer allocates a Vec per draw.
+                        if material.textures.is_some() {
+                            let sets_to_bind = [set0, material.texture_descriptor_set];
+                            device.cmd_bind_descriptor_sets(
+                                cmd,
+                                vk::PipelineBindPoint::GRAPHICS,
+                                material.pipeline.vk_layout,
+                                0,
+                                &sets_to_bind,
+                                &[],
+                            );
                         } else {
-                            vec![set0]
-                        };
-                        device.cmd_bind_descriptor_sets(
-                            cmd,
-                            vk::PipelineBindPoint::GRAPHICS,
-                            material.pipeline.vk_layout,
-                            0,
-                            &sets_to_bind,
-                            &[],
-                        );
+                            let sets_to_bind = [set0];
+                            device.cmd_bind_descriptor_sets(
+                                cmd,
+                                vk::PipelineBindPoint::GRAPHICS,
+                                material.pipeline.vk_layout,
+                                0,
+                                &sets_to_bind,
+                                &[],
+                            );
+                        }
                         current_pipeline_id = part.material_id;
                     }
 
@@ -159,6 +168,29 @@ impl RenderPass for MainPass {
                 }
             }
 
+            // Dense grass stays outside `SceneObject`: static instance buffers are selected
+            // by visible terrain chunk rather than recording one draw per individual blade.
+            // The alternate infinite-plane debug view is perfectly flat, so hide grass
+            // there rather than leaving terrain-following blades apparently floating.
+            // These boundaries deliberately surround only vegetation: the profiler's
+            // `scene_ms` is the opaque scene recorded immediately before this block.
+            ctx.vulkan_base
+                .mark_vegetation_timing_start(cmd, image_index as u32);
+            if ctx.world_controls.use_terrain_ground {
+                if let Some(grass) = ctx.grass_renderer.as_deref_mut() {
+                    grass.draw(
+                        device,
+                        cmd,
+                        ctx.vulkan_base,
+                        image_index,
+                        ctx.camera,
+                        ctx.time_seconds,
+                    );
+                }
+            }
+            ctx.vulkan_base
+                .mark_vegetation_timing_end(cmd, image_index as u32);
+
             device.cmd_end_rendering(cmd);
         }
 
@@ -167,6 +199,16 @@ impl RenderPass for MainPass {
 
     fn attachments(&self) -> &[AttachmentRequest] {
         &self.attachments
+    }
+
+    fn uses_attachment(&self, kind: AttachmentKind, msaa_samples: u32) -> bool {
+        // MainPass either renders directly to the swapchain (1x) or uses the
+        // two MSAA attachments and resolves into it (>1x).
+        match kind {
+            AttachmentKind::MsaaColor | AttachmentKind::MsaaDepth => msaa_samples > 1,
+            AttachmentKind::Depth => msaa_samples == 1,
+            AttachmentKind::SwapchainColor | AttachmentKind::Shadow | AttachmentKind::Color => true,
+        }
     }
 
     fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags) {
@@ -191,32 +233,41 @@ impl RenderPass for MainPass {
     }
 }
 
-/// Compute push constants for a single object
-pub fn compute_push_constant_per_obj(camera: &Camera, model_matrix: &Matrix4<f32>, uv_tiling: [f32; 2]) -> Vec<u8> {
+/// Compute the fixed 144-byte push-constant block for a single object.
+pub fn compute_push_constant_per_obj(
+    camera: &Camera,
+    model_matrix: &Matrix4<f32>,
+    uv_tiling: [f32; 2],
+) -> [u8; 144] {
     let proj: Matrix4<f32> = *camera.get_projection();
     let view: Matrix4<f32> = *camera.get_view();
 
     let mv = view * model_matrix;
     let mvp = proj * mv;
 
-    let mut bytes = Vec::with_capacity((16 + 16 + 4) * 4);
-    let flatten_mat4 = |m: Matrix4<f32>, buf: &mut Vec<u8>| {
+    // Two mat4s plus a padded vec4: fixed storage avoids a per-object heap allocation.
+    let mut bytes = [0_u8; 144];
+    let mut offset = 0;
+    let flatten_mat4 = |m: Matrix4<f32>, buf: &mut [u8; 144], offset: &mut usize| {
         let cols = m.transpose();
         for row in 0..4 {
             for col in 0..4 {
-                buf.extend_from_slice(&cols[col][row].to_ne_bytes());
+                buf[*offset..*offset + 4].copy_from_slice(&cols[col][row].to_ne_bytes());
+                *offset += 4;
             }
         }
     };
 
-    flatten_mat4(mvp, &mut bytes);
-    flatten_mat4(mv, &mut bytes);
+    flatten_mat4(mvp, &mut bytes, &mut offset);
+    flatten_mat4(mv, &mut bytes, &mut offset);
 
     // Append uv_tiling as a vec4 (xy used, zw padding) for alignment
-    bytes.extend_from_slice(&uv_tiling[0].to_ne_bytes());
-    bytes.extend_from_slice(&uv_tiling[1].to_ne_bytes());
-    bytes.extend_from_slice(&0.0f32.to_ne_bytes());
-    bytes.extend_from_slice(&0.0f32.to_ne_bytes());
+    for value in [uv_tiling[0], uv_tiling[1], 0.0, 0.0] {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_ne_bytes());
+        offset += 4;
+    }
+
+    debug_assert_eq!(offset, bytes.len());
 
     bytes
 }

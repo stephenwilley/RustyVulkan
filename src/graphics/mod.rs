@@ -13,6 +13,8 @@ pub mod pipeline;
 pub mod shaders;
 pub mod mesh;
 pub mod texture;
+pub mod terrain;
+pub mod grass;
 pub mod material;
 pub mod materialmanager;
 pub mod meshmanager;

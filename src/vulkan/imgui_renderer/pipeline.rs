@@ -1,0 +1,258 @@
+//! ImGui shader-module and graphics-pipeline creation.
+//!
+//! ShaderStageInfo owns each temporary ShaderModule. The renderer retains those
+//! stage values for exactly as long as Vulkan may use the resulting pipeline.
+
+use super::{ImGuiRenderer, ShaderStageInfo, VulkanBase};
+use crate::graphics::shaders::ShaderModule;
+use ash::vk;
+use imgui::DrawVert;
+use std::{error::Error, mem::offset_of};
+
+impl ImGuiRenderer {
+    // create_pipeline
+    // find_memory_type
+    // create_buffer
+    // update_buffers
+    // ----------------------------------------------------------
+    /// Load the ImGui shaders
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// # Returns
+    /// * `(ShaderStageInfo, ShaderStageInfo)` - A tuple containing the vertex and fragment shader stage info.
+    fn load_shaders(&mut self, base: &mut VulkanBase) -> (ShaderStageInfo, ShaderStageInfo) {
+        let entry_name = c"main";
+        // Load vertex shader
+        let vert_module =
+            ShaderModule::from_spv_file(&base.device, "assets/shaders/spv/imgui.vert.spv")
+                .expect("Failed to load imgui.vert.spv");
+        // Load fragment shader
+        let frag_module =
+            ShaderModule::from_spv_file(&base.device, "assets/shaders/spv/imgui.frag.spv")
+                .expect("Failed to load imgui.frag.spv");
+        let vert_stage = ShaderStageInfo {
+            stage: vk::ShaderStageFlags::VERTEX,
+            shader_module: vert_module,
+            entry_name,
+        };
+        let frag_stage = ShaderStageInfo {
+            stage: vk::ShaderStageFlags::FRAGMENT,
+            shader_module: frag_module,
+            entry_name,
+        };
+
+        (vert_stage, frag_stage)
+    }
+
+    /// Creates the ImGui graphics pipeline with blending and the UI vertex layout.
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// * `extent` - The extent of the swapchain.
+    /// * `color_format` - The color attachment format.
+    /// * `depth_format` - The depth attachment format.
+    /// * `shader_stages` - The shader stage create infos.
+    /// # Returns
+    /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
+    fn create_pipeline(
+        &mut self,
+        base: &VulkanBase,
+        extent: vk::Extent2D,
+        color_format: vk::Format,
+        depth_format: vk::Format,
+        shader_stages: &[vk::PipelineShaderStageCreateInfo],
+    ) -> Result<(), Box<dyn Error>> {
+        let device = &base.device;
+        // Vertex input: ImGui's DrawVert (pos, uv, col)
+        let binding_desc = vk::VertexInputBindingDescription {
+            binding: 0,
+            stride: std::mem::size_of::<DrawVert>() as u32,
+            input_rate: vk::VertexInputRate::VERTEX,
+        };
+        let attribute_descs = [
+            vk::VertexInputAttributeDescription {
+                location: 0,
+                binding: 0,
+                format: vk::Format::R32G32_SFLOAT,
+                offset: offset_of!(DrawVert, pos) as u32,
+            },
+            vk::VertexInputAttributeDescription {
+                location: 1,
+                binding: 0,
+                format: vk::Format::R32G32_SFLOAT,
+                offset: offset_of!(DrawVert, uv) as u32,
+            },
+            vk::VertexInputAttributeDescription {
+                location: 2,
+                binding: 0,
+                format: vk::Format::R8G8B8A8_UNORM,
+                offset: offset_of!(DrawVert, col) as u32,
+            },
+        ];
+        let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
+            vertex_binding_description_count: 1,
+            p_vertex_binding_descriptions: &binding_desc,
+            vertex_attribute_description_count: attribute_descs.len() as u32,
+            p_vertex_attribute_descriptions: attribute_descs.as_ptr(),
+            ..Default::default()
+        };
+
+        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
+            topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+            primitive_restart_enable: vk::FALSE,
+            ..Default::default()
+        };
+
+        let viewport = vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: extent.width as f32,
+            height: extent.height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+        let scissor = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent,
+        };
+        let viewport_state = vk::PipelineViewportStateCreateInfo {
+            viewport_count: 1,
+            p_viewports: &viewport,
+            scissor_count: 1,
+            p_scissors: &scissor,
+            ..Default::default()
+        };
+
+        // Enable dynamic viewport and scissor
+        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dynamic_state = vk::PipelineDynamicStateCreateInfo {
+            dynamic_state_count: dynamic_states.len() as u32,
+            p_dynamic_states: dynamic_states.as_ptr(),
+            ..Default::default()
+        };
+
+        let rasterizer = vk::PipelineRasterizationStateCreateInfo {
+            depth_clamp_enable: vk::FALSE,
+            rasterizer_discard_enable: vk::FALSE,
+            polygon_mode: vk::PolygonMode::FILL,
+            line_width: 1.0,
+            cull_mode: vk::CullModeFlags::NONE,
+            front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+            ..Default::default()
+        };
+
+        let multisampling = vk::PipelineMultisampleStateCreateInfo {
+            rasterization_samples: vk::SampleCountFlags::TYPE_1,
+            ..Default::default()
+        };
+
+        // Disable depth testing for UI
+        let depth_stencil = vk::PipelineDepthStencilStateCreateInfo {
+            depth_test_enable: vk::FALSE,
+            depth_write_enable: vk::FALSE,
+            depth_compare_op: vk::CompareOp::ALWAYS,
+            stencil_test_enable: vk::FALSE,
+            ..Default::default()
+        };
+
+        // Enable alpha blending
+        let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
+            blend_enable: vk::TRUE,
+            src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
+            dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            color_blend_op: vk::BlendOp::ADD,
+            src_alpha_blend_factor: vk::BlendFactor::ONE,
+            dst_alpha_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            alpha_blend_op: vk::BlendOp::ADD,
+            color_write_mask: vk::ColorComponentFlags::R
+                | vk::ColorComponentFlags::G
+                | vk::ColorComponentFlags::B
+                | vk::ColorComponentFlags::A,
+        };
+        let color_blending = vk::PipelineColorBlendStateCreateInfo {
+            logic_op_enable: vk::FALSE,
+            attachment_count: 1,
+            p_attachments: &color_blend_attachment,
+            ..Default::default()
+        };
+
+        // Push constant for projection matrix
+        let push_constant_range = vk::PushConstantRange {
+            stage_flags: vk::ShaderStageFlags::VERTEX,
+            offset: 0,
+            size: std::mem::size_of::<[[f32; 4]; 4]>() as u32,
+        };
+
+        // Pipeline layout with descriptor set and push constant
+        let layout_info = vk::PipelineLayoutCreateInfo {
+            set_layout_count: 1,
+            p_set_layouts: &self.descriptor_set_layout,
+            push_constant_range_count: 1,
+            p_push_constant_ranges: &push_constant_range,
+            ..Default::default()
+        };
+        self.pipeline_layout =
+            unsafe { device.create_pipeline_layout(&layout_info, None).unwrap() };
+
+        // Finally create the graphics pipeline
+        let color_formats = [color_format];
+        let rendering_info = vk::PipelineRenderingCreateInfo {
+            color_attachment_count: color_formats.len() as u32,
+            p_color_attachment_formats: color_formats.as_ptr(),
+            depth_attachment_format: depth_format,
+            ..Default::default()
+        };
+        let mut pipeline_info = vk::GraphicsPipelineCreateInfo {
+            stage_count: shader_stages.len() as u32,
+            p_stages: shader_stages.as_ptr(),
+            p_vertex_input_state: &vertex_input_info,
+            p_input_assembly_state: &input_assembly,
+            p_viewport_state: &viewport_state,
+            p_rasterization_state: &rasterizer,
+            p_multisample_state: &multisampling,
+            p_depth_stencil_state: &depth_stencil,
+            p_color_blend_state: &color_blending,
+            p_dynamic_state: &dynamic_state,
+            layout: self.pipeline_layout,
+            render_pass: vk::RenderPass::null(),
+            subpass: 0,
+            ..Default::default()
+        };
+        pipeline_info.p_next = &rendering_info as *const _ as *const std::ffi::c_void;
+        self.vk_pipeline = unsafe {
+            device
+                .create_graphics_pipelines(base.pipeline_cache, &[pipeline_info], None)
+                .map_err(|e| e.1)
+                .unwrap()[0]
+        };
+        Ok(())
+    }
+
+    /// Rebuilds the ImGui rendering pipeline.
+    /// # Arguments
+    /// * `base` - The VulkanBase instance.
+    /// # Returns
+    /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
+    pub fn rebuild_pipeline(&mut self, base: &mut VulkanBase) -> Result<(), Box<dyn Error>> {
+        unsafe {
+            base.device.destroy_pipeline(self.vk_pipeline, None);
+            base.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+        }
+        // Taking an Option moves its old value out; dropping that value invokes
+        // ShaderModule::drop before the new pipeline stages replace it.
+        drop(self.vert_stage.take());
+        drop(self.frag_stage.take());
+        let (vert_stage, frag_stage) = Self::load_shaders(self, base);
+        let shader_stages = [vert_stage.to_create_info(), frag_stage.to_create_info()];
+
+        let extent = base.swapchain.extent;
+        let color = base.swapchain.color_format;
+        let depth = base.swapchain.depth_format;
+        self.create_pipeline(base, extent, color, depth, &shader_stages)?;
+
+        // 5) Store stages for potential future reload
+        self.vert_stage = Some(vert_stage);
+        self.frag_stage = Some(frag_stage);
+        Ok(())
+    }
+}

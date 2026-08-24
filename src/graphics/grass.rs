@@ -35,10 +35,18 @@ const GRASS_CHUNKS_PER_SIDE: usize = (GRASS_FIELD_SIZE / GRASS_CHUNK_SIZE) as us
 /// Grass is fully dense around the playable scene, then gradually thins on distant slopes.
 const FULL_DENSITY_RADIUS: f32 = 40.0;
 const OUTER_DENSITY: f32 = 0.30;
+/// Only the closest blades need all four curved ribbon segments.
+const HIGH_DETAIL_GRASS_DISTANCE: f32 = 12.0;
 const NEAR_GRASS_DISTANCE: f32 = 24.0;
 const MID_GRASS_DISTANCE: f32 = 100.0;
 const REED_DISTANCE: f32 = 64.0;
 const MAX_BLADE_WIDTH: f32 = 0.1;
+// Instance positions are stored as UNORM16 within these known scene bounds. The small
+// margin includes reed roots that spread just beyond the regular grass field.
+const INSTANCE_X_RANGE: [f32; 2] = [-80.5, 80.5];
+const INSTANCE_Y_RANGE: [f32; 2] = [0.0, 5.0];
+const INSTANCE_Z_RANGE: [f32; 2] = [-82.5, 78.5];
+const INSTANCE_HEIGHT_RANGE: [f32; 2] = [0.0, 1.0];
 const WIND_MAP_SIZE: u32 = 128;
 /// Sparse groups of reeds break up the otherwise even lawn-like silhouette.
 const TALL_TUFT_COUNT: usize = 1_280;
@@ -58,8 +66,8 @@ struct GrassVertex {
 #[repr(C)]
 #[derive(Clone, Copy, Default, Pod, Zeroable)]
 struct GrassInstance {
-    /// World X/Y/Z, followed by blade height in metres.
-    position_height: [f32; 4],
+    /// World X/Y/Z and height packed into known scene ranges as UNORM16 values.
+    position_height: [u16; 4],
     /// Rotation, width, colour variation, and wind phase packed as UNORM16 values.
     /// Vulkan expands these back to `0.0..=1.0` before the vertex shader sees them.
     rotation_width_tint_phase: [u16; 4],
@@ -99,6 +107,13 @@ struct VisibleChunk {
     distance: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GrassLod {
+    Near,
+    Medium,
+    Mid,
+}
+
 /// Persistently mapped indirect commands for one swapchain image.
 ///
 /// A separate buffer per image is important: the CPU may prepare this frame while another
@@ -125,8 +140,10 @@ struct WindMap {
 pub struct GrassRenderer {
     near_blade_vertices: VertexBuffer,
     near_blade_indices: IndexBuffer,
-    /// Near and mid LODs share this buffer; each chunk stores its mid subset first.
+    /// Every grass LOD shares this buffer; each chunk stores its thinned subset first.
     instances: VertexBuffer,
+    medium_blade_vertices: VertexBuffer,
+    medium_blade_indices: IndexBuffer,
     mid_blade_vertices: VertexBuffer,
     mid_blade_indices: IndexBuffer,
     reed_vertices: VertexBuffer,
@@ -135,6 +152,7 @@ pub struct GrassRenderer {
     chunks: Vec<VegetationChunk>,
     visible_chunks: Vec<VisibleChunk>,
     near_commands: Vec<vk::DrawIndexedIndirectCommand>,
+    medium_commands: Vec<vk::DrawIndexedIndirectCommand>,
     mid_commands: Vec<vk::DrawIndexedIndirectCommand>,
     reed_commands: Vec<vk::DrawIndexedIndirectCommand>,
     indirect_buffers: Vec<IndirectBuffer>,
@@ -391,6 +409,8 @@ impl GrassRenderer {
         let reed_vertices = build_reed_vertices();
         let reed_indices = build_reed_indices();
         let reed_instances = build_reed_instances(terrain, &mut chunked_grass.chunks);
+        let medium_blade_vertices = build_blade_vertices(2);
+        let medium_blade_indices = build_blade_indices_for_segments(2);
         let mid_blade_vertices = build_blade_vertices(1);
         let mid_blade_indices = build_blade_indices_for_segments(1);
         let allocator = vb
@@ -427,6 +447,24 @@ impl GrassRenderer {
             vk::BufferUsageFlags::VERTEX_BUFFER,
         )?;
         let instance_buffer = VertexBuffer { buffer, allocation };
+        let (buffer, allocation) = uploads.upload_buffer(
+            &vb.device,
+            allocator,
+            &medium_blade_vertices,
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+        )?;
+        let medium_blade_vertex_buffer = VertexBuffer { buffer, allocation };
+        let (buffer, allocation) = uploads.upload_buffer(
+            &vb.device,
+            allocator,
+            &medium_blade_indices,
+            vk::BufferUsageFlags::INDEX_BUFFER,
+        )?;
+        let medium_blade_index_buffer = IndexBuffer {
+            buffer,
+            allocation,
+            count: medium_blade_indices.len() as u32,
+        };
         let (buffer, allocation) = uploads.upload_buffer(
             &vb.device,
             allocator,
@@ -509,10 +547,12 @@ impl GrassRenderer {
             create_indirect_buffers(vb, vb.swapchain.swapchain_image_views.len())?;
 
         println!(
-            "🌱 Uploaded {} grass blades and {} flower reeds ({} grass triangles per blade, {}-byte instances)",
+            "🌱 Uploaded {} grass blades and {} flower reeds (grass LODs: {}/{}/{} triangles, {}-byte instances)",
             chunked_grass.instances.len(),
             reed_instances.len(),
             near_blade_indices.len() / 3,
+            medium_blade_indices.len() / 3,
+            mid_blade_indices.len() / 3,
             size_of::<GrassInstance>(),
         );
 
@@ -520,6 +560,8 @@ impl GrassRenderer {
             near_blade_vertices: near_blade_vertex_buffer,
             near_blade_indices: near_blade_index_buffer,
             instances: instance_buffer,
+            medium_blade_vertices: medium_blade_vertex_buffer,
+            medium_blade_indices: medium_blade_index_buffer,
             mid_blade_vertices: mid_blade_vertex_buffer,
             mid_blade_indices: mid_blade_index_buffer,
             reed_vertices: reed_vertex_buffer,
@@ -528,6 +570,7 @@ impl GrassRenderer {
             chunks: chunked_grass.chunks,
             visible_chunks: Vec::with_capacity(GRASS_CHUNKS_PER_SIDE * GRASS_CHUNKS_PER_SIDE),
             near_commands: Vec::with_capacity(GRASS_CHUNKS_PER_SIDE * GRASS_CHUNKS_PER_SIDE),
+            medium_commands: Vec::with_capacity(GRASS_CHUNKS_PER_SIDE * GRASS_CHUNKS_PER_SIDE),
             mid_commands: Vec::with_capacity(GRASS_CHUNKS_PER_SIDE * GRASS_CHUNKS_PER_SIDE),
             reed_commands: Vec::with_capacity(GRASS_CHUNKS_PER_SIDE * GRASS_CHUNKS_PER_SIDE),
             indirect_buffers,
@@ -586,6 +629,7 @@ impl GrassRenderer {
     ) {
         self.prepare_draw_commands(camera);
         let near_push = grass_push_constants(camera, time_seconds, 0.0);
+        let medium_push = grass_push_constants(camera, time_seconds, 0.5);
         let mid_push = grass_push_constants(camera, time_seconds, 1.0);
         let near_buffers = [self.near_blade_vertices.buffer, self.instances.buffer];
         let offsets = [0, 0];
@@ -594,7 +638,7 @@ impl GrassRenderer {
             self.wind_map.descriptor_set,
         ];
 
-        let (near_offset, mid_offset, reed_offset) =
+        let (near_offset, medium_offset, mid_offset, reed_offset) =
             self.write_indirect_commands(vb.allocator.as_ref().expect("allocator"), image_index);
         let indirect = &self.indirect_buffers[image_index];
 
@@ -634,6 +678,32 @@ impl GrassRenderer {
                 indirect.buffer,
                 near_offset,
                 &self.near_commands,
+                vb.supports_multi_draw_indirect,
+                vb.max_draw_indirect_count,
+            );
+
+            // The next ring keeps every root but halves each blade's geometry.
+            device.cmd_push_constants(
+                cmd,
+                self.near_pipeline.vk_layout,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                0,
+                &medium_push,
+            );
+            let medium_buffers = [self.medium_blade_vertices.buffer, self.instances.buffer];
+            device.cmd_bind_vertex_buffers(cmd, 0, &medium_buffers, &offsets);
+            device.cmd_bind_index_buffer(
+                cmd,
+                self.medium_blade_indices.buffer,
+                0,
+                vk::IndexType::UINT32,
+            );
+            self.submit_commands(
+                device,
+                cmd,
+                indirect.buffer,
+                medium_offset,
+                &self.medium_commands,
                 vb.supports_multi_draw_indirect,
                 vb.max_draw_indirect_count,
             );
@@ -699,10 +769,11 @@ impl GrassRenderer {
     }
 
     /// Culls every chunk once, sorts front-to-back for early depth rejection, then builds the
-    /// three LOD command lists without allocating new vectors.
+    /// LOD command lists without allocating new vectors.
     fn prepare_draw_commands(&mut self, camera: &crate::graphics::camera::Camera) {
         self.visible_chunks.clear();
         self.near_commands.clear();
+        self.medium_commands.clear();
         self.mid_commands.clear();
         self.reed_commands.clear();
 
@@ -721,14 +792,24 @@ impl GrassRenderer {
 
         for visible in &self.visible_chunks {
             let chunk = &self.chunks[visible.index];
-            if visible.distance <= NEAR_GRASS_DISTANCE && chunk.near_grass.count > 0 {
-                self.near_commands.push(draw_command(
-                    self.near_blade_indices.count,
-                    chunk.near_grass,
-                ));
-            } else if chunk.mid_grass.count > 0 {
-                self.mid_commands
-                    .push(draw_command(self.mid_blade_indices.count, chunk.mid_grass));
+            match grass_lod(visible.distance) {
+                GrassLod::Near if chunk.near_grass.count > 0 => {
+                    self.near_commands.push(draw_command(
+                        self.near_blade_indices.count,
+                        chunk.near_grass,
+                    ));
+                }
+                GrassLod::Medium if chunk.near_grass.count > 0 => {
+                    self.medium_commands.push(draw_command(
+                        self.medium_blade_indices.count,
+                        chunk.near_grass,
+                    ));
+                }
+                GrassLod::Mid if chunk.mid_grass.count > 0 => {
+                    self.mid_commands
+                        .push(draw_command(self.mid_blade_indices.count, chunk.mid_grass));
+                }
+                _ => {}
             }
             if visible.distance <= REED_DISTANCE && chunk.reeds.count > 0 {
                 self.reed_commands
@@ -742,11 +823,17 @@ impl GrassRenderer {
         &self,
         allocator: &Allocator,
         image_index: usize,
-    ) -> (vk::DeviceSize, vk::DeviceSize, vk::DeviceSize) {
+    ) -> (
+        vk::DeviceSize,
+        vk::DeviceSize,
+        vk::DeviceSize,
+        vk::DeviceSize,
+    ) {
         let indirect = &self.indirect_buffers[image_index];
         let stride = size_of::<vk::DrawIndexedIndirectCommand>();
         let near_first = 0;
-        let mid_first = self.near_commands.len();
+        let medium_first = self.near_commands.len();
+        let mid_first = medium_first + self.medium_commands.len();
         let reed_first = mid_first + self.mid_commands.len();
         let total = reed_first + self.reed_commands.len();
         debug_assert!(total <= indirect.capacity);
@@ -755,6 +842,11 @@ impl GrassRenderer {
                 self.near_commands.as_ptr(),
                 indirect.mapped.add(near_first),
                 self.near_commands.len(),
+            );
+            std::ptr::copy_nonoverlapping(
+                self.medium_commands.as_ptr(),
+                indirect.mapped.add(medium_first),
+                self.medium_commands.len(),
             );
             std::ptr::copy_nonoverlapping(
                 self.mid_commands.as_ptr(),
@@ -772,12 +864,16 @@ impl GrassRenderer {
             .expect("flush vegetation indirect commands");
         (
             (near_first * stride) as u64,
+            (medium_first * stride) as u64,
             (mid_first * stride) as u64,
             (reed_first * stride) as u64,
         )
     }
 
     /// Uses one multi-draw call when supported, retaining a portable per-command fallback.
+    // These values map directly to one Vulkan indirect-draw call; grouping them
+    // would hide rather than simplify that API boundary.
+    #[allow(clippy::too_many_arguments)]
     unsafe fn submit_commands(
         &self,
         device: &ash::Device,
@@ -828,6 +924,8 @@ impl GrassRenderer {
         self.near_blade_vertices.cleanup(allocator);
         self.near_blade_indices.cleanup(allocator);
         self.instances.cleanup(allocator);
+        self.medium_blade_vertices.cleanup(allocator);
+        self.medium_blade_indices.cleanup(allocator);
         self.mid_blade_vertices.cleanup(allocator);
         self.mid_blade_indices.cleanup(allocator);
         self.reed_vertices.cleanup(allocator);
@@ -915,7 +1013,7 @@ fn vertex_input_descriptions() -> (
         vk::VertexInputAttributeDescription {
             binding: 1,
             location: 3,
-            format: vk::Format::R32G32B32A32_SFLOAT,
+            format: vk::Format::R16G16B16A16_UNORM,
             offset: offset_of!(GrassInstance, position_height) as u32,
         },
         vk::VertexInputAttributeDescription {
@@ -950,8 +1048,34 @@ fn pack_instance_params(rotation: f32, width: f32, tint: f32, phase: f32) -> [u1
     ]
 }
 
-/// Builds one ribbon with the requested segment count.  The near LOD uses four segments;
-/// the mid LOD uses one.  Instance rotation makes many ribbons read as volumetric grass.
+fn pack_position_height(x: f32, y: f32, z: f32, height: f32) -> [u16; 4] {
+    let pack_range = |value: f32, range: [f32; 2]| {
+        let normalised = (value - range[0]) / (range[1] - range[0]);
+        (normalised.clamp(0.0, 1.0) * u16::MAX as f32).round() as u16
+    };
+    [
+        pack_range(x, INSTANCE_X_RANGE),
+        pack_range(y, INSTANCE_Y_RANGE),
+        pack_range(z, INSTANCE_Z_RANGE),
+        pack_range(height, INSTANCE_HEIGHT_RANGE),
+    ]
+}
+
+#[cfg(test)]
+fn unpack_position_height(packed: [u16; 4]) -> [f32; 4] {
+    let unpack_range = |value: u16, range: [f32; 2]| {
+        range[0] + value as f32 / u16::MAX as f32 * (range[1] - range[0])
+    };
+    [
+        unpack_range(packed[0], INSTANCE_X_RANGE),
+        unpack_range(packed[1], INSTANCE_Y_RANGE),
+        unpack_range(packed[2], INSTANCE_Z_RANGE),
+        unpack_range(packed[3], INSTANCE_HEIGHT_RANGE),
+    ]
+}
+
+/// Builds one ribbon with the requested segment count. Instance rotation makes many
+/// individually flat ribbons read as volumetric grass.
 fn build_blade_vertices(segments: usize) -> Vec<GrassVertex> {
     let mut vertices = Vec::with_capacity((segments + 1) * 2);
 
@@ -1140,12 +1264,12 @@ fn build_chunked_grass_instances(terrain: TerrainSettings) -> ChunkedGrassInstan
                         }
 
                         let instance = GrassInstance {
-                            position_height: [
+                            position_height: pack_position_height(
                                 x,
                                 terrain.height_at(x, z) + 0.003,
                                 z,
                                 0.17 + hash01(id, 2) * 0.21,
-                            ],
+                            ),
                             rotation_width_tint_phase: pack_instance_params(
                                 hash01(id, 3) * std::f32::consts::TAU,
                                 0.025 + hash01(id, 4) * 0.03,
@@ -1165,8 +1289,8 @@ fn build_chunked_grass_instances(terrain: TerrainSettings) -> ChunkedGrassInstan
                 }
             }
 
-            // Put the mid subset first. Its range is therefore also the beginning of the
-            // full near range, allowing both LODs to share one GPU instance buffer.
+            // Put the thinned subset first. Its range is also the beginning of the full
+            // range, allowing all grass LODs to share one GPU instance buffer.
             let mid_count = mid_subset.len() as u32;
             let near_count = (mid_subset.len() + remaining.len()) as u32;
             instances.extend(mid_subset);
@@ -1194,15 +1318,24 @@ fn build_chunked_grass_instances(terrain: TerrainSettings) -> ChunkedGrassInstan
     ChunkedGrassInstances { instances, chunks }
 }
 
+fn grass_lod(distance: f32) -> GrassLod {
+    if distance <= HIGH_DETAIL_GRASS_DISTANCE {
+        GrassLod::Near
+    } else if distance <= NEAR_GRASS_DISTANCE {
+        GrassLod::Medium
+    } else {
+        GrassLod::Mid
+    }
+}
+
 /// Returns the fraction of candidate grass roots retained at a world position.
 fn grass_density_at(x: f32, z: f32) -> f32 {
     // The field is centred two metres behind the origin to match its existing placement.
     // A square radius makes density reach the same value along all four field boundaries.
     let field_radius = x.abs().max((z + 2.0).abs());
     let half_size = GRASS_FIELD_SIZE * 0.5;
-    let amount = ((field_radius - FULL_DENSITY_RADIUS)
-        / (half_size - FULL_DENSITY_RADIUS))
-        .clamp(0.0, 1.0);
+    let amount =
+        ((field_radius - FULL_DENSITY_RADIUS) / (half_size - FULL_DENSITY_RADIUS)).clamp(0.0, 1.0);
     let smooth_amount = amount * amount * (3.0 - 2.0 * amount);
     1.0 - (1.0 - OUTER_DENSITY) * smooth_amount
 }
@@ -1235,12 +1368,12 @@ fn build_reed_instances(
             let z = centre_z + angle.sin() * radius;
 
             per_chunk[chunk_index_for(centre_x, centre_z)].push(GrassInstance {
-                position_height: [
+                position_height: pack_position_height(
                     x,
                     terrain.height_at(x, z) + 0.004,
                     z,
                     0.62 + hash01(blade_id, 24) * 0.18,
-                ],
+                ),
                 rotation_width_tint_phase: pack_instance_params(
                     hash01(blade_id, 25) * std::f32::consts::TAU,
                     0.070 + hash01(blade_id, 26) * 0.018,
@@ -1316,7 +1449,8 @@ fn create_indirect_buffers(
     count: usize,
 ) -> Result<Vec<IndirectBuffer>, vk::Result> {
     let allocator = vb.allocator.as_ref().expect("allocator");
-    let capacity = GRASS_CHUNKS_PER_SIDE * GRASS_CHUNKS_PER_SIDE * 3;
+    // Worst case: one command per chunk in each of three grass LODs plus reeds.
+    let capacity = GRASS_CHUNKS_PER_SIDE * GRASS_CHUNKS_PER_SIDE * 4;
     let size = (capacity * size_of::<vk::DrawIndexedIndirectCommand>()) as u64;
     let mut buffers = Vec::with_capacity(count);
     for _ in 0..count {
@@ -1519,10 +1653,11 @@ fn hash01(id: u32, stream: u32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        GRASS_CHUNKS_PER_SIDE, GRASS_DENSITY_LAYERS, GRASS_GRID_SIDE, TALL_BLADES_PER_TUFT,
-        build_blade_indices_for_segments, build_blade_vertices, build_chunked_grass_instances,
-        build_reed_indices, build_reed_instances, build_reed_vertices, build_wind_map_pixels,
-        chunk_intersects_frustum, grass_density_at,
+        GRASS_CHUNKS_PER_SIDE, GRASS_DENSITY_LAYERS, GRASS_GRID_SIDE, GrassInstance, GrassLod,
+        TALL_BLADES_PER_TUFT, build_blade_indices_for_segments, build_blade_vertices,
+        build_chunked_grass_instances, build_reed_indices, build_reed_instances,
+        build_reed_vertices, build_wind_map_pixels, chunk_intersects_frustum, grass_density_at,
+        grass_lod, pack_position_height, unpack_position_height,
     };
     use crate::graphics::terrain::TerrainSettings;
 
@@ -1534,6 +1669,9 @@ mod tests {
 
         assert_eq!(vertices.len(), 10);
         assert_eq!(indices.len(), 24);
+        assert_eq!(build_blade_vertices(2).len(), 6);
+        assert_eq!(build_blade_indices_for_segments(2).len(), 12);
+        assert_eq!(std::mem::size_of::<GrassInstance>(), 16);
         let candidate_count = GRASS_GRID_SIDE * GRASS_GRID_SIDE * GRASS_DENSITY_LAYERS;
         assert!(chunked.instances.len() > candidate_count / 5);
         assert!(chunked.instances.len() < candidate_count * 4 / 5);
@@ -1545,24 +1683,26 @@ mod tests {
             chunked
                 .instances
                 .iter()
-                .all(|instance| instance.position_height[3] > 0.0)
+                .all(|instance| unpack_position_height(instance.position_height)[3] > 0.0)
         );
         assert!(
             chunked
                 .instances
                 .iter()
-                .any(|instance| instance.position_height[3] < 0.25)
+                .any(|instance| unpack_position_height(instance.position_height)[3] < 0.25)
         );
         assert!(
             chunked
                 .instances
                 .iter()
-                .any(|instance| instance.position_height[3] > 0.35)
+                .any(|instance| unpack_position_height(instance.position_height)[3] > 0.35)
         );
-        assert!(chunked
-            .instances
-            .iter()
-            .any(|instance| instance.position_height[0].abs() > 70.0));
+        assert!(
+            chunked
+                .instances
+                .iter()
+                .any(|instance| unpack_position_height(instance.position_height)[0].abs() > 70.0)
+        );
         assert_eq!(grass_density_at(0.0, -2.0), 1.0);
         assert_eq!(grass_density_at(80.0, -2.0), super::OUTER_DENSITY);
         let mid_count: usize = chunked
@@ -1586,7 +1726,8 @@ mod tests {
         assert_eq!(indices.len() % 3, 0, "every reed index group is a triangle");
         // Every side triangle must face the same way as its stored outward normals.  This
         // catches an easy-to-miss error where only one triangle of every quad is reversed.
-        for (triangle_index, triangle) in indices[..4 * 6 * 6].chunks_exact(3).enumerate() {
+        for (triangle_index, triangle) in indices[..4 * 6 * 6].as_chunks::<3>().0.iter().enumerate()
+        {
             let a = vertices[triangle[0] as usize];
             let b = vertices[triangle[1] as usize];
             let c = vertices[triangle[2] as usize];
@@ -1622,7 +1763,7 @@ mod tests {
         assert!(
             instances
                 .iter()
-                .all(|instance| instance.position_height[3] >= 0.62)
+                .all(|instance| unpack_position_height(instance.position_height)[3] >= 0.619)
         );
         assert_eq!(
             chunked
@@ -1632,6 +1773,25 @@ mod tests {
                 .sum::<usize>(),
             instances.len(),
         );
+    }
+
+    #[test]
+    fn packed_instances_preserve_scene_scale_and_lod_boundaries() {
+        let original = [37.25, 3.75, -61.5, 0.73];
+        let unpacked = unpack_position_height(pack_position_height(
+            original[0],
+            original[1],
+            original[2],
+            original[3],
+        ));
+        for (actual, expected) in unpacked.into_iter().zip(original) {
+            assert!((actual - expected).abs() < 0.003);
+        }
+
+        assert_eq!(grass_lod(12.0), GrassLod::Near);
+        assert_eq!(grass_lod(12.01), GrassLod::Medium);
+        assert_eq!(grass_lod(24.0), GrassLod::Medium);
+        assert_eq!(grass_lod(24.01), GrassLod::Mid);
     }
 
     #[test]
@@ -1658,7 +1818,19 @@ mod tests {
         );
         let first_red = pixels[0];
         let first_green = pixels[1];
-        assert!(pixels.chunks_exact(4).any(|pixel| pixel[0] != first_red));
-        assert!(pixels.chunks_exact(4).any(|pixel| pixel[1] != first_green));
+        assert!(
+            pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[0] != first_red)
+        );
+        assert!(
+            pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| pixel[1] != first_green)
+        );
     }
 }

@@ -10,10 +10,14 @@
 
 use std::time::Instant;
 
-use winit::event::{DeviceEvent, ElementState::{Pressed, Released}, Event, WindowEvent};
+use winit::event::{
+    DeviceEvent,
+    ElementState::{Pressed, Released},
+    Event, WindowEvent,
+};
 use winit::event_loop::ActiveEventLoop;
-use winit::keyboard::PhysicalKey::Code;
 use winit::keyboard::KeyCode;
+use winit::keyboard::PhysicalKey::Code;
 use winit::window::WindowId;
 
 use crate::app::app::{
@@ -75,9 +79,9 @@ pub fn handle_window_event(
                         return;
                     }
                     if let Some(vulkan_base) = &mut app.vulkan_base {
-                        if let Err(e) = vulkan_base.recreate_swapchain(app.window.as_ref().unwrap()) {
-                            eprintln!("Failed to recreate swapchain: {}", e);
-                        }
+                        // Window systems often emit several resize events together. Record
+                        // intent here; the render loop performs one recreation at a safe point.
+                        vulkan_base.request_swapchain_recreation();
                     }
                     let aspect = size.width as f32 / size.height as f32;
                     // Preserve current fov/near/far; adjust only aspect on resize.
@@ -140,9 +144,7 @@ pub fn handle_window_event(
                         (Code(KeyCode::KeyD), Released) => {
                             app.input.moving_right = false;
                         }
-                        (Code(KeyCode::KeyU), Pressed)
-                            if !app.input.cursor_toggle_locked =>
-                        {
+                        (Code(KeyCode::KeyU), Pressed) if !app.input.cursor_toggle_locked => {
                             app.input.cursor_toggle_locked = true;
                             app.input.cursor_released = !app.input.cursor_released;
                             if app.input.cursor_released {
@@ -176,19 +178,26 @@ pub fn handle_window_event(
 
                     let mut forward_input = 0.0_f32;
                     let mut right_input = 0.0_f32;
-                    if app.input.moving_forward { forward_input += 1.0; }
-                    if app.input.moving_backward { forward_input -= 1.0; }
-                    if app.input.moving_right { right_input += 1.0; }
-                    if app.input.moving_left { right_input -= 1.0; }
+                    if app.input.moving_forward {
+                        forward_input += 1.0;
+                    }
+                    if app.input.moving_backward {
+                        forward_input -= 1.0;
+                    }
+                    if app.input.moving_right {
+                        right_input += 1.0;
+                    }
+                    if app.input.moving_left {
+                        right_input -= 1.0;
+                    }
 
                     // Normalize WASD intent: W+D covers the same metres/second as W alone.
-                    let input_length = (forward_input * forward_input + right_input * right_input).sqrt();
+                    let input_length =
+                        (forward_input * forward_input + right_input * right_input).sqrt();
                     if input_length > 0.0 {
                         let distance = app.walk_speed_mps * delta_seconds / input_length;
-                        app.camera.translate_horizontal(
-                            forward_input * distance,
-                            right_input * distance,
-                        );
+                        app.camera
+                            .translate_horizontal(forward_input * distance, right_input * distance);
                     }
 
                     // The terrain function is shared with mesh generation, so the eye is

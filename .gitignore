@@ -1,5 +1,5 @@
 /target
-Cargo.lock
+/dist
 *.spv
 imgui.ini
 .vscode/settings.json

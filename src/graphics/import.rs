@@ -14,11 +14,11 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use std::error::Error;
-use crate::vulkan::base::VulkanBase;
-use crate::graphics::meshmanager::MeshManager;
-use crate::graphics::materialmanager::MaterialManager;
 use crate::app::scene::SceneObject;
+use crate::graphics::materialmanager::MaterialManager;
+use crate::graphics::meshmanager::MeshManager;
+use crate::vulkan::base::VulkanBase;
+use std::error::Error;
 
 /// Import a model at `path` into a single `SceneObject` containing one part per primitive,
 /// using the russimp/Assimp importer.

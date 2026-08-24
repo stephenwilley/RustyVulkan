@@ -19,46 +19,45 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use ash::vk;
-use std::error::Error;
 use crate::graphics::shaders::{ShaderModule, ShaderStageInfo};
 use crate::vulkan::base::VulkanBase;
-use imgui::{Context as ImGuiContext, FontConfig, FontSource};
-use imgui::FontAtlasTexture;
-use memoffset::offset_of;
-use imgui::DrawVert;
+use ash::vk;
 use imgui::DrawData;
-use bytemuck;
 use imgui::DrawIdx;
-use vk_mem::{Alloc, Allocator, Allocation, MemoryUsage};
+use imgui::DrawVert;
+use imgui::FontAtlasTexture;
+use imgui::{Context as ImGuiContext, FontConfig, FontSource};
+use std::error::Error;
+use std::mem::offset_of;
+use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
 
 /// Renders ImGui UI elements using Vulkan.
 pub struct ImGuiRenderer {
     descriptor_set_layout: vk::DescriptorSetLayout,
-    descriptor_pool:       vk::DescriptorPool,
-    descriptor_set:        vk::DescriptorSet,
-    pipeline_layout:       vk::PipelineLayout,
-    pub vk_pipeline:       vk::Pipeline,
-    pub font_sampler:      Option<vk::Sampler>,
-    pub font_image:        Option<vk::Image>,
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_set: vk::DescriptorSet,
+    pipeline_layout: vk::PipelineLayout,
+    pub vk_pipeline: vk::Pipeline,
+    pub font_sampler: Option<vk::Sampler>,
+    pub font_image: Option<vk::Image>,
     pub font_image_allocation: Option<Allocation>,
-    pub font_image_view:   Option<vk::ImageView>,
-    pub vertex_buffer:        vk::Buffer,
-    pub vertex_allocation:   Option<Allocation>,
-    pub vertex_buffer_size:   vk::DeviceSize,
-    pub index_buffer:         vk::Buffer,
-    pub index_allocation:    Option<Allocation>,
-    pub index_buffer_size:    vk::DeviceSize,
-    device:                ash::Device,
-    vert_stage:            Option<ShaderStageInfo>,
-    frag_stage:            Option<ShaderStageInfo>,
+    pub font_image_view: Option<vk::ImageView>,
+    pub vertex_buffer: vk::Buffer,
+    pub vertex_allocation: Option<Allocation>,
+    pub vertex_buffer_size: vk::DeviceSize,
+    pub index_buffer: vk::Buffer,
+    pub index_allocation: Option<Allocation>,
+    pub index_buffer_size: vk::DeviceSize,
+    device: ash::Device,
+    vert_stage: Option<ShaderStageInfo>,
+    frag_stage: Option<ShaderStageInfo>,
     // Extra textures support (for Image widgets):
-    texture_pool:         vk::DescriptorPool,
-    textures:             Vec<vk::DescriptorSet>,
+    texture_pool: vk::DescriptorPool,
+    textures: Vec<vk::DescriptorSet>,
     // Each swapchain image gets its own descriptor set.  Updating the set for
     // the image currently being recorded is safe because its fence was waited
     // before command recording began.
-    shadow_tex_ids:        Vec<Option<(vk::ImageView, imgui::TextureId)>>,
+    shadow_tex_ids: Vec<Option<(vk::ImageView, imgui::TextureId)>>,
 }
 
 impl ImGuiRenderer {
@@ -70,9 +69,10 @@ impl ImGuiRenderer {
     /// * `atlas` - The ImGui font atlas texture.
     /// # Returns
     /// * `(vk::Buffer, Allocation)` - The staging buffer and its allocation.
-    fn create_staging_buffer(allocator: &Allocator, atlas: &FontAtlasTexture)
-        -> (vk::Buffer, Allocation)
-    {
+    fn create_staging_buffer(
+        allocator: &Allocator,
+        atlas: &FontAtlasTexture,
+    ) -> (vk::Buffer, Allocation) {
         let size = (atlas.width * atlas.height * 4) as vk::DeviceSize;
         let buffer_info = vk::BufferCreateInfo {
             size,
@@ -85,7 +85,11 @@ impl ImGuiRenderer {
             flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
             ..Default::default()
         };
-        unsafe { allocator.create_buffer(&buffer_info, &alloc_info).expect("create staging buffer") }
+        unsafe {
+            allocator
+                .create_buffer(&buffer_info, &alloc_info)
+                .expect("create staging buffer")
+        }
     }
 
     /// Maps the staging buffer memory and copies the font atlas data into it using VMA.
@@ -93,10 +97,17 @@ impl ImGuiRenderer {
     /// * `allocator` - Global Vulkan memory allocator.
     /// * `staging_alloc` - Allocation for the staging buffer.
     /// * `atlas` - The ImGui font atlas texture.
-    fn fill_staging_buffer(allocator: &Allocator, staging_alloc: &mut Allocation, atlas: &FontAtlasTexture) {
+    fn fill_staging_buffer(
+        allocator: &Allocator,
+        staging_alloc: &mut Allocation,
+        atlas: &FontAtlasTexture,
+    ) {
         unsafe {
-            let data_ptr = allocator.map_memory(staging_alloc).expect("map staging") as *mut u8;
+            let data_ptr = allocator.map_memory(staging_alloc).expect("map staging");
             std::ptr::copy_nonoverlapping(atlas.data.as_ptr(), data_ptr, atlas.data.len());
+            allocator
+                .flush_allocation(staging_alloc, 0, atlas.data.len() as u64)
+                .expect("flush font staging");
             allocator.unmap_memory(staging_alloc);
         }
     }
@@ -108,13 +119,19 @@ impl ImGuiRenderer {
     /// * `height` - The height of the font atlas.
     /// # Returns
     /// * `(vk::Image, Allocation)` - The font image and its allocation.
-    fn create_font_image(allocator: &Allocator, width: u32, height: u32)
-        -> (vk::Image, Allocation)
-    {
+    fn create_font_image(
+        allocator: &Allocator,
+        width: u32,
+        height: u32,
+    ) -> (vk::Image, Allocation) {
         let image_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::TYPE_2D,
             format: vk::Format::R8G8B8A8_UNORM,
-            extent: vk::Extent3D { width, height, depth: 1 },
+            extent: vk::Extent3D {
+                width,
+                height,
+                depth: 1,
+            },
             mip_levels: 1,
             array_layers: 1,
             samples: vk::SampleCountFlags::TYPE_1,
@@ -128,7 +145,11 @@ impl ImGuiRenderer {
             usage: MemoryUsage::AutoPreferDevice,
             ..Default::default()
         };
-        unsafe { allocator.create_image(&image_info, &alloc_info).expect("create font image") }
+        unsafe {
+            allocator
+                .create_image(&image_info, &alloc_info)
+                .expect("create font image")
+        }
     }
 
     /// Records and submits a one-time command buffer to transition image layouts and copy data from a staging buffer to the image.
@@ -138,12 +159,13 @@ impl ImGuiRenderer {
     /// * `image` - The destination image.
     /// * `width` - The width of the image.
     /// * `height` - The height of the image.
-    fn copy_buffer_to_image(base: &VulkanBase,
-                            staging_buffer: vk::Buffer,
-                            image: vk::Image,
-                            width: u32,
-                            height: u32)
-    {
+    fn copy_buffer_to_image(
+        base: &VulkanBase,
+        staging_buffer: vk::Buffer,
+        image: vk::Image,
+        width: u32,
+        height: u32,
+    ) {
         let device = &base.device;
         let font_image = image;
         let cmd_alloc_info = vk::CommandBufferAllocateInfo {
@@ -201,7 +223,11 @@ impl ImGuiRenderer {
                 layer_count: 1,
             },
             image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
-            image_extent: vk::Extent3D { width, height, depth: 1 },
+            image_extent: vk::Extent3D {
+                width,
+                height,
+                depth: 1,
+            },
         };
         unsafe {
             device.cmd_copy_buffer_to_image(
@@ -252,7 +278,9 @@ impl ImGuiRenderer {
             ..Default::default()
         };
         unsafe {
-            device.queue_submit(base.graphics_queue, &[submit], vk::Fence::null()).unwrap();
+            device
+                .queue_submit(base.graphics_queue, &[submit], vk::Fence::null())
+                .unwrap();
             device.queue_wait_idle(base.graphics_queue).unwrap();
         }
 
@@ -294,18 +322,18 @@ impl ImGuiRenderer {
     fn create_sampler(base: &VulkanBase) -> vk::Sampler {
         let device = &base.device;
         let sampler_info = vk::SamplerCreateInfo {
-            mag_filter:             vk::Filter::LINEAR,
-            min_filter:             vk::Filter::LINEAR,
-            address_mode_u:         vk::SamplerAddressMode::CLAMP_TO_EDGE,
-            address_mode_v:         vk::SamplerAddressMode::CLAMP_TO_EDGE,
-            address_mode_w:         vk::SamplerAddressMode::CLAMP_TO_EDGE,
-            mipmap_mode:            vk::SamplerMipmapMode::LINEAR,
-            mip_lod_bias:           0.0,
-            anisotropy_enable:      vk::FALSE,
-            max_anisotropy:         1.0,
-            min_lod:                0.0,
-            max_lod:                1.0,
-            border_color:           vk::BorderColor::INT_OPAQUE_BLACK,
+            mag_filter: vk::Filter::LINEAR,
+            min_filter: vk::Filter::LINEAR,
+            address_mode_u: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+            address_mode_v: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+            address_mode_w: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+            mip_lod_bias: 0.0,
+            anisotropy_enable: vk::FALSE,
+            max_anisotropy: 1.0,
+            min_lod: 0.0,
+            max_lod: 1.0,
+            border_color: vk::BorderColor::INT_OPAQUE_BLACK,
             unnormalized_coordinates: vk::FALSE,
             ..Default::default()
         };
@@ -339,7 +367,11 @@ impl ImGuiRenderer {
             p_bindings: bindings.as_ptr(),
             ..Default::default()
         };
-        unsafe { base.device.create_descriptor_set_layout(&layout_info, None).unwrap() }
+        unsafe {
+            base.device
+                .create_descriptor_set_layout(&layout_info, None)
+                .unwrap()
+        }
     }
 
     /// Helper: create descriptor pool for one combined image sampler
@@ -359,7 +391,11 @@ impl ImGuiRenderer {
             max_sets,
             ..Default::default()
         };
-        unsafe { base.device.create_descriptor_pool(&pool_info, None).unwrap() }
+        unsafe {
+            base.device
+                .create_descriptor_pool(&pool_info, None)
+                .unwrap()
+        }
     }
 
     /// Helper: allocate a descriptor set for ImGui
@@ -377,24 +413,24 @@ impl ImGuiRenderer {
         };
         unsafe { base.device.allocate_descriptor_sets(&alloc_info).unwrap()[0] }
     }
-    
+
     /// Updates the previously-allocated descriptor set so binding 0 points at our atlas view+sampler.
     /// # Arguments
     /// * `base` - The VulkanBase instance.
     fn write_descriptor_set(&self, base: &VulkanBase) {
         let device = &base.device;
         let image_info = vk::DescriptorImageInfo {
-            sampler:      self.font_sampler.unwrap(),
-            image_view:   self.font_image_view.unwrap(),
+            sampler: self.font_sampler.unwrap(),
+            image_view: self.font_image_view.unwrap(),
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         };
         let descriptor_write = vk::WriteDescriptorSet {
-            dst_set:           self.descriptor_set,
-            dst_binding:       0,
+            dst_set: self.descriptor_set,
+            dst_binding: 0,
             dst_array_element: 0,
-            descriptor_count:  1,
-            descriptor_type:   vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            p_image_info:      &image_info,
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            p_image_info: &image_info,
             ..Default::default()
         };
         unsafe {
@@ -421,12 +457,22 @@ impl ImGuiRenderer {
 
     /// Register or update a texture descriptor for displaying images in ImGui.
     /// Returns a stable TextureId that can be used with ui.image(...).
-    pub fn ensure_texture(&mut self, base: &VulkanBase, sampler: vk::Sampler, view: vk::ImageView, existing: Option<imgui::TextureId>) -> imgui::TextureId {
+    pub fn ensure_texture(
+        &mut self,
+        base: &VulkanBase,
+        sampler: vk::Sampler,
+        view: vk::ImageView,
+        existing: Option<imgui::TextureId>,
+    ) -> imgui::TextureId {
         let device = &base.device;
         if let Some(id) = existing {
-            let idx = (id.id() - 1) as usize;
+            let idx = id.id() - 1;
             if let Some(&set) = self.textures.get(idx) {
-                let info = vk::DescriptorImageInfo { sampler, image_view: view, image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL };
+                let info = vk::DescriptorImageInfo {
+                    sampler,
+                    image_view: view,
+                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                };
                 let write = vk::WriteDescriptorSet {
                     dst_set: set,
                     dst_binding: 0,
@@ -442,14 +488,31 @@ impl ImGuiRenderer {
         }
         // Allocate new set
         let layouts = [self.descriptor_set_layout];
-        let alloc_info = vk::DescriptorSetAllocateInfo { descriptor_pool: self.texture_pool, descriptor_set_count: 1, p_set_layouts: layouts.as_ptr(), ..Default::default() };
+        let alloc_info = vk::DescriptorSetAllocateInfo {
+            descriptor_pool: self.texture_pool,
+            descriptor_set_count: 1,
+            p_set_layouts: layouts.as_ptr(),
+            ..Default::default()
+        };
         let set = unsafe { device.allocate_descriptor_sets(&alloc_info).unwrap()[0] };
-        let info = vk::DescriptorImageInfo { sampler, image_view: view, image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL };
-        let write = vk::WriteDescriptorSet { dst_set: set, dst_binding: 0, dst_array_element: 0, descriptor_count: 1, descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER, p_image_info: &info, ..Default::default() };
+        let info = vk::DescriptorImageInfo {
+            sampler,
+            image_view: view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        };
+        let write = vk::WriteDescriptorSet {
+            dst_set: set,
+            dst_binding: 0,
+            dst_array_element: 0,
+            descriptor_count: 1,
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            p_image_info: &info,
+            ..Default::default()
+        };
         unsafe { device.update_descriptor_sets(&[write], &[]) };
         self.textures.push(set);
         // Reserve ID space: 1..=textures.len(), where 0 is font
-        imgui::TextureId::new(self.textures.len() as usize)
+        imgui::TextureId::new(self.textures.len())
     }
 
     /// Returns a descriptor-backed texture ID for this frame's shadow image.
@@ -495,11 +558,13 @@ impl ImGuiRenderer {
     fn load_shaders(&mut self, base: &mut VulkanBase) -> (ShaderStageInfo, ShaderStageInfo) {
         let entry_name = c"main";
         // Load vertex shader
-        let vert_module = ShaderModule::from_spv_file(&base.device, "assets/shaders/spv/imgui.vert.spv")
-            .expect("Failed to load imgui.vert.spv");
+        let vert_module =
+            ShaderModule::from_spv_file(&base.device, "assets/shaders/spv/imgui.vert.spv")
+                .expect("Failed to load imgui.vert.spv");
         // Load fragment shader
-        let frag_module = ShaderModule::from_spv_file(&base.device, "assets/shaders/spv/imgui.frag.spv")
-            .expect("Failed to load imgui.frag.spv");
+        let frag_module =
+            ShaderModule::from_spv_file(&base.device, "assets/shaders/spv/imgui.frag.spv")
+                .expect("Failed to load imgui.frag.spv");
         let vert_stage = ShaderStageInfo {
             stage: vk::ShaderStageFlags::VERTEX,
             shader_module: vert_module,
@@ -617,10 +682,10 @@ impl ImGuiRenderer {
 
         // Disable depth testing for UI
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo {
-            depth_test_enable:       vk::FALSE,
-            depth_write_enable:      vk::FALSE,
-            depth_compare_op:        vk::CompareOp::ALWAYS,
-            stencil_test_enable:     vk::FALSE,
+            depth_test_enable: vk::FALSE,
+            depth_write_enable: vk::FALSE,
+            depth_compare_op: vk::CompareOp::ALWAYS,
+            stencil_test_enable: vk::FALSE,
             ..Default::default()
         };
 
@@ -660,9 +725,8 @@ impl ImGuiRenderer {
             p_push_constant_ranges: &push_constant_range,
             ..Default::default()
         };
-        self.pipeline_layout = unsafe {
-            device.create_pipeline_layout(&layout_info, None).unwrap()
-        };
+        self.pipeline_layout =
+            unsafe { device.create_pipeline_layout(&layout_info, None).unwrap() };
 
         // Finally create the graphics pipeline
         let color_formats = [color_format];
@@ -690,8 +754,10 @@ impl ImGuiRenderer {
         };
         pipeline_info.p_next = &rendering_info as *const _ as *const std::ffi::c_void;
         self.vk_pipeline = unsafe {
-            device.create_graphics_pipelines(base.pipeline_cache, &[pipeline_info], None)
-                  .map_err(|e| e.1).unwrap()[0]
+            device
+                .create_graphics_pipelines(base.pipeline_cache, &[pipeline_info], None)
+                .map_err(|e| e.1)
+                .unwrap()[0]
         };
         Ok(())
     }
@@ -701,8 +767,10 @@ impl ImGuiRenderer {
     /// * `draw_data` - The ImGui draw data.
     pub fn update_buffers(&mut self, allocator: &Allocator, draw_data: &DrawData) {
         // Total vertex and index data sizes
-        let vertex_size = (draw_data.total_vtx_count as usize * std::mem::size_of::<DrawVert>()) as vk::DeviceSize;
-        let index_size  = (draw_data.total_idx_count as usize * std::mem::size_of::<DrawIdx>()) as vk::DeviceSize;
+        let vertex_size = (draw_data.total_vtx_count as usize * std::mem::size_of::<DrawVert>())
+            as vk::DeviceSize;
+        let index_size =
+            (draw_data.total_idx_count as usize * std::mem::size_of::<DrawIdx>()) as vk::DeviceSize;
         let grow_vertex_buffer = vertex_size > self.vertex_buffer_size;
         let grow_index_buffer = index_size > self.index_buffer_size;
 
@@ -712,16 +780,24 @@ impl ImGuiRenderer {
         if (grow_vertex_buffer && self.vertex_buffer != vk::Buffer::null())
             || (grow_index_buffer && self.index_buffer != vk::Buffer::null())
         {
-            unsafe { self.device.device_wait_idle().expect("wait for ImGui buffer resize"); }
+            unsafe {
+                self.device
+                    .device_wait_idle()
+                    .expect("wait for ImGui buffer resize");
+            }
         }
 
         if grow_vertex_buffer {
-            if self.vertex_buffer != vk::Buffer::null() {
-                if let Some(allocation) = &mut self.vertex_allocation {
-                    unsafe { allocator.destroy_buffer(self.vertex_buffer, allocation); }
+            if self.vertex_buffer != vk::Buffer::null()
+                && let Some(allocation) = &mut self.vertex_allocation
+            {
+                unsafe {
+                    allocator.destroy_buffer(self.vertex_buffer, allocation);
                 }
             }
-            let capacity = vertex_size.max(self.vertex_buffer_size.saturating_mul(2)).max(1024);
+            let capacity = vertex_size
+                .max(self.vertex_buffer_size.saturating_mul(2))
+                .max(1024);
             let buffer_info = vk::BufferCreateInfo {
                 size: capacity,
                 usage: vk::BufferUsageFlags::VERTEX_BUFFER,
@@ -730,22 +806,31 @@ impl ImGuiRenderer {
             };
             let alloc_info = vk_mem::AllocationCreateInfo {
                 usage: MemoryUsage::AutoPreferHost,
-                flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+                flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
+                    | vk_mem::AllocationCreateFlags::MAPPED,
                 ..Default::default()
             };
-            let (buf, alloc) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info).expect("create vertex buffer") };
+            let (buf, alloc) = unsafe {
+                allocator
+                    .create_buffer(&buffer_info, &alloc_info)
+                    .expect("create vertex buffer")
+            };
             self.vertex_buffer = buf;
             self.vertex_allocation = Some(alloc);
             self.vertex_buffer_size = capacity;
         }
 
         if grow_index_buffer {
-            if self.index_buffer != vk::Buffer::null() {
-                if let Some(allocation) = &mut self.index_allocation {
-                    unsafe { allocator.destroy_buffer(self.index_buffer, allocation); }
+            if self.index_buffer != vk::Buffer::null()
+                && let Some(allocation) = &mut self.index_allocation
+            {
+                unsafe {
+                    allocator.destroy_buffer(self.index_buffer, allocation);
                 }
             }
-            let capacity = index_size.max(self.index_buffer_size.saturating_mul(2)).max(1024);
+            let capacity = index_size
+                .max(self.index_buffer_size.saturating_mul(2))
+                .max(1024);
             let buffer_info = vk::BufferCreateInfo {
                 size: capacity,
                 usage: vk::BufferUsageFlags::INDEX_BUFFER,
@@ -754,19 +839,25 @@ impl ImGuiRenderer {
             };
             let alloc_info = vk_mem::AllocationCreateInfo {
                 usage: MemoryUsage::AutoPreferHost,
-                flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+                flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
+                    | vk_mem::AllocationCreateFlags::MAPPED,
                 ..Default::default()
             };
-            let (buf, alloc) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info).expect("create index buffer") };
+            let (buf, alloc) = unsafe {
+                allocator
+                    .create_buffer(&buffer_info, &alloc_info)
+                    .expect("create index buffer")
+            };
             self.index_buffer = buf;
             self.index_allocation = Some(alloc);
             self.index_buffer_size = capacity;
         }
 
-        // Map and copy vertex data
+        // The host-visible UI allocations stay mapped, avoiding map/unmap bookkeeping.
         unsafe {
-            if let Some(allocation) = &mut self.vertex_allocation {
-                let vtx_ptr = allocator.map_memory(allocation).expect("map vertex") as *mut u8;
+            if let Some(allocation) = &self.vertex_allocation {
+                let vtx_ptr = allocator.get_allocation_info(allocation).mapped_data as *mut u8;
+                debug_assert!(!vtx_ptr.is_null());
                 let mut offset = 0;
                 for draw_list in draw_data.draw_lists() {
                     let src = draw_list.vtx_buffer();
@@ -778,12 +869,14 @@ impl ImGuiRenderer {
                     );
                     offset += byte_len;
                 }
-                allocator.unmap_memory(allocation);
+                allocator
+                    .flush_allocation(allocation, 0, vertex_size)
+                    .expect("flush ImGui vertices");
             }
 
-            // Map and copy index data
-            if let Some(allocation) = &mut self.index_allocation {
-                let idx_ptr = allocator.map_memory(allocation).expect("map index") as *mut u8;
+            if let Some(allocation) = &self.index_allocation {
+                let idx_ptr = allocator.get_allocation_info(allocation).mapped_data as *mut u8;
+                debug_assert!(!idx_ptr.is_null());
                 let mut idx_offset = 0;
                 for draw_list in draw_data.draw_lists() {
                     let src = draw_list.idx_buffer();
@@ -795,7 +888,9 @@ impl ImGuiRenderer {
                     );
                     idx_offset += byte_len;
                 }
-                allocator.unmap_memory(allocation);
+                allocator
+                    .flush_allocation(allocation, 0, index_size)
+                    .expect("flush ImGui indices");
             }
         }
     }
@@ -808,17 +903,15 @@ impl ImGuiRenderer {
     pub fn rebuild_pipeline(&mut self, base: &mut VulkanBase) -> Result<(), Box<dyn Error>> {
         unsafe {
             base.device.destroy_pipeline(self.vk_pipeline, None);
-            base.device.destroy_pipeline_layout(self.pipeline_layout, None);
+            base.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
         }
         // Taking an Option moves its old value out; dropping that value invokes
         // ShaderModule::drop before the new pipeline stages replace it.
         drop(self.vert_stage.take());
         drop(self.frag_stage.take());
         let (vert_stage, frag_stage) = Self::load_shaders(self, base);
-        let shader_stages = [
-            vert_stage.to_create_info(),
-            frag_stage.to_create_info(),
-        ];
+        let shader_stages = [vert_stage.to_create_info(), frag_stage.to_create_info()];
 
         let extent = base.swapchain.extent;
         let color = base.swapchain.color_format;
@@ -838,8 +931,8 @@ impl ImGuiRenderer {
     /// # Returns
     /// A new ImGuiRenderer instance with all resources initialized.
     pub fn new(base: &mut VulkanBase, imgui: &mut ImGuiContext) -> Self {
-        let device     = base.device.clone();
-        let allocator  = base.allocator.as_ref().expect("Allocator not initialized");
+        let device = base.device.clone();
+        let allocator = base.allocator.as_ref().expect("Allocator not initialized");
 
         // 0) Load default font atlas
         imgui.fonts().add_font(&[FontSource::DefaultFontData {
@@ -854,7 +947,8 @@ impl ImGuiRenderer {
         // 2) Map memory and copy font atlas data into it
         Self::fill_staging_buffer(allocator, &mut staging_alloc, &atlas);
         // 3) Create font image with device-local memory
-        let (font_image, font_allocation) = Self::create_font_image(allocator, atlas.width, atlas.height);
+        let (font_image, font_allocation) =
+            Self::create_font_image(allocator, atlas.width, atlas.height);
         // 4) Copy from staging to the font image
         Self::copy_buffer_to_image(base, staging_buffer, font_image, atlas.width, atlas.height);
         // 5) Clean up staging buffer
@@ -896,26 +990,27 @@ impl ImGuiRenderer {
         imgui_renderer.write_descriptor_set(base);
 
         // 10) Loads the shaders and build the pipeline
-        imgui_renderer.rebuild_pipeline(base)
+        imgui_renderer
+            .rebuild_pipeline(base)
             .expect("Failed to rebuild imgui pipeline");
 
         imgui_renderer
     }
-    
+
     /// Cleans up ImGui Vulkan resources created by this renderer.
     /// This destroys all Vulkan objects owned by the renderer.
     pub fn cleanup(&mut self, allocator: &Allocator) {
         unsafe {
             // Destroy dynamic buffers
-            if self.vertex_buffer != vk::Buffer::null() {
-                if let Some(allocation) = &mut self.vertex_allocation {
-                    allocator.destroy_buffer(self.vertex_buffer, allocation);
-                }
+            if self.vertex_buffer != vk::Buffer::null()
+                && let Some(allocation) = &mut self.vertex_allocation
+            {
+                allocator.destroy_buffer(self.vertex_buffer, allocation);
             }
-            if self.index_buffer != vk::Buffer::null() {
-                if let Some(allocation) = &mut self.index_allocation {
-                    allocator.destroy_buffer(self.index_buffer, allocation);
-                }
+            if self.index_buffer != vk::Buffer::null()
+                && let Some(allocation) = &mut self.index_allocation
+            {
+                allocator.destroy_buffer(self.index_buffer, allocation);
             }
 
             // Destroy font resources
@@ -925,23 +1020,26 @@ impl ImGuiRenderer {
             if let Some(sampler) = self.font_sampler.take() {
                 self.device.destroy_sampler(sampler, None);
             }
-            if let Some(image) = self.font_image.take() {
-                if let Some(allocation) = &mut self.font_image_allocation {
-                    allocator.destroy_image(image, allocation);
-                }
+            if let Some(image) = self.font_image.take()
+                && let Some(allocation) = &mut self.font_image_allocation
+            {
+                allocator.destroy_image(image, allocation);
             }
 
             // Descriptor resources and pipeline
             if self.texture_pool != vk::DescriptorPool::null() {
                 self.device.destroy_descriptor_pool(self.texture_pool, None);
             }
-            self.device.destroy_descriptor_pool(self.descriptor_pool, None);
-            self.device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            self.device
+                .destroy_descriptor_pool(self.descriptor_pool, None);
+            self.device
+                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             if self.vk_pipeline != vk::Pipeline::null() {
                 self.device.destroy_pipeline(self.vk_pipeline, None);
             }
             if self.pipeline_layout != vk::PipelineLayout::null() {
-                self.device.destroy_pipeline_layout(self.pipeline_layout, None);
+                self.device
+                    .destroy_pipeline_layout(self.pipeline_layout, None);
             }
         }
         // Keep the Vulkan dependency order visible even though the modules are RAII.
@@ -988,17 +1086,13 @@ impl ImGuiRenderer {
         }
         // Bind ImGui pipeline and descriptor set
         unsafe {
-            device.cmd_bind_pipeline(
-                cmd_buf,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.vk_pipeline,
-            );
+            device.cmd_bind_pipeline(cmd_buf, vk::PipelineBindPoint::GRAPHICS, self.vk_pipeline);
         }
         // Set dynamic viewport for UI
         let viewport = vk::Viewport {
             x: 0.0,
             y: 0.0,
-            width:  draw_data.display_size[0] * fb_scale[0],
+            width: draw_data.display_size[0] * fb_scale[0],
             height: draw_data.display_size[1] * fb_scale[1],
             min_depth: 0.0,
             max_depth: 1.0,
@@ -1013,10 +1107,10 @@ impl ImGuiRenderer {
         let b = t + h;
         // clang-format off
         let proj = [
-            [ 2.0 / (r - l),    0.0,               0.0, 0.0 ],
-            [ 0.0,             2.0 / (b - t),     0.0, 0.0 ],
-            [ 0.0,              0.0,              1.0, 0.0 ],
-            [ (r + l) / (l - r), (t + b) / (t - b), 0.0, 1.0 ],
+            [2.0 / (r - l), 0.0, 0.0, 0.0],
+            [0.0, 2.0 / (b - t), 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [(r + l) / (l - r), (t + b) / (t - b), 0.0, 1.0],
         ];
         // clang-format on
         unsafe {
@@ -1034,15 +1128,36 @@ impl ImGuiRenderer {
             let mut index_offset: u32 = 0;
             let mut bound_set: vk::DescriptorSet = self.descriptor_set;
             // Bind the default font set initially
-            device.cmd_bind_descriptor_sets(cmd_buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline_layout, 0, &[bound_set], &[]);
+            device.cmd_bind_descriptor_sets(
+                cmd_buf,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipeline_layout,
+                0,
+                &[bound_set],
+                &[],
+            );
             for draw_list in draw_data.draw_lists() {
                 for cmd in draw_list.commands() {
                     if let imgui::DrawCmd::Elements { count, cmd_params } = cmd {
                         // Switch texture if needed
                         let tex_id = cmd_params.texture_id.id();
-                        let desired_set = if tex_id == 0 { self.descriptor_set } else { self.textures.get(tex_id - 1).copied().unwrap_or(self.descriptor_set) };
+                        let desired_set = if tex_id == 0 {
+                            self.descriptor_set
+                        } else {
+                            self.textures
+                                .get(tex_id - 1)
+                                .copied()
+                                .unwrap_or(self.descriptor_set)
+                        };
                         if desired_set != bound_set {
-                            device.cmd_bind_descriptor_sets(cmd_buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline_layout, 0, &[desired_set], &[]);
+                            device.cmd_bind_descriptor_sets(
+                                cmd_buf,
+                                vk::PipelineBindPoint::GRAPHICS,
+                                self.pipeline_layout,
+                                0,
+                                &[desired_set],
+                                &[],
+                            );
                             bound_set = desired_set;
                         }
                         // Set scissor rectangle from ImGui clip rect

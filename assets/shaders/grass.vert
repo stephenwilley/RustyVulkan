@@ -11,7 +11,7 @@
 layout(push_constant) uniform Push {
     mat4 mvp;
     mat4 mv;
-    // x = elapsed seconds, y = wind strength in metres, z = LOD (0 near, 1 mid).
+    // x = elapsed seconds, y = wind strength, z = LOD (0 near, 0.5 medium, 1 mid).
     vec4 grassParams;
 } pc;
 
@@ -69,7 +69,14 @@ float smooth_triangle(float phase) {
 
 void main() {
     float height_fraction = inLocalPosition.y;
-    // The second instance attribute arrives as four normalised 16-bit values.
+    // Both instance attributes arrive as normalised 16-bit values. Decode the root
+    // position from the same fixed field bounds used by Rust when packing it.
+    vec4 position_height = vec4(
+        mix(-80.5, 80.5, inPositionHeight.x),
+        mix(0.0, 5.0, inPositionHeight.y),
+        mix(-82.5, 78.5, inPositionHeight.z),
+        mix(0.0, 1.0, inPositionHeight.w)
+    );
     float rotation = inRotationWidthTintPhase.x * 6.28318530718;
     float blade_width = inRotationWidthTintPhase.y * 0.1;
     // Fewer mid-distance instances expose more dark soil. A modest width increase
@@ -84,8 +91,8 @@ void main() {
     // Ghost of Tsushima combines a broad scrolling noise field with finer moving detail.
     // These two texture reads replace the old sixteen sine-based hashes per vertex.
     const vec2 global_wind = vec2(0.8, 0.6);
-    vec2 broad_uv = inPositionHeight.xz * 0.035 - global_wind * pc.grassParams.x * 0.11;
-    vec2 detail_uv = inPositionHeight.xz * 0.14 - global_wind * pc.grassParams.x * 0.36;
+    vec2 broad_uv = position_height.xz * 0.035 - global_wind * pc.grassParams.x * 0.11;
+    vec2 detail_uv = position_height.xz * 0.14 - global_wind * pc.grassParams.x * 0.36;
     float broad = textureLod(windMap, broad_uv, 0.0).r;
     float detail = textureLod(windMap, detail_uv, 0.0).g * 2.0 - 1.0;
 
@@ -96,7 +103,7 @@ void main() {
     // Broad bright patches become short, clearly visible gusts. Continuous triangle-wave
     // motion remains underneath, so grass bends, passes through rest, and always returns.
     float gust_envelope = smoothstep(0.58, 0.82, broad);
-    float sway_phase = dot(inPositionHeight.xz, vec2(0.19, 0.27))
+    float sway_phase = dot(position_height.xz, vec2(0.19, 0.27))
         + pc.grassParams.x * 0.62 + wind_phase;
     float calm_sway = 0.24 * (
         smooth_triangle(sway_phase)
@@ -109,9 +116,9 @@ void main() {
         * pc.grassParams.y * height_fraction * height_fraction;
 
     vec3 world_position = vec3(
-        inPositionHeight.x + local_xz.x + local_wind.x * bend,
-        inPositionHeight.y + height_fraction * inPositionHeight.w - abs(bend) * 0.12,
-        inPositionHeight.z + local_xz.y + local_wind.y * bend
+        position_height.x + local_xz.x + local_wind.x * bend,
+        position_height.y + height_fraction * position_height.w - abs(bend) * 0.12,
+        position_height.z + local_xz.y + local_wind.y * bend
     );
 
     vec4 position_view = pc.mv * vec4(world_position, 1.0);

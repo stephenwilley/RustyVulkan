@@ -5,28 +5,51 @@
 // Author: Stephen Willey (with the AIs doing a bunch of the work and trying to teach me)
 //
 // This build script runs automatically before compilation. It looks in `assets/shaders/`
-// and compiles any `.vert`, `.frag`, `.comp`, `.geom`, `.tesc`, or `.tese` GLSL files
+// and compiles the GLSL files listed in `SHADERS`
 // into SPIR-V binaries using the `shaderc` crate.
 //
 // The output `.spv` files are written alongside the originals for later loading by Vulkan.
 //
 // Note:
-//   • Only files with recognized shader extensions are compiled
-//   • Each file is recompiled only if it's changed (via cargo:rerun-if-changed)
+//   • Add new shader source files to `SHADERS` below
+//   • A shader is recompiled only when its source is newer than its SPIR-V output
 //   • This runs automatically during `cargo build`
 //
 // This script ensures that all shaders are ready to go before linking the final binary.
 // --------------------------------------------------------------------------------------
 
-use std::{fs, path::Path};
+use std::{fs, path::Path, time::SystemTime};
+
+// This explicit list is also the shader manifest: adding a shader here makes Cargo watch it.
+// Generated SPIR-V is deliberately not watched, otherwise writing it retriggers this script.
+const SHADERS: &[&str] = &[
+    "grass.vert",
+    "grass.frag",
+    "grass_mid.frag",
+    "imgui.vert",
+    "imgui.frag",
+    "infinite_plane.vert",
+    "infinite_plane.frag",
+    "lambert_no_tex.frag",
+    "main.vert",
+    "main.frag",
+    "passthrough.vert",
+    "shadow_depth.vert",
+    "sky.vert",
+    "sky.frag",
+    "vertex_color.vert",
+    "vertex_color.frag",
+];
 
 fn compile_shaders() {
     let shader_dir = Path::new("assets/shaders");
     let compiler = shaderc::Compiler::new().unwrap();
+    let spv_dir = shader_dir.join("spv");
+    fs::create_dir_all(&spv_dir).unwrap();
 
-    for entry in fs::read_dir(shader_dir).unwrap() {
-        let path = entry.unwrap().path();
-        println!("📝 Compiling shader: {:?}", path);
+    for shader_name in SHADERS {
+        let path = shader_dir.join(shader_name);
+        println!("cargo:rerun-if-changed={}", path.display());
 
         let shader_kind = match path.extension().and_then(|s| s.to_str()) {
             Some("vert") => Some(shaderc::ShaderKind::Vertex),
@@ -39,8 +62,21 @@ fn compile_shaders() {
         };
 
         let Some(shader_kind) = shader_kind else {
-            continue; // Skip unsupported extensions
+            continue;
         };
+
+        let spv_path = spv_dir.join(format!("{shader_name}.spv"));
+        let source_modified = fs::metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let output_is_current = fs::metadata(&spv_path)
+            .and_then(|metadata| metadata.modified())
+            .is_ok_and(|modified| modified >= source_modified);
+        if output_is_current {
+            continue;
+        }
+
+        println!("📝 Compiling shader: {:?}", path);
 
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("📝 Failed to read shader source: {:?}", path));
@@ -48,32 +84,23 @@ fn compile_shaders() {
         let mut options = shaderc::CompileOptions::new().unwrap();
         options.set_target_env(shaderc::TargetEnv::Vulkan, 0);
 
-        let binary_result = compiler.compile_into_spirv(
-            &source,
-            shader_kind,
-            path.file_name().unwrap().to_str().unwrap(),
-            "main",
-            Some(&options),
-        ).expect("📝 Shader compilation failed");
+        let binary_result = compiler
+            .compile_into_spirv(
+                &source,
+                shader_kind,
+                path.file_name().unwrap().to_str().unwrap(),
+                "main",
+                Some(&options),
+            )
+            .expect("📝 Shader compilation failed");
 
-        let spv_dir = shader_dir.join("spv");
-        fs::create_dir_all(&spv_dir).unwrap();
-
-        // Grab the full filename (e.g. "lambert.frag"):
-        let shader_name = path.file_name().unwrap().to_string_lossy();
-        // Append ".spv" to it, giving "lambert.frag.spv":
-        let spv_file_name = format!("{}.spv", shader_name);
-        // Build the final path:
-        let spv_path = spv_dir.join(spv_file_name);
         fs::write(&spv_path, binary_result.as_binary_u8()).unwrap();
-        println!("cargo:rerun-if-changed={}", path.display());
     }
 }
 
 fn main() {
     // Tell Cargo when to rerun this build script:
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=assets/shaders");
     compile_shaders();
     println!("📝 Shader compilation completed successfully!");
 }

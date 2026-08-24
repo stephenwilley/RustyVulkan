@@ -98,8 +98,9 @@ impl TextureUploadBatch {
         let (staging_buffer, mut staging_allocation) =
             unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
         unsafe {
-            let data_ptr = allocator.map_memory(&mut staging_allocation)? as *mut u8;
+            let data_ptr = allocator.map_memory(&mut staging_allocation)?;
             std::ptr::copy_nonoverlapping(pixels.as_ptr(), data_ptr, pixels.len());
+            allocator.flush_allocation(&staging_allocation, 0, pixels.len() as u64)?;
             allocator.unmap_memory(&mut staging_allocation);
         }
 
@@ -107,7 +108,11 @@ impl TextureUploadBatch {
         let image_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::TYPE_2D,
             format: vk::Format::R8G8B8A8_UNORM,
-            extent: vk::Extent3D { width, height, depth: 1 },
+            extent: vk::Extent3D {
+                width,
+                height,
+                depth: 1,
+            },
             mip_levels: 1,
             array_layers: 1,
             samples: vk::SampleCountFlags::TYPE_1,
@@ -121,7 +126,8 @@ impl TextureUploadBatch {
             usage: MemoryUsage::AutoPreferDevice,
             ..Default::default()
         };
-        let (image, allocation) = unsafe { allocator.create_image(&image_info, &image_alloc_info)? };
+        let (image, allocation) =
+            unsafe { allocator.create_image(&image_info, &image_alloc_info)? };
 
         let subresource_range = vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
@@ -145,7 +151,11 @@ impl TextureUploadBatch {
                 base_array_layer: 0,
                 layer_count: 1,
             },
-            image_extent: vk::Extent3D { width, height, depth: 1 },
+            image_extent: vk::Extent3D {
+                width,
+                height,
+                depth: 1,
+            },
             ..Default::default()
         };
         let to_shader_read = vk::ImageMemoryBarrier {
@@ -203,13 +213,15 @@ impl TextureUploadBatch {
 
         let prepare_ms = prepare_start.elapsed().as_secs_f32() * 1_000.0;
         if prepare_ms >= 100.0 {
-            println!(
-                "🖼️ Prepared {image_path} ({width}×{height}) in {prepare_ms:.1} ms"
-            );
+            println!("🖼️ Prepared {image_path} ({width}×{height}) in {prepare_ms:.1} ms");
         }
 
         // The returned image is ready to use only after the enclosing batch is flushed.
-        Ok(Texture { image, allocation, image_view })
+        Ok(Texture {
+            image,
+            allocation,
+            image_view,
+        })
     }
 
     fn finish(
@@ -241,7 +253,12 @@ impl TextureUploadBatch {
         Ok(())
     }
 
-    fn discard(mut self, device: &ash::Device, allocator: &Allocator, command_pool: vk::CommandPool) {
+    fn discard(
+        mut self,
+        device: &ash::Device,
+        allocator: &Allocator,
+        command_pool: vk::CommandPool,
+    ) {
         unsafe {
             // Error cleanup path: nothing was submitted, so resources are immediately safe.
             device.free_command_buffers(command_pool, &[self.command_buffer]);
@@ -311,7 +328,11 @@ impl TextureCache {
     /// `vk::ImageView` is a small, `Copy` Vulkan handle, not an owning Rust
     /// reference.  A material can store this handle in a descriptor while this
     /// cache remains the one Rust owner responsible for destroying the image.
-    pub fn load(&mut self, vb: &VulkanBase, image_path: &str) -> Result<vk::ImageView, Box<dyn Error>> {
+    pub fn load(
+        &mut self,
+        vb: &VulkanBase,
+        image_path: &str,
+    ) -> Result<vk::ImageView, Box<dyn Error>> {
         let key = Self::key_for_path(image_path);
         // No decode, allocation, or GPU work for a texture already used by a material.
         if let Some(texture) = self.textures.get(&key) {
@@ -327,7 +348,11 @@ impl TextureCache {
             .upload_batch
             .as_mut()
             .expect("texture upload batch")
-            .upload(&vb.device, vb.allocator.as_ref().expect("allocator"), image_path)?;
+            .upload(
+                &vb.device,
+                vb.allocator.as_ref().expect("allocator"),
+                image_path,
+            )?;
         let image_view = texture.image_view;
         self.textures.insert(key, texture);
         Ok(image_view)
@@ -349,13 +374,21 @@ impl TextureCache {
                 vb.command_pool,
                 vb.graphics_queue,
             )?;
-            println!("🖼️ Uploaded {} unique textures in one GPU submission", upload_count);
+            println!(
+                "🖼️ Uploaded {} unique textures in one GPU submission",
+                upload_count
+            );
         }
         Ok(())
     }
 
     /// Destroy queued staging resources, cached images, and the common sampler.
-    pub fn cleanup(&mut self, device: &ash::Device, allocator: &Allocator, command_pool: vk::CommandPool) {
+    pub fn cleanup(
+        &mut self,
+        device: &ash::Device,
+        allocator: &Allocator,
+        command_pool: vk::CommandPool,
+    ) {
         // A failed/aborted load may have a recording batch that was never submitted.
         if let Some(batch) = self.upload_batch.take() {
             batch.discard(device, allocator, command_pool);

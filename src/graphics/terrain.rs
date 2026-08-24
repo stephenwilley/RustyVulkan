@@ -139,7 +139,8 @@ pub fn build_heightfield(settings: TerrainSettings) -> Mesh {
             let bitangent = normalise(cross(normal, tangent));
             // A low-frequency vertex tint gives the bare soil some uneven, earthy colour
             // without bringing another texture into this deliberately procedural scene.
-            let dirt_variation = 0.72 + 0.28 * value_noise(x, z, 0.22, settings.seed.wrapping_add(9));
+            let dirt_variation =
+                0.72 + 0.28 * value_noise(x, z, 0.22, settings.seed.wrapping_add(9));
 
             mesh.vertices.push(Vertex {
                 pos: [x, height, z],
@@ -183,11 +184,8 @@ fn terrain_height(x: f32, z: f32, settings: TerrainSettings) -> f32 {
     let natural_height = natural_terrain_height(x, z, settings);
     // Flatten to the height the unmodified terrain would have at the hut centre.  This
     // creates a building pad without digging the old, conspicuous zero-height bowl.
-    let pad_height = natural_terrain_height(
-        settings.pad_centre[0],
-        settings.pad_centre[1],
-        settings,
-    );
+    let pad_height =
+        natural_terrain_height(settings.pad_centre[0], settings.pad_centre[1], settings);
 
     let dx = x - settings.pad_centre[0];
     let dz = z - settings.pad_centre[1];
@@ -219,12 +217,7 @@ fn natural_terrain_height(x: f32, z: f32, settings: TerrainSettings) -> f32 {
         settings.valley_crest_radius,
         boundary_radius,
     );
-    let outer_slope = 1.0
-        - smoothstep(
-            settings.valley_crest_radius,
-            half_size,
-            boundary_radius,
-        );
+    let outer_slope = 1.0 - smoothstep(settings.valley_crest_radius, half_size, boundary_radius);
     // Multiplying two smooth curves gives a rounded crest: the hill rises away from
     // the playable centre, then falls back toward the base terrain before the mesh ends.
     let valley_wall = settings.valley_wall_height * climb * outer_slope;
@@ -255,7 +248,7 @@ fn value_noise(x: f32, z: f32, frequency: f32, seed: u32) -> f32 {
 /// Converts integer grid coordinates to a stable pseudo-random value in `0.0..=1.0`.
 fn hash_2d(x: i32, z: i32, seed: u32) -> f32 {
     let mut bits =
-        (x as u32).wrapping_mul(0x8D_A6_B343) ^ (z as u32).wrapping_mul(0xD8_16_3841) ^ seed;
+        (x as u32).wrapping_mul(0x8DA6_B343) ^ (z as u32).wrapping_mul(0xD816_3841) ^ seed;
     bits ^= bits >> 16;
     bits = bits.wrapping_mul(0x7F4A_7C15);
     bits ^= bits >> 15;
@@ -288,7 +281,7 @@ fn normalise(vector: [f32; 3]) -> [f32; 3] {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_heightfield, TerrainSettings};
+    use super::{TerrainSettings, build_heightfield};
 
     #[test]
     fn terrain_stays_within_its_height_range_and_keeps_the_hut_pad_level() {
@@ -297,13 +290,9 @@ mod tests {
 
         assert_eq!(mesh.vertices.len(), 201 * 201);
         assert_eq!(mesh.indices.len(), 200 * 200 * 6);
-        assert!(mesh
-            .vertices
-            .iter()
-            .all(|vertex| {
-                (0.0..=settings.max_height + settings.valley_wall_height)
-                    .contains(&vertex.pos[1])
-            }));
+        assert!(mesh.vertices.iter().all(|vertex| {
+            (0.0..=settings.max_height + settings.valley_wall_height).contains(&vertex.pos[1])
+        }));
 
         let pad_centre = mesh
             .vertices

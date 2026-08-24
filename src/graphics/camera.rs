@@ -8,23 +8,23 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use cgmath::{Matrix4, Point3, Vector3, Deg, Rad, perspective};
 use cgmath::prelude::*;
+use cgmath::{Deg, Matrix4, Point3, Rad, Vector3, perspective};
 
 /// A simple camera with perspective projection and Y–X–Z Euler view control.
 pub struct Camera {
     projection: Matrix4<f32>,
-    view:       Matrix4<f32>,
-    position:   Point3<f32>,
-    yaw:        f32, // degrees
-    pitch:      f32,
-    roll:       f32,
+    view: Matrix4<f32>,
+    position: Point3<f32>,
+    yaw: f32, // degrees
+    pitch: f32,
+    roll: f32,
     // Persisted projection parameters so callers can adjust aspect without
     // clobbering near/far or fov.
-    fov_deg:    f32,
-    aspect:     f32,
-    near:       f32,
-    far:        f32,
+    fov_deg: f32,
+    aspect: f32,
+    near: f32,
+    far: f32,
 }
 
 impl Camera {
@@ -39,17 +39,17 @@ impl Camera {
     pub fn new() -> Self {
         let mut cam = Camera {
             projection: Matrix4::identity(),
-            view:       Matrix4::identity(),
-            position:   Point3::new(-2.0, 3.5, 8.0),
-            yaw:        12.0,
-            pitch:      -15.0,
-            roll:       0.0,
-            fov_deg:    45.0,
-            aspect:     16.0/9.0,
-            near:       0.5,
+            view: Matrix4::identity(),
+            position: Point3::new(-2.0, 3.5, 8.0),
+            yaw: 12.0,
+            pitch: -15.0,
+            roll: 0.0,
+            fov_deg: 45.0,
+            aspect: 16.0 / 9.0,
+            near: 0.5,
             // The terrain is 200 m wide.  This keeps its far edge inside the view
             // even when the camera is standing away from the centre of the valley.
-            far:        220.0,
+            far: 220.0,
         };
         cam.rebuild_projection();
         cam.set_view_yxz(cam.position, cam.yaw, cam.pitch, cam.roll);
@@ -76,10 +76,7 @@ impl Camera {
         proj.y.y *= -1.0;
         // Map GL clip-space Z [-1,1] to Vulkan's [0,1]
         pub const OPENGL_TO_VULKAN_MATRIX: Matrix4<f32> = Matrix4::new(
-            1.0, 0.0, 0.0, 0.0,
-            0.0, 1.0, 0.0, 0.0,
-            0.0, 0.0, 0.5, 0.0,
-            0.0, 0.0, 0.5, 1.0,
+            1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
         );
         self.projection = OPENGL_TO_VULKAN_MATRIX * proj;
     }
@@ -101,24 +98,21 @@ impl Camera {
         _roll_deg: f32,
     ) {
         self.position = position;
-        self.yaw      = yaw_deg;
-        self.pitch    = pitch_deg;
+        self.yaw = yaw_deg;
+        self.pitch = pitch_deg;
 
         // Compute forward direction from yaw & pitch:
-        let yaw_rad: Rad<f32>   = Deg(yaw_deg).into();
-        let pitch_rad: Rad<f32> = Deg(pitch_deg).into();        
+        let yaw_rad: Rad<f32> = Deg(yaw_deg).into();
+        let pitch_rad: Rad<f32> = Deg(pitch_deg).into();
         let forward = Vector3 {
             x: yaw_rad.sin() * pitch_rad.cos(),
             y: pitch_rad.sin(),
             z: -yaw_rad.cos() * pitch_rad.cos(),
-        }.normalize();
+        }
+        .normalize();
 
         // Look from `position` toward `position + forward`, with +Y up:
-        self.view = Matrix4::look_at_rh(
-            position,
-            position + forward,
-            Vector3::unit_y(),
-        );
+        self.view = Matrix4::look_at_rh(position, position + forward, Vector3::unit_y());
     }
 
     /// Rotates the camera by yaw/pitch (degrees) without changing position.
@@ -129,8 +123,8 @@ impl Camera {
     /// - `delta_yaw`:   Added to current yaw, in degrees.
     /// - `delta_pitch`: Added to current pitch, in degrees.
     pub fn rotate(&mut self, delta_yaw: f32, delta_pitch: f32) {
-        self.yaw   += delta_yaw;
-        self.pitch  = (self.pitch + delta_pitch).clamp(-89.0, 89.0);
+        self.yaw += delta_yaw;
+        self.pitch = (self.pitch + delta_pitch).clamp(-89.0, 89.0);
         // Recompute the view matrix with the new angles:
         self.set_view_yxz(self.position, self.yaw, self.pitch, self.roll);
     }
@@ -181,16 +175,24 @@ impl Camera {
     }
 
     /// Returns the vertical field of view in degrees.
-    pub fn get_fov_deg(&self) -> f32 { self.fov_deg }
+    pub fn get_fov_deg(&self) -> f32 {
+        self.fov_deg
+    }
 
     /// Returns the current aspect ratio (width/height).
-    pub fn get_aspect(&self) -> f32 { self.aspect }
+    pub fn get_aspect(&self) -> f32 {
+        self.aspect
+    }
 
     /// Returns the near clipping plane distance.
-    pub fn get_near(&self) -> f32 { self.near }
+    pub fn get_near(&self) -> f32 {
+        self.near
+    }
 
     /// Returns the far clipping plane distance.
-    pub fn get_far(&self) -> f32 { self.far }
+    pub fn get_far(&self) -> f32 {
+        self.far
+    }
 }
 
 impl Default for Camera {

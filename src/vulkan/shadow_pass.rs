@@ -12,12 +12,12 @@
 //! --------------------------------------------------------------------------------------
 
 use crate::graphics::mesh::Vertex;
-use crate::graphics::shadow_math::compute_tight_light_mats;
 use crate::graphics::shaders::{ShaderModule, ShaderStageInfo};
+use crate::graphics::shadow_math::compute_tight_light_mats;
 use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use ash::vk;
-use cgmath::{Matrix4, Matrix};
+use cgmath::{Matrix, Matrix4};
 
 /// Depth-only pass that renders from the sun’s point of view into a shadow map.
 pub struct ShadowPass {
@@ -34,7 +34,10 @@ impl ShadowPass {
         let req = AttachmentRequest {
             kind: AttachmentKind::Shadow,
             format: vk::Format::D32_SFLOAT,
-            extent: vk::Extent2D { width: 1024, height: 1024 },
+            extent: vk::Extent2D {
+                width: 1024,
+                height: 1024,
+            },
             samples: vk::SampleCountFlags::TYPE_1,
         };
         Self {
@@ -68,7 +71,11 @@ impl ShadowPass {
         // Load vertex shader (no fragment stage)
         let vs = ShaderModule::from_spv_file(device, "assets/shaders/spv/shadow_depth.vert.spv")?;
         let entry = c"main";
-        let vs_stage = ShaderStageInfo { stage: vk::ShaderStageFlags::VERTEX, shader_module: vs, entry_name: entry };
+        let vs_stage = ShaderStageInfo {
+            stage: vk::ShaderStageFlags::VERTEX,
+            shader_module: vs,
+            entry_name: entry,
+        };
         let stages = [vs_stage.to_create_info()];
 
         // Vertex input: just position
@@ -93,8 +100,21 @@ impl ShadowPass {
         };
 
         // Viewport/scissor are dynamic; provide dummy state here
-        let dummy_viewport = vk::Viewport { x: 0.0, y: 0.0, width: 1.0, height: 1.0, min_depth: 0.0, max_depth: 1.0 };
-        let dummy_scissor = vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent: vk::Extent2D { width: 1, height: 1 } };
+        let dummy_viewport = vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+        let dummy_scissor = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: vk::Extent2D {
+                width: 1,
+                height: 1,
+            },
+        };
         let viewport_state = vk::PipelineViewportStateCreateInfo {
             viewport_count: 1,
             p_viewports: &dummy_viewport,
@@ -168,7 +188,8 @@ impl ShadowPass {
         pipeline_info.p_next = &rendering_info as *const _ as *const std::ffi::c_void;
 
         let pipelines = unsafe {
-            device.create_graphics_pipelines(pipeline_cache, &[pipeline_info], None)
+            device
+                .create_graphics_pipelines(pipeline_cache, &[pipeline_info], None)
                 .map_err(|(_, e)| e)?
         };
         self.pipeline = pipelines[0];
@@ -210,7 +231,10 @@ impl RenderPass for ShadowPass {
 
         // Clear to far (1.0) so empty map yields no shadowing later.
         let clear_depth = vk::ClearValue {
-            depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 },
+            depth_stencil: vk::ClearDepthStencilValue {
+                depth: 1.0,
+                stencil: 0,
+            },
         };
 
         let depth_attachment_info = vk::RenderingAttachmentInfo::default()
@@ -223,7 +247,10 @@ impl RenderPass for ShadowPass {
         let rendering_info = vk::RenderingInfo::default()
             .render_area(vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
-                extent: vk::Extent2D { width: res, height: res },
+                extent: vk::Extent2D {
+                    width: res,
+                    height: res,
+                },
             })
             .layer_count(1)
             .depth_attachment(&depth_attachment_info);
@@ -234,8 +261,21 @@ impl RenderPass for ShadowPass {
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
 
             // Dynamic viewport/scissor to match current resolution
-            let viewport = vk::Viewport { x: 0.0, y: 0.0, width: res as f32, height: res as f32, min_depth: 0.0, max_depth: 1.0 };
-            let scissor = vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent: vk::Extent2D { width: res, height: res } };
+            let viewport = vk::Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: res as f32,
+                height: res as f32,
+                min_depth: 0.0,
+                max_depth: 1.0,
+            };
+            let scissor = vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D {
+                    width: res,
+                    height: res,
+                },
+            };
             device.cmd_set_viewport(cmd, 0, &[viewport]);
             device.cmd_set_scissor(cmd, 0, &[scissor]);
 
@@ -248,7 +288,9 @@ impl RenderPass for ShadowPass {
             );
             let light_vp = mats.world_to_light_clip;
             for obj in &ctx.scene.objects {
-                if !obj.visible { continue; }
+                if !obj.visible {
+                    continue;
+                }
                 let obj_model = obj.transform.model_matrix();
                 for part in &obj.parts {
                     // Build model matrix and push mvp

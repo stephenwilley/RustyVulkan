@@ -13,7 +13,7 @@
 //!   • `load_default_stages` - convenience function to load both the vertex and
 //!     fragment shaders in one call.
 //!
-//! Usage: 
+//! Usage:
 //!   1. Call `ShaderModule::from_spv_file(device, path)` to read a SPIR-V file and create  
 //!      a module.  
 //!   2. Wrap it in `ShaderStageInfo { stage, shader_module, entry_name }`.  
@@ -21,8 +21,8 @@
 //!   4. Or simply call `load_default_stages(device)` to get both stages at once.
 //! --------------------------------------------------------------------------------------
 
-use ash::vk;
 use ash::Device;
+use ash::vk;
 use std::error::Error;
 use std::ffi::CStr;
 use std::path::Path;
@@ -48,29 +48,28 @@ impl ShaderModule {
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the created `ShaderModule` on
     ///   success, or an error on failure.
-    pub fn from_spv_file(device: &Device, path: impl AsRef<Path>) 
-        -> Result<Self, Box<dyn Error>>
-    {
+    pub fn from_spv_file(device: &Device, path: impl AsRef<Path>) -> Result<Self, Box<dyn Error>> {
         let bytes = std::fs::read(path)?;
         // SPIR-V words are u32, not u8, so we cast here:
         let code = bytemuck::cast_slice::<u8, u32>(&bytes);
-        let create_info = vk::ShaderModuleCreateInfo::default()
-            .code(code);
+        let create_info = vk::ShaderModuleCreateInfo::default().code(code);
 
         let vk_shader_module = unsafe { device.create_shader_module(&create_info, None)? };
-        Ok(Self { 
+        Ok(Self {
             device: device.clone(),
-            vk_shader_module
+            vk_shader_module,
         })
     }
-
 }
 
 impl Drop for ShaderModule {
     fn drop(&mut self) {
         // This value uniquely owns the Vulkan handle, so its destructor runs
         // exactly once when a scope ends or an owning field is replaced.
-        unsafe { self.device.destroy_shader_module(self.vk_shader_module, None) };
+        unsafe {
+            self.device
+                .destroy_shader_module(self.vk_shader_module, None)
+        };
     }
 }
 

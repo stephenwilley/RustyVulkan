@@ -25,8 +25,8 @@ use std::error::Error;
 
 use crate::vulkan::base::EngineSettings;
 
-use super::shaders::ShaderStageInfo;
 use super::mesh::Vertex;
+use super::shaders::ShaderStageInfo;
 
 /// Represents the Vulkan graphics pipeline, including shader modules and layout.
 /// It encapsulates the shader modules used for vertex and fragment stages,
@@ -59,7 +59,7 @@ impl Pipeline {
     pub fn new(
         device: &ash::Device,
         set_layouts: &[vk::DescriptorSetLayout],
-        depth_write: bool
+        depth_write: bool,
     ) -> Result<Self, Box<dyn Error>> {
         Self::new_with_options(device, set_layouts, depth_write, true, true, true)
     }
@@ -95,18 +95,18 @@ impl Pipeline {
         // Reserve space for two mat4 (mvp, mv) plus a vec4 for UV tiling (xy used, zw padding)
         let push_constant_range = vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-            offset:      0,
-            size:        (std::mem::size_of::<[[f32; 4]; 4]>()
-                        + std::mem::size_of::<[[f32; 4]; 4]>()
-                        + std::mem::size_of::<[f32; 4]>()) as u32,
+            offset: 0,
+            size: (std::mem::size_of::<[[f32; 4]; 4]>()
+                + std::mem::size_of::<[[f32; 4]; 4]>()
+                + std::mem::size_of::<[f32; 4]>()) as u32,
         };
 
         // 2 - Build your PipelineLayoutCreateInfo with that push-constant baked in and descriptor set layouts
         let layout_info = vk::PipelineLayoutCreateInfo {
-            set_layout_count:        set_layouts.len() as u32,
-            p_set_layouts:           set_layouts.as_ptr(),
+            set_layout_count: set_layouts.len() as u32,
+            p_set_layouts: set_layouts.as_ptr(),
             push_constant_range_count: 1,
-            p_push_constant_ranges:    &push_constant_range as *const _,
+            p_push_constant_ranges: &push_constant_range as *const _,
             ..Default::default()
         };
 
@@ -135,6 +135,8 @@ impl Pipeline {
     /// * `wireframe` - Whether to enable wireframe mode.
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
+    // The parameters are independent pieces of Vulkan pipeline state.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_graphics_pipeline(
         &mut self,
         device: &ash::Device,
@@ -171,7 +173,7 @@ impl Pipeline {
         &mut self,
         device: &ash::Device,
         pipeline_cache: vk::PipelineCache,
-        extent: vk::Extent2D,
+        _extent: vk::Extent2D,
         color_format: vk::Format,
         depth_format: vk::Format,
         shader_infos: &[&ShaderStageInfo],
@@ -181,10 +183,10 @@ impl Pipeline {
         cull_mode: vk::CullModeFlags,
     ) -> Result<(), Box<dyn Error>> {
         let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
-            vertex_binding_description_count:   binding_descs.len() as u32,
-            p_vertex_binding_descriptions:      binding_descs.as_ptr(),
+            vertex_binding_description_count: binding_descs.len() as u32,
+            p_vertex_binding_descriptions: binding_descs.as_ptr(),
             vertex_attribute_description_count: attribute_descs.len() as u32,
-            p_vertex_attribute_descriptions:    attribute_descs.as_ptr(),
+            p_vertex_attribute_descriptions: attribute_descs.as_ptr(),
             ..Default::default()
         };
 
@@ -193,23 +195,17 @@ impl Pipeline {
             primitive_restart_enable: vk::FALSE,
             ..Default::default()
         };
-        let viewport = vk::Viewport {
-            x: 0.0,
-            y: 0.0,
-            width: extent.width as f32,
-            height: extent.height as f32,
-            min_depth: 0.0,
-            max_depth: 1.0,
-        };
-        let scissor = vk::Rect2D {
-            offset: vk::Offset2D { x: 0, y: 0 },
-            extent,
-        };
+        // Viewport and scissor depend on the window size, not on shader compatibility.
+        // Making them dynamic lets a resized swapchain keep the existing pipelines.
         let viewport_state = vk::PipelineViewportStateCreateInfo {
             viewport_count: 1,
-            p_viewports: &viewport,
             scissor_count: 1,
-            p_scissors: &scissor,
+            ..Default::default()
+        };
+        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dynamic_state = vk::PipelineDynamicStateCreateInfo {
+            dynamic_state_count: dynamic_states.len() as u32,
+            p_dynamic_states: dynamic_states.as_ptr(),
             ..Default::default()
         };
 
@@ -239,7 +235,11 @@ impl Pipeline {
                 | vk::ColorComponentFlags::G
                 | vk::ColorComponentFlags::B
                 | vk::ColorComponentFlags::A,
-            blend_enable: if self.alpha_blending { vk::TRUE } else { vk::FALSE },
+            blend_enable: if self.alpha_blending {
+                vk::TRUE
+            } else {
+                vk::FALSE
+            },
             src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
             dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
             color_blend_op: vk::BlendOp::ADD,
@@ -255,19 +255,21 @@ impl Pipeline {
             ..Default::default()
         };
 
-        let shader_stage_create_infos: Vec<_> = shader_infos
-            .iter()
-            .map(|s| s.to_create_info())
-            .collect();
+        let shader_stage_create_infos: Vec<_> =
+            shader_infos.iter().map(|s| s.to_create_info()).collect();
 
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo {
-            depth_test_enable:     if self.depth_test { vk::TRUE } else { vk::FALSE },
-            depth_write_enable:    if self.depth_write { vk::TRUE } else { vk::FALSE },
-            depth_compare_op:      vk::CompareOp::LESS,
+            depth_test_enable: if self.depth_test { vk::TRUE } else { vk::FALSE },
+            depth_write_enable: if self.depth_write {
+                vk::TRUE
+            } else {
+                vk::FALSE
+            },
+            depth_compare_op: vk::CompareOp::LESS,
             // stencil is off for now—
-            stencil_test_enable:   vk::FALSE,
-            front:                 Default::default(),
-            back:                  Default::default(),
+            stencil_test_enable: vk::FALSE,
+            front: Default::default(),
+            back: Default::default(),
             ..Default::default()
         };
 
@@ -289,6 +291,7 @@ impl Pipeline {
             p_multisample_state: &multisampling,
             p_color_blend_state: &color_blending,
             p_depth_stencil_state: &depth_stencil,
+            p_dynamic_state: &dynamic_state,
             layout: self.vk_layout,
             render_pass: vk::RenderPass::null(),
             subpass: 0,
@@ -302,7 +305,10 @@ impl Pipeline {
                 .map_err(|(_, e)| e)?
         };
 
-        println!("🛠️ Graphics pipeline created with {} stages", pipelines.len());
+        println!(
+            "🛠️ Graphics pipeline created with {} stages",
+            pipelines.len()
+        );
         self.vk_pipeline = pipelines[0];
         Ok(())
     }
@@ -318,6 +324,7 @@ impl Pipeline {
     /// * `wireframe` - Whether to enable wireframe mode.
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
+    #[allow(clippy::too_many_arguments)]
     pub fn recreate(
         &mut self,
         device: &ash::Device,
@@ -326,12 +333,9 @@ impl Pipeline {
         color_format: vk::Format,
         depth_format: vk::Format,
         shader_infos: &[&ShaderStageInfo],
-        engine_settings: &EngineSettings
+        engine_settings: &EngineSettings,
     ) -> Result<(), Box<dyn Error>> {
-        unsafe {
-            // The render graph has already waited for all submitted command buffers.
-            device.destroy_pipeline(self.vk_pipeline, None);
-        }
+        let old_pipeline = self.vk_pipeline;
         self.create_graphics_pipeline(
             device,
             pipeline_cache,
@@ -339,8 +343,13 @@ impl Pipeline {
             color_format,
             depth_format,
             shader_infos,
-            engine_settings
+            engine_settings,
         )?;
+        // Keep the old pipeline alive until its replacement exists. If creation fails,
+        // `?` returns while the still-valid old handle remains owned by `self`.
+        unsafe {
+            device.destroy_pipeline(old_pipeline, None);
+        }
         Ok(())
     }
 
@@ -359,9 +368,7 @@ impl Pipeline {
         attribute_descs: &[vk::VertexInputAttributeDescription],
         cull_mode: vk::CullModeFlags,
     ) -> Result<(), Box<dyn Error>> {
-        unsafe {
-            device.destroy_pipeline(self.vk_pipeline, None);
-        }
+        let old_pipeline = self.vk_pipeline;
         self.create_graphics_pipeline_with_vertex_input(
             device,
             pipeline_cache,
@@ -373,7 +380,11 @@ impl Pipeline {
             binding_descs,
             attribute_descs,
             cull_mode,
-        )
+        )?;
+        unsafe {
+            device.destroy_pipeline(old_pipeline, None);
+        }
+        Ok(())
     }
 
     /// Cleans up the pipeline resources, destroying the shader modules and pipeline layout.
@@ -384,8 +395,8 @@ impl Pipeline {
     ///   application shutdown or when the pipeline is being recreated.
     pub fn cleanup(&self, device: &ash::Device) {
         unsafe {
-            device.destroy_pipeline_layout(self.vk_layout, None);
             device.destroy_pipeline(self.vk_pipeline, None);
+            device.destroy_pipeline_layout(self.vk_layout, None);
         }
     }
 }

@@ -195,7 +195,6 @@ pub struct FrameCtx {
     frame_slot: usize,
 }
 
-
 /// Describes a transition for an image attachment between two usages.
 #[derive(Clone, Copy, Debug)]
 pub struct ImageTransition {
@@ -293,7 +292,6 @@ impl VulkanBase {
             }))
         }
     }
-
 
     /// Insert image memory barriers for a set of attachment transitions.
     ///
@@ -430,8 +428,12 @@ impl VulkanBase {
     pub fn begin_gpu_timing(&self, cmd: vk::CommandBuffer, image_index: u32) {
         unsafe {
             let base = self.image_query_base(image_index);
-            self.device
-                .cmd_reset_query_pool(cmd, self.timestamp_query_pool, base, TIMESTAMPS_PER_IMAGE);
+            self.device.cmd_reset_query_pool(
+                cmd,
+                self.timestamp_query_pool,
+                base,
+                TIMESTAMPS_PER_IMAGE,
+            );
             self.device.cmd_write_timestamp(
                 cmd,
                 vk::PipelineStageFlags::TOP_OF_PIPE,
@@ -478,7 +480,9 @@ impl VulkanBase {
     }
 
     #[inline]
-    fn image_query_base(&self, image_index: u32) -> u32 { image_index * TIMESTAMPS_PER_IMAGE }
+    fn image_query_base(&self, image_index: u32) -> u32 {
+        image_index * TIMESTAMPS_PER_IMAGE
+    }
 
     /// Converts a monotonic timestamp pair into milliseconds.  An unavailable or invalid pair
     /// remains `None` instead of producing a misleading profiler value.
@@ -492,20 +496,21 @@ impl VulkanBase {
 
     /// Update the global UBO with lighting data
     pub fn update_global_ubo(&mut self, image_index: usize, ubo: &GlobalUbo) {
-        let allocation = &mut self.ubo_allocations[image_index];
+        let allocator = self.allocator.as_ref().expect("allocator");
+        let allocation = &self.ubo_allocations[image_index];
         unsafe {
-            let ptr = self
-                .allocator
-                .as_ref()
-                .unwrap()
-                .map_memory(allocation)
-                .expect("Map UBO") as *mut u8;
+            // These allocations were created with MAPPED, so VMA keeps the pointer valid
+            // for their lifetime and the per-frame path does not need map/unmap calls.
+            let ptr = allocator.get_allocation_info(allocation).mapped_data as *mut u8;
+            debug_assert!(!ptr.is_null());
             std::ptr::copy_nonoverlapping(
                 ubo as *const GlobalUbo as *const u8,
                 ptr,
                 std::mem::size_of::<GlobalUbo>(),
             );
-            self.allocator.as_ref().unwrap().unmap_memory(allocation);
+            allocator
+                .flush_allocation(allocation, 0, std::mem::size_of::<GlobalUbo>() as u64)
+                .expect("flush UBO");
         }
     }
 
@@ -535,17 +540,23 @@ impl VulkanBase {
     }
 
     /// Apply any queued surface-dependent changes (like MSAA) at a frame boundary.
-    pub fn apply_pending_surface_changes(&mut self, window: &winit::window::Window) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(new_samples) = self.pending_msaa_samples.take() {
-            if new_samples != self.engine_settings.msaa_samples {
-                self.engine_settings.msaa_samples = new_samples;
-                // Wrapper expected to recreate swapchain + dependent resources
-                self.recreate_swapchain(window)?;
-            }
+    pub fn apply_pending_surface_changes(
+        &mut self,
+        window: &winit::window::Window,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        let mut recreated = false;
+        if let Some(new_samples) = self.pending_msaa_samples.take()
+            && new_samples != self.engine_settings.msaa_samples
+        {
+            self.engine_settings.msaa_samples = new_samples;
+            // Sample count is baked into graphics pipelines; extent is not.
+            self.pipeline_generation = self.pipeline_generation.saturating_add(1);
+            self.recreate_swapchain(window)?;
+            recreated = true;
         }
-        Ok(())
+        Ok(recreated)
     }
-    
+
     /// # Arguments
     /// * `entry` - The Ash Entry point.
     /// * `event_loop` - The winit event loop.
@@ -640,9 +651,8 @@ impl VulkanBase {
                     continue;
                 }
 
-                let extensions = unsafe {
-                    instance.enumerate_device_extension_properties(physical_device)?
-                };
+                let extensions =
+                    unsafe { instance.enumerate_device_extension_properties(physical_device)? };
                 let has_extension = |required: &CStr| {
                     extensions.iter().any(|extension| {
                         let name = unsafe { CStr::from_ptr(extension.extension_name.as_ptr()) };
@@ -658,13 +668,15 @@ impl VulkanBase {
                 // expose the core API, so accept either form.
                 let supports_dynamic_rendering_extension =
                     has_extension(vk::KHR_DYNAMIC_RENDERING_NAME);
-                if props.api_version < vk::API_VERSION_1_3 && !supports_dynamic_rendering_extension {
+                if props.api_version < vk::API_VERSION_1_3 && !supports_dynamic_rendering_extension
+                {
                     continue;
                 }
 
                 let supports_dynamic_rendering = unsafe {
                     let mut features = vk::PhysicalDeviceDynamicRenderingFeatures::default();
-                    let mut features2 = vk::PhysicalDeviceFeatures2::default().push_next(&mut features);
+                    let mut features2 =
+                        vk::PhysicalDeviceFeatures2::default().push_next(&mut features);
                     instance.get_physical_device_features2(physical_device, &mut features2);
                     features.dynamic_rendering == vk::TRUE
                 };
@@ -715,7 +727,11 @@ impl VulkanBase {
         // all advertised features and forcing anisotropy on made device
         // creation fail on otherwise usable Vulkan implementations.
         let device_features = vk::PhysicalDeviceFeatures {
-            multi_draw_indirect: if enable_multi_draw_indirect { vk::TRUE } else { vk::FALSE },
+            multi_draw_indirect: if enable_multi_draw_indirect {
+                vk::TRUE
+            } else {
+                vk::FALSE
+            },
             ..Default::default()
         };
 
@@ -750,8 +766,10 @@ impl VulkanBase {
             device_extensions.push(vk::KHR_PORTABILITY_SUBSET_NAME.as_ptr());
         }
 
-        let mut dynamic_rendering_features = vk::PhysicalDeviceDynamicRenderingFeatures::default();
-        dynamic_rendering_features.dynamic_rendering = vk::TRUE;
+        let mut dynamic_rendering_features = vk::PhysicalDeviceDynamicRenderingFeatures {
+            dynamic_rendering: vk::TRUE,
+            ..Default::default()
+        };
 
         let device_create_info = vk::DeviceCreateInfo {
             p_next: &mut dynamic_rendering_features as *mut _ as *const _,
@@ -886,8 +904,14 @@ impl VulkanBase {
 
         // Pool: one UBO and one sampler per set
         let pool_sizes = [
-            vk::DescriptorPoolSize { ty: vk::DescriptorType::UNIFORM_BUFFER, descriptor_count: count },
-            vk::DescriptorPoolSize { ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER, descriptor_count: count },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::UNIFORM_BUFFER,
+                descriptor_count: count,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                descriptor_count: count,
+            },
         ];
         let pool_info = vk::DescriptorPoolCreateInfo {
             pool_size_count: pool_sizes.len() as u32,
@@ -951,6 +975,8 @@ impl VulkanBase {
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error if the swapchain could not be recreated.
     pub fn recreate_swapchain(&mut self, window: &Window) -> Result<(), Box<dyn Error>> {
+        let old_color_format = self.swapchain.color_format;
+        let old_depth_format = self.swapchain.depth_format;
         unsafe {
             self.device
                 .device_wait_idle()
@@ -1024,7 +1050,10 @@ impl VulkanBase {
             .cleanup(&self.device, self.allocator.as_ref().unwrap());
         self.attachment_manager = AttachmentManager::new(new_image_count);
         // Recreate the timestamp query pool to match new image count and per-pass markers.
-        unsafe { self.device.destroy_query_pool(self.timestamp_query_pool, None); }
+        unsafe {
+            self.device
+                .destroy_query_pool(self.timestamp_query_pool, None);
+        }
         let qp_info = vk::QueryPoolCreateInfo {
             query_type: vk::QueryType::TIMESTAMP,
             query_count: (new_image_count as u32) * TIMESTAMPS_PER_IMAGE,
@@ -1035,8 +1064,13 @@ impl VulkanBase {
         self.last_gpu_timings = GpuPassTimings::default();
         // Avoid reading uninitialized queries on the next frame after recreation
         self.last_image_per_slot = vec![None; self.image_available_semaphores.len()];
-        // Bump pipeline generation (swapchain/image count change affects pipelines)
-        self.pipeline_generation = self.pipeline_generation.saturating_add(1);
+        // Dynamic viewport/scissor removed extent from pipeline compatibility. A rare
+        // surface-format change still requires every graphics pipeline to be rebuilt.
+        if self.swapchain.color_format != old_color_format
+            || self.swapchain.depth_format != old_depth_format
+        {
+            self.pipeline_generation = self.pipeline_generation.saturating_add(1);
+        }
         self.swapchain_recreation_needed = false;
         Ok(())
     }
@@ -1049,10 +1083,16 @@ impl VulkanBase {
 
     fn clamp_msaa_samples(&self, desired: u32) -> u32 {
         let mut opts = self.supported_msaa_samples();
-        if opts.is_empty() { return 1; }
+        if opts.is_empty() {
+            return 1;
+        }
         opts.sort_unstable();
         // highest supported <= desired, else the smallest supported
-        opts.iter().copied().rev().find(|&n| n <= desired).unwrap_or(opts[0])
+        opts.iter()
+            .copied()
+            .rev()
+            .find(|&n| n <= desired)
+            .unwrap_or(opts[0])
     }
 
     /// Returns the list of supported MSAA sample counts for the current device.
@@ -1092,6 +1132,11 @@ impl VulkanBase {
     /// Returns and clears the pending swapchain-recreation request.
     pub fn take_swapchain_recreation_request(&mut self) -> bool {
         std::mem::take(&mut self.swapchain_recreation_needed)
+    }
+
+    /// Queue a resize for the next frame boundary. Several window events collapse into one.
+    pub fn request_swapchain_recreation(&mut self) {
+        self.swapchain_recreation_needed = true;
     }
 
     /// Creates a new `VulkanBase` instance, initializing Vulkan resources and setting up the swapchain.
@@ -1163,8 +1208,7 @@ impl VulkanBase {
                 .to_str()
                 .unwrap_or("<invalid utf-8>")
         };
-        let sample_count_flags_supported =
-            chosen_props.limits.framebuffer_color_sample_counts
+        let sample_count_flags_supported = chosen_props.limits.framebuffer_color_sample_counts
             & chosen_props.limits.framebuffer_depth_sample_counts;
         let supported_features = unsafe { instance.get_physical_device_features(physical_device) };
         let supports_multi_draw_indirect = supported_features.multi_draw_indirect == vk::TRUE;
@@ -1177,9 +1221,8 @@ impl VulkanBase {
             supports_multi_draw_indirect,
         )?;
         // This cache lives for the device lifetime and is shared by every graphics pipeline.
-        let pipeline_cache = unsafe {
-            device.create_pipeline_cache(&vk::PipelineCacheCreateInfo::default(), None)?
-        };
+        let pipeline_cache =
+            unsafe { device.create_pipeline_cache(&vk::PipelineCacheCreateInfo::default(), None)? };
 
         let command_pool = Self::create_command_pool(&device, graphics_queue_family_index)?;
 
@@ -1328,7 +1371,9 @@ impl VulkanBase {
             debug_utils_loader,
             frame_slot: 0,
             current_image_index: 0,
-            pipeline_generation: 1,
+            // RenderGraph also starts at zero; only a later settings or format change
+            // should rebuild the pipelines created during scene setup.
+            pipeline_generation: 0,
             sample_count_flags_supported,
             supports_multi_draw_indirect,
             max_draw_indirect_count: chosen_props.limits.max_draw_indirect_count,
@@ -1396,7 +1441,8 @@ impl Drop for VulkanBase {
             for &fence in &self.in_flight_fences {
                 self.device.destroy_fence(fence, None);
             }
-            self.device.destroy_query_pool(self.timestamp_query_pool, None);
+            self.device
+                .destroy_query_pool(self.timestamp_query_pool, None);
             for &buffer in &self.command_buffers {
                 self.device
                     .free_command_buffers(self.command_pool, &[buffer]);
@@ -1408,7 +1454,8 @@ impl Drop for VulkanBase {
             self.device
                 .destroy_descriptor_pool(self.set0_descriptor_pool, None);
             self.device.destroy_sampler(self.shadow_sampler, None);
-            self.device.destroy_pipeline_cache(self.pipeline_cache, None);
+            self.device
+                .destroy_pipeline_cache(self.pipeline_cache, None);
             self.device.destroy_command_pool(self.command_pool, None);
             // `Option::take` moves the allocator out while we only have `&mut self`.
             // Dropping it here frees VMA memory before its Vulkan device disappears.
@@ -1468,8 +1515,8 @@ pub struct GpuDirLight {
 #[derive(Clone, Copy, Default)]
 pub struct GlobalUbo {
     // Directional light + shadow matrix first for clarity
-    pub dir_light: GpuDirLight,                          // single directional light (sun)
-    pub light_vp: [[f32; 4]; 4],                         // light view-projection (column-major)
+    pub dir_light: GpuDirLight,  // single directional light (sun)
+    pub light_vp: [[f32; 4]; 4], // light view-projection (column-major)
     // Then the array of point lights (std140 array of structs)
     pub lights: [GpuLight; crate::app::app::MAX_LIGHTS], // array of point lights
     pub light_count: u32,                                // number of active point lights

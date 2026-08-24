@@ -8,14 +8,14 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use cgmath::{Matrix4, Vector3, Quaternion, Deg, Rotation3};
+use cgmath::{Deg, Matrix4, Quaternion, Rotation3, Vector3};
 
 /// A simple 3D transform: position, rotation (as a quaternion), uniform scale.
 #[derive(Clone, Copy)]
 pub struct Transform {
     pub translation: Vector3<f32>,
-    pub rotation:    Quaternion<f32>,
-    pub scale:       f32,
+    pub rotation: Quaternion<f32>,
+    pub scale: f32,
 }
 
 impl Transform {
@@ -23,21 +23,17 @@ impl Transform {
     pub fn identity() -> Self {
         Self {
             translation: Vector3::new(0.0, 0.0, 0.0),
-            rotation:    Quaternion::new(1.0, 0.0, 0.0, 0.0),
-            scale:       1.0,
+            rotation: Quaternion::new(1.0, 0.0, 0.0, 0.0),
+            scale: 1.0,
         }
     }
-    
+
     /// Creates a new Transform from Euler angles (degrees) about X, Y, and Z axes.
     /// # Arguments
     /// * `translation` - The position of the transform.
     /// * `euler_deg` - Contains rotation angles in degrees (X, Y, Z).
     /// * `scale` - A uniform scale factor.
-    pub fn from_euler(
-        translation: Vector3<f32>,
-        euler_deg: Vector3<f32>,
-        scale: f32,
-    ) -> Self {
+    pub fn from_euler(translation: Vector3<f32>, euler_deg: Vector3<f32>, scale: f32) -> Self {
         // build each axis rotation
         let qx = Quaternion::from_angle_x(Deg(euler_deg.x));
         let qy = Quaternion::from_angle_y(Deg(euler_deg.y));
@@ -45,7 +41,11 @@ impl Transform {
         // combine them in Y→X→Z order (you can tweak order if you prefer)
         let rotation = qz * qx * qy;
 
-        Transform { translation, rotation, scale }
+        Transform {
+            translation,
+            rotation,
+            scale,
+        }
     }
 
     /// Sets Y so this uniformly scaled, upright object rests on a terrain height.
@@ -67,7 +67,9 @@ impl Transform {
 }
 
 impl Default for Transform {
-    fn default() -> Self { Self::identity() }
+    fn default() -> Self {
+        Self::identity()
+    }
 }
 
 /// A drawable sub-part of a SceneObject (e.g., a glTF primitive)
@@ -99,7 +101,9 @@ pub struct Scene {
 impl Scene {
     /// Creates a new empty `Scene`.
     pub fn new() -> Self {
-        Scene { objects: Vec::new() }
+        Scene {
+            objects: Vec::new(),
+        }
     }
     /// Adds a `SceneObject` to the scene.
     /// # Arguments

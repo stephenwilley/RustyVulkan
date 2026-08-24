@@ -123,8 +123,13 @@ impl AttachmentManager {
         key: &AttachmentKey,
     ) -> (AttachmentHandle, Allocation) {
         let usage = match key.kind {
-            AttachmentKind::Color => vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
-            AttachmentKind::Depth => vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+            AttachmentKind::Color => {
+                vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT
+            }
+            AttachmentKind::Depth => {
+                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+                    | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT
+            }
             AttachmentKind::Shadow => {
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED
             }
@@ -155,8 +160,11 @@ impl AttachmentManager {
             usage: MemoryUsage::AutoPreferDevice,
             ..Default::default()
         };
-        let (image, allocation) =
-            unsafe { allocator.create_image(&image_info, &alloc_info).expect("create attachment") };
+        let (image, allocation) = unsafe {
+            allocator
+                .create_image(&image_info, &alloc_info)
+                .expect("create attachment")
+        };
         let view_info = vk::ImageViewCreateInfo {
             image,
             view_type: vk::ImageViewType::TYPE_2D,
@@ -171,14 +179,12 @@ impl AttachmentManager {
             },
             ..Default::default()
         };
-        let view = unsafe { device.create_image_view(&view_info, None).expect("create view") };
-        (
-            AttachmentHandle {
-                image,
-                view,
-            },
-            allocation,
-        )
+        let view = unsafe {
+            device
+                .create_image_view(&view_info, None)
+                .expect("create view")
+        };
+        (AttachmentHandle { image, view }, allocation)
     }
 
     /// Destroys all created attachments and clears internal storage.

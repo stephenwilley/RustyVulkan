@@ -55,6 +55,9 @@ impl Swapchain {
     /// * `window` - The winit `Window` to determine swapchain extent.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `Swapchain` on success, or an error on failure.
+    // Swapchain creation necessarily joins handles owned by the Vulkan instance,
+    // device, surface, window, and allocator.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         instance: &Instance,
         device: &ash::Device,
@@ -72,7 +75,6 @@ impl Swapchain {
         let present_mode = Self::choose_swap_present_mode(&swapchain_support.present_modes);
         let extent = Self::choose_swap_extent(&swapchain_support.capabilities, window);
         let depth_format = vk::Format::D32_SFLOAT;
-
 
         let mut image_count = 3;
         if image_count < swapchain_support.capabilities.min_image_count {
@@ -168,6 +170,7 @@ impl Swapchain {
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or
     ///   an error if the swapchain could not be recreated.
+    #[allow(clippy::too_many_arguments)]
     pub fn recreate(
         &mut self,
         instance: &Instance,
@@ -189,7 +192,7 @@ impl Swapchain {
             surface_loader,
             window,
             allocator,
-            msaa_samples
+            msaa_samples,
         )?;
         *self = new_swapchain;
 
@@ -314,12 +317,6 @@ impl Swapchain {
         println!("🖼️ MSAA image created");
         Ok((image, allocation))
     }
-
-    
-
-    
-
-    
 
     fn create_msaa_image_view(
         device: &ash::Device,

@@ -106,13 +106,34 @@ impl RenderPass for MainPass {
         // The RenderingInfo borrows from small local arrays; build them and call immediately.
         let color_attachments = [color_attachment_info];
         let rendering_info = vk::RenderingInfo::default()
-            .render_area(vk::Rect2D { offset: vk::Offset2D::default(), extent: ctx.vulkan_base.swapchain.extent })
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D::default(),
+                extent: ctx.vulkan_base.swapchain.extent,
+            })
             .layer_count(1)
             .color_attachments(&color_attachments)
             .depth_attachment(&depth_attachment_info);
 
         unsafe {
             device.cmd_begin_rendering(cmd, &rendering_info);
+
+            // The shared pipelines use dynamic viewport/scissor so they survive an
+            // extent-only swapchain resize. These values apply to sky, scene and grass.
+            let extent = ctx.vulkan_base.swapchain.extent;
+            let viewport = vk::Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: extent.width as f32,
+                height: extent.height as f32,
+                min_depth: 0.0,
+                max_depth: 1.0,
+            };
+            let scissor = vk::Rect2D {
+                offset: vk::Offset2D::default(),
+                extent,
+            };
+            device.cmd_set_viewport(cmd, 0, &[viewport]);
+            device.cmd_set_scissor(cmd, 0, &[scissor]);
 
             // The sky does not touch depth.  Drawing it first fills only the background;
             // all subsequent scene geometry naturally paints over the fullscreen triangle.
@@ -122,12 +143,18 @@ impl RenderPass for MainPass {
 
             let mut current_pipeline_id = usize::MAX;
             for obj in &ctx.scene.objects {
-                if !obj.visible { continue; }
+                if !obj.visible {
+                    continue;
+                }
                 let obj_model = obj.transform.model_matrix();
                 for part in &obj.parts {
                     let model_matrix = obj_model * part.transform.model_matrix();
                     let material = &ctx.material_manager.materials[part.material_id];
-                    let push_bytes = compute_push_constant_per_obj(ctx.camera, &model_matrix, material.uv_tiling);
+                    let push_bytes = compute_push_constant_per_obj(
+                        ctx.camera,
+                        &model_matrix,
+                        material.uv_tiling,
+                    );
 
                     if current_pipeline_id != part.material_id {
                         let material = &ctx.material_manager.materials[part.material_id];
@@ -182,17 +209,17 @@ impl RenderPass for MainPass {
             // `scene_ms` is the opaque scene recorded immediately before this block.
             ctx.vulkan_base
                 .mark_vegetation_timing_start(cmd, image_index as u32);
-            if ctx.world_controls.use_terrain_ground {
-                if let Some(grass) = ctx.grass_renderer.as_deref_mut() {
-                    grass.draw(
-                        device,
-                        cmd,
-                        ctx.vulkan_base,
-                        image_index,
-                        ctx.camera,
-                        ctx.time_seconds,
-                    );
-                }
+            if ctx.world_controls.use_terrain_ground
+                && let Some(grass) = ctx.grass_renderer.as_deref_mut()
+            {
+                grass.draw(
+                    device,
+                    cmd,
+                    ctx.vulkan_base,
+                    image_index,
+                    ctx.camera,
+                    ctx.time_seconds,
+                );
             }
             ctx.vulkan_base
                 .mark_vegetation_timing_end(cmd, image_index as u32);

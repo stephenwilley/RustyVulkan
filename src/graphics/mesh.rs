@@ -9,22 +9,21 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use ash::vk;
 use ash::Device;
-use vk_mem::{Alloc, Allocator, Allocation, MemoryUsage};
-use std::error::Error;
+use ash::vk;
 use bytemuck::{Pod, Zeroable, offset_of};
 use cgmath::{Matrix4, Vector4};
-
+use std::error::Error;
+use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
 
 /// A single vertex: 3D position + normal, color, uv, tangent, bitangent.
 #[repr(C)]
 #[derive(Default, Clone, Copy, Pod, Zeroable)]
 pub struct Vertex {
-    pub pos:   [f32; 3],
+    pub pos: [f32; 3],
     pub normal: [f32; 3],
     pub color: [f32; 3],
-    pub uv:    [f32; 2],
+    pub uv: [f32; 2],
     pub tangent: [f32; 3],
     pub bitangent: [f32; 3],
 }
@@ -90,16 +89,13 @@ pub struct VertexBuffer {
 
 impl VertexBuffer {
     /// Create a new vertex buffer, uploading any POD vertex or instance data.
-    /// using HOST_VISIBLE | HOST_COHERENT memory properties.
+    /// using host-visible memory selected by VMA.
     /// # Arguments
     /// * `allocator` - Global Vulkan memory allocator.
     /// * `data` - The vertex data to upload.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `VertexBuffer` on success, or an error on failure.
-    pub fn new<T: Pod>(
-        allocator: &Allocator,
-        data: &[T],
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn new<T: Pod>(allocator: &Allocator, data: &[T]) -> Result<Self, Box<dyn Error>> {
         let size = std::mem::size_of_val(data) as vk::DeviceSize;
 
         let buffer_info = vk::BufferCreateInfo {
@@ -114,11 +110,14 @@ impl VertexBuffer {
                 | vk_mem::AllocationCreateFlags::MAPPED,
             ..Default::default()
         };
-        let (buffer, mut allocation) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
+        let (buffer, mut allocation) =
+            unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
 
         unsafe {
             let ptr = allocator.map_memory(&mut allocation)? as *mut T;
             std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+            // Host-visible memory is not guaranteed to be coherent on every GPU.
+            allocator.flush_allocation(&allocation, 0, size)?;
             allocator.unmap_memory(&mut allocation);
         }
 
@@ -127,7 +126,9 @@ impl VertexBuffer {
 
     /// Frees the Vulkan buffer and its backing allocation.
     pub fn cleanup(&mut self, allocator: &Allocator) {
-        unsafe { allocator.destroy_buffer(self.buffer, &mut self.allocation); }
+        unsafe {
+            allocator.destroy_buffer(self.buffer, &mut self.allocation);
+        }
     }
 }
 
@@ -135,7 +136,7 @@ impl VertexBuffer {
 pub struct IndexBuffer {
     pub buffer: vk::Buffer,
     pub allocation: Allocation,
-    pub count:  u32,
+    pub count: u32,
 }
 
 impl IndexBuffer {
@@ -145,10 +146,7 @@ impl IndexBuffer {
     /// * `data` - The index data to upload.
     /// # Returns
     /// * `Result<Self, vk::Result>` - Returns the initialized `IndexBuffer` on success, or an error on failure.
-    pub fn new(
-        allocator: &Allocator,
-        data: &[u32],
-    ) -> Result<Self, vk::Result> {
+    pub fn new(allocator: &Allocator, data: &[u32]) -> Result<Self, vk::Result> {
         let size = std::mem::size_of_val(data) as vk::DeviceSize;
 
         let buffer_info = vk::BufferCreateInfo {
@@ -163,20 +161,28 @@ impl IndexBuffer {
                 | vk_mem::AllocationCreateFlags::MAPPED,
             ..Default::default()
         };
-        let (buffer, mut allocation) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
+        let (buffer, mut allocation) =
+            unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
 
         unsafe {
             let ptr = allocator.map_memory(&mut allocation)? as *mut u32;
             std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+            allocator.flush_allocation(&allocation, 0, size)?;
             allocator.unmap_memory(&mut allocation);
         }
 
-        Ok(IndexBuffer { buffer, allocation, count: data.len() as u32 })
+        Ok(IndexBuffer {
+            buffer,
+            allocation,
+            count: data.len() as u32,
+        })
     }
 
     /// Frees the Vulkan buffer and its backing allocation.
     pub fn cleanup(&mut self, allocator: &Allocator) {
-        unsafe { allocator.destroy_buffer(self.buffer, &mut self.allocation); }
+        unsafe {
+            allocator.destroy_buffer(self.buffer, &mut self.allocation);
+        }
     }
 }
 
@@ -239,41 +245,39 @@ impl Mesh {
         Self {
             vertices: vec![
                 Vertex {
-                    pos:       [-1.0,  0.0,  1.0],
-                    normal:    [ 0.0,  1.0,  0.0],
-                    color:     [ 1.0,  1.0,  1.0],
-                    uv:        [ 0.0,  0.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  0.0, -1.0],
+                    pos: [-1.0, 0.0, 1.0],
+                    normal: [0.0, 1.0, 0.0],
+                    color: [1.0, 1.0, 1.0],
+                    uv: [0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 0.0, -1.0],
                 },
                 Vertex {
-                    pos:       [ 1.0,  0.0,  1.0],
-                    normal:    [ 0.0,  1.0,  0.0],
-                    color:     [ 0.0,  0.0,  1.0],
-                    uv:        [ 1.0,  0.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  0.0, -1.0],
+                    pos: [1.0, 0.0, 1.0],
+                    normal: [0.0, 1.0, 0.0],
+                    color: [0.0, 0.0, 1.0],
+                    uv: [1.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 0.0, -1.0],
                 },
                 Vertex {
-                    pos:       [ 1.0,  0.0, -1.0],
-                    normal:    [ 0.0,  1.0,  0.0],
-                    color:     [ 0.0,  1.0,  0.0],
-                    uv:        [ 1.0,  1.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  0.0, -1.0],
+                    pos: [1.0, 0.0, -1.0],
+                    normal: [0.0, 1.0, 0.0],
+                    color: [0.0, 1.0, 0.0],
+                    uv: [1.0, 1.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 0.0, -1.0],
                 },
                 Vertex {
-                    pos:       [-1.0,  0.0, -1.0],
-                    normal:    [ 0.0,  1.0,  0.0],
-                    color:     [ 1.0,  0.0,  0.0],
-                    uv:        [ 0.0,  1.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  0.0, -1.0],
+                    pos: [-1.0, 0.0, -1.0],
+                    normal: [0.0, 1.0, 0.0],
+                    color: [1.0, 0.0, 0.0],
+                    uv: [0.0, 1.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 0.0, -1.0],
                 },
             ],
-            indices: vec![
-                0, 1, 2,  2, 3, 0,
-            ],
+            indices: vec![0, 1, 2, 2, 3, 0],
         }
     }
 
@@ -283,210 +287,210 @@ impl Mesh {
             vertices: vec![
                 // +Z face (blue), normal [0,0,1]
                 Vertex {
-                    pos:       [-1.0, -1.0,  1.0],
-                    normal:    [ 0.0,  0.0,  1.0],
-                    color:     [ 1.0,  1.0,  1.0],
-                    uv:        [ 0.0,  0.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [-1.0, -1.0, 1.0],
+                    normal: [0.0, 0.0, 1.0],
+                    color: [1.0, 1.0, 1.0],
+                    uv: [0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 Vertex {
-                    pos:       [ 1.0, -1.0,  1.0],
-                    normal:    [ 0.0,  0.0,  1.0],
-                    color:     [ 0.0,  0.0,  1.0],
-                    uv:        [ 1.0,  0.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [1.0, -1.0, 1.0],
+                    normal: [0.0, 0.0, 1.0],
+                    color: [0.0, 0.0, 1.0],
+                    uv: [1.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 Vertex {
-                    pos:       [ 1.0,  1.0,  1.0],
-                    normal:    [ 0.0,  0.0,  1.0],
-                    color:     [ 0.0,  1.0,  0.0],
-                    uv:        [ 1.0,  1.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [1.0, 1.0, 1.0],
+                    normal: [0.0, 0.0, 1.0],
+                    color: [0.0, 1.0, 0.0],
+                    uv: [1.0, 1.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 Vertex {
-                    pos:       [-1.0,  1.0,  1.0],
-                    normal:    [ 0.0,  0.0,  1.0],
-                    color:     [ 1.0,  0.0,  0.0],
-                    uv:        [ 0.0,  1.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [-1.0, 1.0, 1.0],
+                    normal: [0.0, 0.0, 1.0],
+                    color: [1.0, 0.0, 0.0],
+                    uv: [0.0, 1.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 // -Z face (green), normal [0,0,-1]
                 Vertex {
-                    pos:       [ 1.0, -1.0, -1.0],
-                    normal:    [ 0.0,  0.0, -1.0],
-                    color:     [ 1.0,  1.0,  1.0],
-                    uv:        [ 0.0,  0.0],
-                    tangent:   [ -1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [1.0, -1.0, -1.0],
+                    normal: [0.0, 0.0, -1.0],
+                    color: [1.0, 1.0, 1.0],
+                    uv: [0.0, 0.0],
+                    tangent: [-1.0, 0.0, 0.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 Vertex {
-                    pos:       [-1.0, -1.0, -1.0],
-                    normal:    [ 0.0,  0.0, -1.0],
-                    color:     [ 0.0,  0.0,  1.0],
-                    uv:        [ 1.0,  0.0],
-                    tangent:   [ -1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [-1.0, -1.0, -1.0],
+                    normal: [0.0, 0.0, -1.0],
+                    color: [0.0, 0.0, 1.0],
+                    uv: [1.0, 0.0],
+                    tangent: [-1.0, 0.0, 0.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 Vertex {
-                    pos:       [-1.0,  1.0, -1.0],
-                    normal:    [ 0.0,  0.0, -1.0],
-                    color:     [ 0.0,  1.0,  0.0],
-                    uv:        [ 1.0,  1.0],
-                    tangent:   [ -1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [-1.0, 1.0, -1.0],
+                    normal: [0.0, 0.0, -1.0],
+                    color: [0.0, 1.0, 0.0],
+                    uv: [1.0, 1.0],
+                    tangent: [-1.0, 0.0, 0.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 Vertex {
-                    pos:       [ 1.0,  1.0, -1.0],
-                    normal:    [ 0.0,  0.0, -1.0],
-                    color:     [ 1.0,  0.0,  0.0],
-                    uv:        [ 0.0,  1.0],
-                    tangent:   [ -1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [1.0, 1.0, -1.0],
+                    normal: [0.0, 0.0, -1.0],
+                    color: [1.0, 0.0, 0.0],
+                    uv: [0.0, 1.0],
+                    tangent: [-1.0, 0.0, 0.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 // +Y face (red), normal [0,1,0]
                 Vertex {
-                    pos:       [-1.0,  1.0,  1.0],
-                    normal:    [ 0.0,  1.0,  0.0],
-                    color:     [ 1.0,  1.0,  1.0],
-                    uv:        [ 0.0,  0.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  0.0, -1.0],
+                    pos: [-1.0, 1.0, 1.0],
+                    normal: [0.0, 1.0, 0.0],
+                    color: [1.0, 1.0, 1.0],
+                    uv: [0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 0.0, -1.0],
                 },
                 Vertex {
-                    pos:       [ 1.0,  1.0,  1.0],
-                    normal:    [ 0.0,  1.0,  0.0],
-                    color:     [ 0.0,  0.0,  1.0],
-                    uv:        [ 1.0,  0.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  0.0, -1.0],
+                    pos: [1.0, 1.0, 1.0],
+                    normal: [0.0, 1.0, 0.0],
+                    color: [0.0, 0.0, 1.0],
+                    uv: [1.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 0.0, -1.0],
                 },
                 Vertex {
-                    pos:       [ 1.0,  1.0, -1.0],
-                    normal:    [ 0.0,  1.0,  0.0],
-                    color:     [ 0.0,  1.0,  0.0],
-                    uv:        [ 1.0,  1.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  0.0, -1.0],
+                    pos: [1.0, 1.0, -1.0],
+                    normal: [0.0, 1.0, 0.0],
+                    color: [0.0, 1.0, 0.0],
+                    uv: [1.0, 1.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 0.0, -1.0],
                 },
                 Vertex {
-                    pos:       [-1.0,  1.0, -1.0],
-                    normal:    [ 0.0,  1.0,  0.0],
-                    color:     [ 1.0,  0.0,  0.0],
-                    uv:        [ 0.0,  1.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  0.0, -1.0],
+                    pos: [-1.0, 1.0, -1.0],
+                    normal: [0.0, 1.0, 0.0],
+                    color: [1.0, 0.0, 0.0],
+                    uv: [0.0, 1.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 0.0, -1.0],
                 },
                 // -Y face (yellow), normal [0,-1,0]
                 Vertex {
-                    pos:       [-1.0, -1.0, -1.0],
-                    normal:    [ 0.0, -1.0,  0.0],
-                    color:     [ 1.0,  1.0,  1.0],
-                    uv:        [ 0.0,  0.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  0.0,  1.0],
+                    pos: [-1.0, -1.0, -1.0],
+                    normal: [0.0, -1.0, 0.0],
+                    color: [1.0, 1.0, 1.0],
+                    uv: [0.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 0.0, 1.0],
                 },
                 Vertex {
-                    pos:       [ 1.0, -1.0, -1.0],
-                    normal:    [ 0.0, -1.0,  0.0],
-                    color:     [ 0.0,  0.0,  1.0],
-                    uv:        [ 1.0,  0.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  0.0,  1.0],
+                    pos: [1.0, -1.0, -1.0],
+                    normal: [0.0, -1.0, 0.0],
+                    color: [0.0, 0.0, 1.0],
+                    uv: [1.0, 0.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 0.0, 1.0],
                 },
                 Vertex {
-                    pos:       [ 1.0, -1.0,  1.0],
-                    normal:    [ 0.0, -1.0,  0.0],
-                    color:     [ 0.0,  1.0,  0.0],
-                    uv:        [ 1.0,  1.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  0.0,  1.0],
+                    pos: [1.0, -1.0, 1.0],
+                    normal: [0.0, -1.0, 0.0],
+                    color: [0.0, 1.0, 0.0],
+                    uv: [1.0, 1.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 0.0, 1.0],
                 },
                 Vertex {
-                    pos:       [-1.0, -1.0,  1.0],
-                    normal:    [ 0.0, -1.0,  0.0],
-                    color:     [ 1.0,  0.0,  0.0],
-                    uv:        [ 0.0,  1.0],
-                    tangent:   [ 1.0,  0.0,  0.0],
-                    bitangent: [ 0.0,  0.0,  1.0],
+                    pos: [-1.0, -1.0, 1.0],
+                    normal: [0.0, -1.0, 0.0],
+                    color: [1.0, 0.0, 0.0],
+                    uv: [0.0, 1.0],
+                    tangent: [1.0, 0.0, 0.0],
+                    bitangent: [0.0, 0.0, 1.0],
                 },
                 // +X face (magenta), normal [1,0,0]
                 Vertex {
-                    pos:       [ 1.0, -1.0,  1.0],
-                    normal:    [ 1.0,  0.0,  0.0],
-                    color:     [ 1.0,  1.0,  1.0],
-                    uv:        [ 0.0,  0.0],
-                    tangent:   [ 0.0,  0.0, -1.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [1.0, -1.0, 1.0],
+                    normal: [1.0, 0.0, 0.0],
+                    color: [1.0, 1.0, 1.0],
+                    uv: [0.0, 0.0],
+                    tangent: [0.0, 0.0, -1.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 Vertex {
-                    pos:       [ 1.0, -1.0, -1.0],
-                    normal:    [ 1.0,  0.0,  0.0],
-                    color:     [ 0.0,  0.0,  1.0],
-                    uv:        [ 1.0,  0.0],
-                    tangent:   [ 0.0,  0.0, -1.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [1.0, -1.0, -1.0],
+                    normal: [1.0, 0.0, 0.0],
+                    color: [0.0, 0.0, 1.0],
+                    uv: [1.0, 0.0],
+                    tangent: [0.0, 0.0, -1.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 Vertex {
-                    pos:       [ 1.0,  1.0, -1.0],
-                    normal:    [ 1.0,  0.0,  0.0],
-                    color:     [ 0.0,  1.0,  0.0],
-                    uv:        [ 1.0,  1.0],
-                    tangent:   [ 0.0,  0.0, -1.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [1.0, 1.0, -1.0],
+                    normal: [1.0, 0.0, 0.0],
+                    color: [0.0, 1.0, 0.0],
+                    uv: [1.0, 1.0],
+                    tangent: [0.0, 0.0, -1.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 Vertex {
-                    pos:       [ 1.0,  1.0,  1.0],
-                    normal:    [ 1.0,  0.0,  0.0],
-                    color:     [ 1.0,  0.0,  0.0],
-                    uv:        [ 0.0,  1.0],
-                    tangent:   [ 0.0,  0.0, -1.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [1.0, 1.0, 1.0],
+                    normal: [1.0, 0.0, 0.0],
+                    color: [1.0, 0.0, 0.0],
+                    uv: [0.0, 1.0],
+                    tangent: [0.0, 0.0, -1.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 // -X face (cyan), normal [-1,0,0]
                 Vertex {
-                    pos:       [-1.0, -1.0, -1.0],
-                    normal:    [-1.0,  0.0,  0.0],
-                    color:     [ 1.0,  1.0,  1.0],
-                    uv:        [ 0.0,  0.0],
-                    tangent:   [ 0.0,  0.0,  1.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [-1.0, -1.0, -1.0],
+                    normal: [-1.0, 0.0, 0.0],
+                    color: [1.0, 1.0, 1.0],
+                    uv: [0.0, 0.0],
+                    tangent: [0.0, 0.0, 1.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 Vertex {
-                    pos:       [-1.0, -1.0,  1.0],
-                    normal:    [-1.0,  0.0,  0.0],
-                    color:     [ 0.0,  0.0,  1.0],
-                    uv:        [ 1.0,  0.0],
-                    tangent:   [ 0.0,  0.0,  1.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [-1.0, -1.0, 1.0],
+                    normal: [-1.0, 0.0, 0.0],
+                    color: [0.0, 0.0, 1.0],
+                    uv: [1.0, 0.0],
+                    tangent: [0.0, 0.0, 1.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 Vertex {
-                    pos:       [-1.0,  1.0,  1.0],
-                    normal:    [-1.0,  0.0,  0.0],
-                    color:     [ 0.0,  1.0,  0.0],
-                    uv:        [ 1.0,  1.0],
-                    tangent:   [ 0.0,  0.0,  1.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [-1.0, 1.0, 1.0],
+                    normal: [-1.0, 0.0, 0.0],
+                    color: [0.0, 1.0, 0.0],
+                    uv: [1.0, 1.0],
+                    tangent: [0.0, 0.0, 1.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
                 Vertex {
-                    pos:       [-1.0,  1.0, -1.0],
-                    normal:    [-1.0,  0.0,  0.0],
-                    color:     [ 1.0,  0.0,  0.0],
-                    uv:        [ 0.0,  1.0],
-                    tangent:   [ 0.0,  0.0,  1.0],
-                    bitangent: [ 0.0,  1.0,  0.0],
+                    pos: [-1.0, 1.0, -1.0],
+                    normal: [-1.0, 0.0, 0.0],
+                    color: [1.0, 0.0, 0.0],
+                    uv: [0.0, 1.0],
+                    tangent: [0.0, 0.0, 1.0],
+                    bitangent: [0.0, 1.0, 0.0],
                 },
             ],
             indices: vec![
-                 0, 1, 2,  2, 3, 0,     // +Z
-                 4, 5, 6,  6, 7, 4,     // -Z
-                 8, 9,10, 10,11, 8,     // +Y
-                12,13,14, 14,15,12,     // -Y
-                16,17,18, 18,19,16,     // +X
-                20,21,22, 22,23,20,     // -X
+                0, 1, 2, 2, 3, 0, // +Z
+                4, 5, 6, 6, 7, 4, // -Z
+                8, 9, 10, 10, 11, 8, // +Y
+                12, 13, 14, 14, 15, 12, // -Y
+                16, 17, 18, 18, 19, 16, // +X
+                20, 21, 22, 22, 23, 20, // -X
             ],
         }
     }
@@ -509,11 +513,7 @@ impl LoadedMesh {
     /// * `mesh` - The CPU-side mesh data.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `LoadedMesh` on success, or an error on failure.
-    pub fn load(
-        name: String,
-        allocator: &Allocator,
-        mesh: &Mesh,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn load(name: String, allocator: &Allocator, mesh: &Mesh) -> Result<Self, Box<dyn Error>> {
         let verts = &mesh.vertices;
         let indices = &mesh.indices;
         let bounds = MeshBounds::from_vertices(verts).ok_or("cannot upload an empty mesh")?;
@@ -521,7 +521,12 @@ impl LoadedMesh {
         let vb = VertexBuffer::new(allocator, verts)?;
         let ib = IndexBuffer::new(allocator, indices)?;
 
-        Ok(LoadedMesh { name, v_buffer: vb, i_buffer: ib, bounds })
+        Ok(LoadedMesh {
+            name,
+            v_buffer: vb,
+            i_buffer: ib,
+            bounds,
+        })
     }
 
     /// Creates a unit plane mesh and uploads it to the GPU.
@@ -530,10 +535,7 @@ impl LoadedMesh {
     /// * `allocator` - Global Vulkan memory allocator.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `LoadedMesh` on success, or an error on failure.
-    pub fn unit_plane(
-        name: String,
-        allocator: &Allocator,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn unit_plane(name: String, allocator: &Allocator) -> Result<Self, Box<dyn Error>> {
         let mesh = Mesh::unit_plane();
         Self::load(name, allocator, &mesh)
     }
@@ -544,10 +546,7 @@ impl LoadedMesh {
     /// * `allocator` - Global Vulkan memory allocator.
     /// # Returns
     /// * `Result<Self, Box<dyn Error>>` - Returns the initialized `LoadedMesh` on success, or an error on failure.
-    pub fn cube(
-        name: String,
-        allocator: &Allocator,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn cube(name: String, allocator: &Allocator) -> Result<Self, Box<dyn Error>> {
         let mesh = Mesh::cube();
         Self::load(name, allocator, &mesh)
     }
@@ -586,8 +585,8 @@ mod tests {
         assert_eq!(bounds.min, [-1.0, -1.0, -1.0]);
         assert_eq!(bounds.max, [1.0, 1.0, 1.0]);
 
-        let transform = Matrix4::from_translation(Vector3::new(0.0, 5.0, 0.0))
-            * Matrix4::from_scale(0.5);
+        let transform =
+            Matrix4::from_translation(Vector3::new(0.0, 5.0, 0.0)) * Matrix4::from_scale(0.5);
         assert_eq!(bounds.transformed_min_y(transform), 4.5);
     }
 }

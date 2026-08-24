@@ -8,6 +8,9 @@
 //!
 //! --------------------------------------------------------------------------------------
 
+// Keeping the main application in `app::app` makes its relationship to the
+// smaller input and scene modules explicit at call sites.
+#[allow(clippy::module_inception)]
 pub mod app;
 pub mod input;
 pub mod scene;

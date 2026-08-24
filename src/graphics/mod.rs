@@ -9,17 +9,17 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-pub mod pipeline;
-pub mod shaders;
-pub mod mesh;
-pub mod texture;
-pub mod terrain;
+pub mod assimp_loader;
+pub mod camera;
 pub mod grass;
+pub mod import;
 pub mod material;
 pub mod materialmanager;
+pub mod mesh;
 pub mod meshmanager;
-pub mod assimp_loader;
-pub mod import;
-pub mod camera;
+pub mod pipeline;
+pub mod shaders;
 pub mod shadow_math;
 pub mod sky;
+pub mod terrain;
+pub mod texture;

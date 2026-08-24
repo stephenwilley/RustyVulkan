@@ -8,31 +8,31 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use crate::app::app::{App, WorldControls, MAX_LIGHTS};
+use crate::app::app::{App, MAX_LIGHTS, WorldControls};
 use crate::app::scene::Scene;
 use crate::graphics::camera::Camera;
 use crate::graphics::grass::GrassRenderer;
-use crate::graphics::sky::SkyRenderer;
-use crate::vulkan::base::{GlobalUbo, GpuLight, GpuDirLight, GpuPassTimings};
-use cgmath::{Matrix4, Vector4};
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::meshmanager::MeshManager;
+use crate::graphics::shadow_math::compute_tight_light_mats;
+use crate::graphics::sky::SkyRenderer;
 use crate::vulkan::attachments::{AttachmentHandle, AttachmentKind, AttachmentRequest};
 use crate::vulkan::base::{FrameCtx, ImageTransition, VulkanBase};
+use crate::vulkan::base::{GlobalUbo, GpuDirLight, GpuLight, GpuPassTimings};
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
-use crate::vulkan::shadow_pass::ShadowPass;
 use crate::vulkan::main_pass::MainPass;
+use crate::vulkan::shadow_pass::ShadowPass;
 use crate::vulkan::ui_pass::UiPass;
-use crate::graphics::shadow_math::compute_tight_light_mats;
 use ash::vk;
+use cgmath::{Matrix4, Vector4};
 use imgui::Context as ImGuiContext;
 use imgui_winit_support::WinitPlatform;
 use std::collections::HashMap;
-use std::time::Instant;
 use std::error::Error;
-use winit::window::Window;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::time::Instant;
+use winit::window::Window;
 
 /// Identifiers for the concrete render passes that can be added to a
 /// [`RenderGraph`].  The graph executes passes in the order they were
@@ -138,9 +138,17 @@ impl RenderGraph {
     }
 
     /// Prepares the global uniform buffer data for the current frame.
-    fn prepare_global_ubo(&self, world: &WorldControls, camera: &Camera, shadow_res: u32, shadow_distance: f32) -> GlobalUbo {
-        let mut ubo = GlobalUbo::default();
-        ubo.light_count = world.light_count.min(MAX_LIGHTS) as u32;
+    fn prepare_global_ubo(
+        &self,
+        world: &WorldControls,
+        camera: &Camera,
+        shadow_res: u32,
+        shadow_distance: f32,
+    ) -> GlobalUbo {
+        let mut ubo = GlobalUbo {
+            light_count: world.light_count.min(MAX_LIGHTS) as u32,
+            ..Default::default()
+        };
 
         let view: Matrix4<f32> = *camera.get_view();
 
@@ -160,7 +168,8 @@ impl RenderGraph {
         for i in 0..MAX_LIGHTS {
             if i < world.light_count {
                 let lc = world.lights[i];
-                let p_view4 = view * Vector4::new(lc.position[0], lc.position[1], lc.position[2], 1.0);
+                let p_view4 =
+                    view * Vector4::new(lc.position[0], lc.position[1], lc.position[2], 1.0);
                 let p_view = p_view4.truncate();
                 ubo.lights[i] = GpuLight {
                     position: [p_view.x, p_view.y, p_view.z],
@@ -180,7 +189,8 @@ impl RenderGraph {
         }
 
         // --- Compute a tight directional-light VP that follows the camera frustum ---
-        let mats = compute_tight_light_mats(camera, world.sun_direction, shadow_res, shadow_distance);
+        let mats =
+            compute_tight_light_mats(camera, world.sun_direction, shadow_res, shadow_distance);
         let light_vp = mats.view_to_light_clip;
 
         // Store as column-major [[f32;4];4] matching GLSL/std140 default (Matrix4 fields are columns)
@@ -195,21 +205,30 @@ impl RenderGraph {
         ubo
     }
 
-    
-
     /// Execute all passes in insertion order for the current frame.
     pub fn execute(&mut self, app: &mut App) -> Result<(), Box<dyn Error>> {
         let vb = app.vulkan_base.as_mut().unwrap();
 
         // Apply queued changes (e.g., MSAA) at a safe point, before acquiring the image
-        vb.apply_pending_surface_changes(app.window.as_ref().unwrap())?;
+        let mut device_is_idle = vb.apply_pending_surface_changes(app.window.as_ref().unwrap())?;
+        if vb.take_swapchain_recreation_request() {
+            let size = app.window.as_ref().unwrap().inner_size();
+            if size.width != 0 && size.height != 0 {
+                vb.recreate_swapchain(app.window.as_ref().unwrap())?;
+                device_is_idle = true;
+            }
+        }
         // Rebuild pipelines only when engine-signaled generation changes (swapchain/MSAA/wireframe)
         let swap_gen = vb.pipeline_generation();
         if swap_gen != self.swap_gen_seen {
             // Rebuilding a pipeline invalidates objects referenced by already
             // submitted command buffers.  Wait once for the whole rebuild,
             // rather than once per material and again for ImGui.
-            unsafe { vb.device.device_wait_idle()?; }
+            if !device_is_idle {
+                unsafe {
+                    vb.device.device_wait_idle()?;
+                }
+            }
             app.material_manager.recreate_pipelines(vb)?;
             if let Some(grass) = app.grass_renderer.as_mut() {
                 grass.recreate_pipeline(vb)?;
@@ -253,14 +272,21 @@ impl RenderGraph {
 
         // Push history samples (use last frame's CPU ms and latest GPU ms)
         const HIST_CAP: usize = 300; // ~5s at 60 FPS
-        if app.cpu_ms_history.len() >= HIST_CAP { app.cpu_ms_history.pop_front(); }
+        if app.cpu_ms_history.len() >= HIST_CAP {
+            app.cpu_ms_history.pop_front();
+        }
         app.cpu_ms_history.push_back(app.current_ms_per_frame);
-        if app.gpu_ms_history.len() >= HIST_CAP { app.gpu_ms_history.pop_front(); }
-        app.gpu_ms_history.push_back(app.current_gpu_ms_per_frame.unwrap_or(0.0));
+        if app.gpu_ms_history.len() >= HIST_CAP {
+            app.gpu_ms_history.pop_front();
+        }
+        app.gpu_ms_history
+            .push_back(app.current_gpu_ms_per_frame.unwrap_or(0.0));
 
         // --- 1. Handle per-frame app state & UBO ---
         // Toggle visibility of ground variants rather than swapping materials
-        if let (Some(inf_idx), Some(terrain_idx)) = (app.infinite_plane_obj_index, app.terrain_obj_index) {
+        if let (Some(inf_idx), Some(terrain_idx)) =
+            (app.infinite_plane_obj_index, app.terrain_obj_index)
+        {
             let use_terrain = app.world_controls.use_terrain_ground;
             app.scene.objects[inf_idx].visible = !use_terrain;
             app.scene.objects[terrain_idx].visible = use_terrain;
@@ -309,7 +335,7 @@ impl RenderGraph {
                     // Build a concrete request for a single-sample depth attachment
                     let mut depth_req = *req;
                     depth_req.format = vb.swapchain.depth_format; // engine’s chosen depth format
-                    depth_req.extent = vb.swapchain.extent;        // match swapchain size
+                    depth_req.extent = vb.swapchain.extent; // match swapchain size
                     depth_req.samples = vk::SampleCountFlags::TYPE_1; // single-sampled
                     vb.get_attachment(depth_req)
                 }
@@ -318,7 +344,10 @@ impl RenderGraph {
                     let res = vb.engine_settings.shadow_map_resolution;
                     let mut shadow_req = *req;
                     shadow_req.format = vk::Format::D32_SFLOAT;
-                    shadow_req.extent = vk::Extent2D { width: res, height: res };
+                    shadow_req.extent = vk::Extent2D {
+                        width: res,
+                        height: res,
+                    };
                     shadow_req.samples = vk::SampleCountFlags::TYPE_1;
                     vb.get_attachment(shadow_req)
                 }
@@ -419,7 +448,6 @@ impl RenderGraph {
                 ctx.vulkan_base
                     .mark_shadow_timing_end(frame.cmd_buf, frame.image_index);
             }
-
         }
 
         // --- 4. Final transition for presentation ---
@@ -501,18 +529,6 @@ impl RenderGraph {
     }
 }
 
-/// Computes a light view-projection that tightly fits the camera frustum.
-///
-/// Steps (kept simple and documented to be easy to understand):
-/// - Invert the camera's view-projection to reconstruct the 8 world-space frustum corners
-///   from NDC cube corners (x,y in [-1,1], z in [0,1] for Vulkan).
-/// - Choose a light view that looks from the sun direction toward the frustum center.
-///   We place the light eye a couple of frustum radii away along -dir.
-/// - Transform the 8 corners into light view space and compute an AABB (min/max in x,y,z).
-/// - Optionally snap the AABB center to the shadow map texel grid to reduce shimmering.
-/// - Build an orthographic projection from the AABB extents and correct for Vulkan depth (0..1).
-// moved tight light math into graphics::shadow_math
-
 impl Default for RenderGraph {
     fn default() -> Self {
         Self::new()
@@ -533,9 +549,9 @@ fn pipeline_stage_for_access(access: vk::AccessFlags) -> vk::PipelineStageFlags 
 
 fn aspect_for_kind(kind: AttachmentKind) -> vk::ImageAspectFlags {
     match kind {
-        AttachmentKind::SwapchainColor
-        | AttachmentKind::MsaaColor
-        | AttachmentKind::Color => vk::ImageAspectFlags::COLOR,
+        AttachmentKind::SwapchainColor | AttachmentKind::MsaaColor | AttachmentKind::Color => {
+            vk::ImageAspectFlags::COLOR
+        }
         AttachmentKind::MsaaDepth | AttachmentKind::Depth | AttachmentKind::Shadow => {
             vk::ImageAspectFlags::DEPTH
         }

@@ -10,12 +10,12 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use std::error::Error;
-use crate::vulkan::base::VulkanBase;
-use crate::graphics::meshmanager::MeshManager;
-use crate::graphics::materialmanager::MaterialManager;
 use crate::app::scene::{SceneObject, ScenePart, Transform as SceneTransform};
+use crate::graphics::materialmanager::MaterialManager;
+use crate::graphics::meshmanager::MeshManager;
+use crate::vulkan::base::VulkanBase;
 use russimp_ng::material::PropertyTypeInfo;
+use std::error::Error;
 
 /// Extract a glTF material's constant albedo when it has no image texture.
 /// Assimp exposes glTF's `baseColorFactor` as `$clr.base`.
@@ -26,10 +26,9 @@ fn material_base_color(material: &russimp_ng::material::Material) -> [f32; 3] {
             .iter()
             .find(|property| property.key == key)
             .map(|property| &property.data)
+            && color.len() >= 3
         {
-            if color.len() >= 3 {
-                return [color[0], color[1], color[2]];
-            }
+            return [color[0], color[1], color[2]];
         }
     }
     [1.0, 1.0, 1.0]
@@ -42,11 +41,11 @@ pub fn import_model_as_object(
     meshes: &mut MeshManager,
     mats: &mut MaterialManager,
 ) -> Result<SceneObject, Box<dyn Error>> {
-    use cgmath::{Quaternion as CQuat, Vector3 as CVec3, Matrix3};
-    use cgmath::{Rotation, InnerSpace};
+    use cgmath::{InnerSpace, Rotation};
+    use cgmath::{Matrix3, Quaternion as CQuat, Vector3 as CVec3};
 
     // 1) Load the scene with typical preprocessing flags
-    use russimp_ng::scene::{Scene, PostProcess};
+    use russimp_ng::scene::{PostProcess, Scene};
     let scene = Scene::from_file(
         path,
         vec![
@@ -59,9 +58,7 @@ pub fn import_model_as_object(
     // Resolve relative texture paths against the model's directory
     use std::path::Path;
     let base_path = Path::new(path);
-    let base_dir = base_path
-        .parent()
-        .unwrap_or_else(|| Path::new(""));
+    let base_dir = base_path.parent().unwrap_or_else(|| Path::new(""));
     let model_stem: String = base_path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
@@ -97,8 +94,8 @@ pub fn import_model_as_object(
             }
         };
         // Prefer BaseColor then Diffuse for albedo
-        let diffuse_tex = find_tex_path(TextureType::BaseColor)
-            .or_else(|| find_tex_path(TextureType::Diffuse));
+        let diffuse_tex =
+            find_tex_path(TextureType::BaseColor).or_else(|| find_tex_path(TextureType::Diffuse));
         let normal_tex = find_tex_path(TextureType::Normals);
 
         // Choose shader based on texture availability
@@ -106,12 +103,16 @@ pub fn import_model_as_object(
         // supplies a neutral diffuse texture for its required albedo binding.
         let use_textured = diffuse_tex.is_some() || normal_tex.is_some();
         let (vs_path, fs_path) = if use_textured {
-            ("assets/shaders/spv/main.vert.spv".into(),
-             "assets/shaders/spv/main.frag.spv".into())
+            (
+                "assets/shaders/spv/main.vert.spv".into(),
+                "assets/shaders/spv/main.frag.spv".into(),
+            )
         } else {
             // The colour-only path still receives the global shadow map.
-            ("assets/shaders/spv/vertex_color.vert.spv".into(),
-             "assets/shaders/spv/vertex_color.frag.spv".into())
+            (
+                "assets/shaders/spv/vertex_color.vert.spv".into(),
+                "assets/shaders/spv/vertex_color.frag.spv".into(),
+            )
         };
 
         let id = mats.request_material(
@@ -163,32 +164,48 @@ pub fn import_model_as_object(
                 .normals
                 .get(vi)
                 .cloned()
-                .unwrap_or(russimp_ng::Vector3D { x: 0.0, y: 1.0, z: 0.0 });
+                .unwrap_or(russimp_ng::Vector3D {
+                    x: 0.0,
+                    y: 1.0,
+                    z: 0.0,
+                });
             let uv = ai_mesh
                 .texture_coords
-                .get(0)
+                .first()
                 .and_then(|tc| tc.as_ref())
                 .and_then(|tc| tc.get(vi))
                 .cloned()
-                .unwrap_or(russimp_ng::Vector3D { x: 0.0, y: 0.0, z: 0.0 });
+                .unwrap_or(russimp_ng::Vector3D {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                });
             let tan = ai_mesh
                 .tangents
                 .get(vi)
                 .cloned()
-                .unwrap_or(russimp_ng::Vector3D { x: 0.0, y: 0.0, z: 0.0 });
+                .unwrap_or(russimp_ng::Vector3D {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                });
             let bit = ai_mesh
                 .bitangents
                 .get(vi)
                 .cloned()
-                .unwrap_or(russimp_ng::Vector3D { x: 0.0, y: 0.0, z: 0.0 });
+                .unwrap_or(russimp_ng::Vector3D {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                });
 
             cpu.vertices.push(crate::graphics::mesh::Vertex {
-                pos: [p.x as f32, p.y as f32, p.z as f32],
-                normal: [n.x as f32, n.y as f32, n.z as f32],
+                pos: [p.x, p.y, p.z],
+                normal: [n.x, n.y, n.z],
                 color: vertex_color,
-                uv: [uv.x as f32, uv.y as f32],
-                tangent: [tan.x as f32, tan.y as f32, tan.z as f32],
-                bitangent: [bit.x as f32, bit.y as f32, bit.z as f32],
+                uv: [uv.x, uv.y],
+                tangent: [tan.x, tan.y, tan.z],
+                bitangent: [bit.x, bit.y, bit.z],
             });
         }
         // Indices
@@ -196,7 +213,7 @@ pub fn import_model_as_object(
         for f in &ai_mesh.faces {
             // Triangulate flag ensures 3 indices per face
             for idx in &f.0 {
-                indices.push(*idx as u32);
+                indices.push(*idx);
             }
         }
         cpu.indices = indices;
@@ -213,23 +230,39 @@ pub fn import_model_as_object(
     // 4) Traverse nodes to gather parts with transforms
     fn decompose(transform: &russimp_ng::Matrix4x4) -> SceneTransform {
         // Interpret as row-major with last column = translation (a4,b4,c4)
-        let t = CVec3::new(transform.a4 as f32, transform.b4 as f32, transform.c4 as f32);
+        let t = CVec3::new(transform.a4, transform.b4, transform.c4);
         // Upper-left 3x3 contains rotation*scale. Treat its columns as basis vectors.
-        let c0 = CVec3::new(transform.a1 as f32, transform.b1 as f32, transform.c1 as f32);
-        let c1 = CVec3::new(transform.a2 as f32, transform.b2 as f32, transform.c2 as f32);
-        let c2 = CVec3::new(transform.a3 as f32, transform.b3 as f32, transform.c3 as f32);
+        let c0 = CVec3::new(transform.a1, transform.b1, transform.c1);
+        let c1 = CVec3::new(transform.a2, transform.b2, transform.c2);
+        let c2 = CVec3::new(transform.a3, transform.b3, transform.c3);
         let s0 = c0.magnitude();
         let s1 = c1.magnitude();
         let s2 = c2.magnitude();
         // Uniform scale approximation to match SceneTransform design
         let scale = ((s0 + s1 + s2) / 3.0).max(1e-6);
         // Normalize columns to obtain rotation matrix
-        let r0 = if s0 > 0.0 { c0 / s0 } else { CVec3::new(1.0, 0.0, 0.0) };
-        let r1 = if s1 > 0.0 { c1 / s1 } else { CVec3::new(0.0, 1.0, 0.0) };
-        let r2 = if s2 > 0.0 { c2 / s2 } else { CVec3::new(0.0, 0.0, 1.0) };
+        let r0 = if s0 > 0.0 {
+            c0 / s0
+        } else {
+            CVec3::new(1.0, 0.0, 0.0)
+        };
+        let r1 = if s1 > 0.0 {
+            c1 / s1
+        } else {
+            CVec3::new(0.0, 1.0, 0.0)
+        };
+        let r2 = if s2 > 0.0 {
+            c2 / s2
+        } else {
+            CVec3::new(0.0, 0.0, 1.0)
+        };
         let rot_m = Matrix3::from_cols(r0, r1, r2);
         let rot = CQuat::from(rot_m);
-        SceneTransform { translation: t, rotation: rot, scale }
+        SceneTransform {
+            translation: t,
+            rotation: rot,
+            scale,
+        }
     }
 
     let mut parts: Vec<ScenePart> = Vec::new();
@@ -239,10 +272,18 @@ pub fn import_model_as_object(
         let root_tf = decompose(&root.transformation);
         object_transform = root_tf;
         // Compute inverse uniform transform so parts are relative to object root.
-        let inv_scale = if root_tf.scale != 0.0 { 1.0 / root_tf.scale } else { 0.0 };
+        let inv_scale = if root_tf.scale != 0.0 {
+            1.0 / root_tf.scale
+        } else {
+            0.0
+        };
         let inv_rot = CQuat::conjugate(root_tf.rotation);
         let inv_trans = inv_rot.rotate_vector(-root_tf.translation * inv_scale);
-        let root_inv = SceneTransform { translation: inv_trans, rotation: inv_rot, scale: inv_scale };
+        let root_inv = SceneTransform {
+            translation: inv_trans,
+            rotation: inv_rot,
+            scale: inv_scale,
+        };
 
         // DFS from the root, accumulating transforms.
         let mut stack: Vec<(std::rc::Rc<russimp_ng::node::Node>, SceneTransform)> =
@@ -252,24 +293,40 @@ pub fn import_model_as_object(
             let local = decompose(&node.transformation);
             let s = parent_tf.scale * local.scale;
             let r = parent_tf.rotation * local.rotation;
-            let translated = parent_tf.rotation.rotate_vector(local.translation * parent_tf.scale);
+            let translated = parent_tf
+                .rotation
+                .rotate_vector(local.translation * parent_tf.scale);
             let t = parent_tf.translation + translated;
-            let world = SceneTransform { translation: t, rotation: r, scale: s };
+            let world = SceneTransform {
+                translation: t,
+                rotation: r,
+                scale: s,
+            };
 
             // Part transform relative to the root
             let rel = {
                 let s = root_inv.scale * world.scale;
                 let r = root_inv.rotation * world.rotation;
-                let translated = root_inv.rotation.rotate_vector(world.translation * root_inv.scale);
+                let translated = root_inv
+                    .rotation
+                    .rotate_vector(world.translation * root_inv.scale);
                 let t = root_inv.translation + translated;
-                SceneTransform { translation: t, rotation: r, scale: s }
+                SceneTransform {
+                    translation: t,
+                    rotation: r,
+                    scale: s,
+                }
             };
 
             for &mi in &node.meshes {
                 let mesh_id = *mesh_ids.get(mi as usize).ok_or("Missing mesh id")?;
                 let mat_index = scene.meshes[mi as usize].material_index as usize;
                 let mat_id = *material_ids.get(mat_index).unwrap_or(&material_ids[0]);
-                parts.push(ScenePart { transform: rel, material_id: mat_id, mesh_id });
+                parts.push(ScenePart {
+                    transform: rel,
+                    material_id: mat_id,
+                    mesh_id,
+                });
             }
             for child in node.children.borrow().iter() {
                 stack.push((child.clone(), world));
@@ -284,5 +341,9 @@ pub fn import_model_as_object(
         material_ids.len(),
         parts.len()
     );
-    Ok(SceneObject { transform: object_transform, parts, visible: true })
+    Ok(SceneObject {
+        transform: object_transform,
+        parts,
+        visible: true,
+    })
 }

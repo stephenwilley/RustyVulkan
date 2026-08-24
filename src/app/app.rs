@@ -8,20 +8,21 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use std::error::Error;
-use std::time::Instant;
 use std::collections::VecDeque;
+use std::error::Error;
 use std::sync::{Arc, atomic::AtomicBool};
+use std::time::Instant;
 
 use imgui::Context as ImGuiContext;
 use imgui_winit_support::{HiDpiMode, WinitPlatform};
 use winit::application::ApplicationHandler;
+use winit::dpi::LogicalSize;
 use winit::event::{DeviceEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowAttributes};
-use winit::dpi::LogicalSize;
 
+use crate::app::scene::{Scene, SceneObject, ScenePart, Transform as SceneTransform};
 use crate::graphics::camera::Camera;
 use crate::graphics::grass::GrassRenderer;
 use crate::graphics::import::import_model_as_object;
@@ -29,7 +30,6 @@ use crate::graphics::materialmanager::{MaterialManager, MaterialProperties};
 use crate::graphics::meshmanager::MeshManager;
 use crate::graphics::sky::SkyRenderer;
 use crate::graphics::terrain::{TerrainSettings, build_heightfield};
-use crate::app::scene::{Scene, SceneObject, ScenePart, Transform as SceneTransform};
 use crate::vulkan::base::{GpuPassTimings, VulkanBase};
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
 use crate::vulkan::render_graph::{RenderGraph, RenderPassNode};
@@ -151,8 +151,8 @@ impl App {
 
     fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Window {
         let window_attributes = WindowAttributes::default()
-    .with_title("Rusty Vulkan")
-    .with_inner_size(LogicalSize::new(1280, 720));
+            .with_title("Rusty Vulkan")
+            .with_inner_size(LogicalSize::new(1280, 720));
         let window = event_loop
             .create_window(window_attributes)
             .expect("Failed to create window");
@@ -165,7 +165,10 @@ impl App {
     fn set_up_scene(&mut self) -> Result<(), Box<dyn Error>> {
         // Scene construction reads VulkanBase but mutates the two managers. Rust
         // permits those simultaneous borrows because they are disjoint `App` fields.
-        let vulkan_base = self.vulkan_base.as_ref().expect("VulkanBase must exist before scene setup");
+        let vulkan_base = self
+            .vulkan_base
+            .as_ref()
+            .expect("VulkanBase must exist before scene setup");
         // Create both materials needed for ground
         let infinite_plane_mat_id = self.material_manager.request_material(
             vulkan_base,
@@ -201,10 +204,7 @@ impl App {
             build_heightfield(terrain_settings),
         )?;
         // The infinite grid remains a separate, flat debug ground option.
-        let infinite_plane_mesh_id = self
-            .mesh_manager
-            .request_unit_plane(vulkan_base)
-            ?;
+        let infinite_plane_mesh_id = self.mesh_manager.request_unit_plane(vulkan_base)?;
 
         let infinite_plane = SceneObject {
             // Keep transform identity so the infinite grid shader sees stable derivatives
@@ -213,26 +213,27 @@ impl App {
                 cgmath::Vector3::new(0.0, 0.0, 0.0),
                 1.0,
             ),
-            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: infinite_plane_mat_id, mesh_id: infinite_plane_mesh_id }],
+            parts: vec![ScenePart {
+                transform: SceneTransform::identity(),
+                material_id: infinite_plane_mat_id,
+                mesh_id: infinite_plane_mesh_id,
+            }],
             visible: !self.world_controls.use_terrain_ground,
         };
 
         let cube_mat_id = self.material_manager.request_material(
-                vulkan_base,
-                MaterialProperties {
-                    name: "Cube1Material".into(),
-                    vs_path: "assets/shaders/spv/main.vert.spv".into(),
-                    fs_path: "assets/shaders/spv/main.frag.spv".into(),
-                    diffuse_texture_path: Some("assets/textures/cube1/diffuse.png".into()),
-                    normalmap_texture_path: Some("assets/textures/cube1/normal.png".into()),
-                    depth_write: true,
-                    uv_tiling: None,
-                },
-            )?;
-        let cube_mesh_id = self
-            .mesh_manager
-            .request_cube(vulkan_base)
-            ?;
+            vulkan_base,
+            MaterialProperties {
+                name: "Cube1Material".into(),
+                vs_path: "assets/shaders/spv/main.vert.spv".into(),
+                fs_path: "assets/shaders/spv/main.frag.spv".into(),
+                diffuse_texture_path: Some("assets/textures/cube1/diffuse.png".into()),
+                normalmap_texture_path: Some("assets/textures/cube1/normal.png".into()),
+                depth_write: true,
+                uv_tiling: None,
+            },
+        )?;
+        let cube_mesh_id = self.mesh_manager.request_cube(vulkan_base)?;
         let mut cube_transform = SceneTransform::from_euler(
             cgmath::Vector3::new(7.0, 0.0, 0.0),
             cgmath::Vector3::new(0.0, 0.0, 0.0),
@@ -245,26 +246,27 @@ impl App {
         );
         let cube = SceneObject {
             transform: cube_transform,
-            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: cube_mat_id, mesh_id: cube_mesh_id }],
+            parts: vec![ScenePart {
+                transform: SceneTransform::identity(),
+                material_id: cube_mat_id,
+                mesh_id: cube_mesh_id,
+            }],
             visible: true,
         };
 
         let cube2_mat_id = self.material_manager.request_material(
-                vulkan_base,
-                MaterialProperties {
-                    name: "Cube2Material".into(),
-                    vs_path: "assets/shaders/spv/main.vert.spv".into(),
-                    fs_path: "assets/shaders/spv/main.frag.spv".into(),
-                    diffuse_texture_path: Some("assets/textures/cube2/diffuse.png".into()),
-                    normalmap_texture_path: Some("assets/textures/cube2/normal.png".into()),
-                    depth_write: true,
-                    uv_tiling: None,
-                },
-            )?;
-        let cube2_mesh_id = self
-            .mesh_manager
-            .request_cube(vulkan_base)
-            ?;
+            vulkan_base,
+            MaterialProperties {
+                name: "Cube2Material".into(),
+                vs_path: "assets/shaders/spv/main.vert.spv".into(),
+                fs_path: "assets/shaders/spv/main.frag.spv".into(),
+                diffuse_texture_path: Some("assets/textures/cube2/diffuse.png".into()),
+                normalmap_texture_path: Some("assets/textures/cube2/normal.png".into()),
+                depth_write: true,
+                uv_tiling: None,
+            },
+        )?;
+        let cube2_mesh_id = self.mesh_manager.request_cube(vulkan_base)?;
         let mut cube2_transform = SceneTransform::from_euler(
             cgmath::Vector3::new(6.0, 0.0, -6.0),
             cgmath::Vector3::new(0.0, 15.0, 0.0),
@@ -272,18 +274,22 @@ impl App {
             0.4,
         );
         cube2_transform.place_on_ground(
-            terrain_settings.height_at(cube2_transform.translation.x, cube2_transform.translation.z),
+            terrain_settings
+                .height_at(cube2_transform.translation.x, cube2_transform.translation.z),
             -1.0,
         );
         let cube2 = SceneObject {
             transform: cube2_transform,
-            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: cube2_mat_id, mesh_id: cube2_mesh_id }],
+            parts: vec![ScenePart {
+                transform: SceneTransform::identity(),
+                material_id: cube2_mat_id,
+                mesh_id: cube2_mesh_id,
+            }],
             visible: true,
         };
 
-        // A small open-sided hut makes the directional shadow easier to read
-        // than the enclosed Sponza scene.  Scale 10 matches the surrounding
-        // reference objects after the importer's glTF node transform is applied.
+        // Scale 10 makes the imported hut agree with the metre-sized reference objects
+        // after the importer's glTF node transform has been applied.
         let mut hut = import_model_as_object(
             "assets/meshes/hut/hut.glb",
             vulkan_base,
@@ -325,7 +331,10 @@ impl App {
             0.5,
         );
         sphere.transform.place_on_ground(
-            terrain_settings.height_at(sphere.transform.translation.x, sphere.transform.translation.z),
+            terrain_settings.height_at(
+                sphere.transform.translation.x,
+                sphere.transform.translation.z,
+            ),
             -1.0,
         );
         sphere.visible = true;
@@ -334,7 +343,11 @@ impl App {
         // so an identity object transform keeps height queries and rendered ground aligned.
         let terrain = SceneObject {
             transform: SceneTransform::identity(),
-            parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: terrain_mat_id, mesh_id: terrain_mesh_id }],
+            parts: vec![ScenePart {
+                transform: SceneTransform::identity(),
+                material_id: terrain_mat_id,
+                mesh_id: terrain_mesh_id,
+            }],
             visible: self.world_controls.use_terrain_ground,
         };
 
@@ -364,8 +377,7 @@ impl App {
 
         // All scene materials have now recorded their texture uploads.  Submit
         // them together once, before the first frame can sample the images.
-        self.material_manager
-            .finish_loading(vulkan_base)?;
+        self.material_manager.finish_loading(vulkan_base)?;
 
         self.camera = Camera::new();
         let camera_position = self.camera.position();
@@ -492,7 +504,7 @@ pub const FIRST_PERSON_EYE_HEIGHT: f32 = 1.8;
 /// Per-point-light controls exposed in the UI and mirrored to GPU.
 #[derive(Clone, Copy)]
 pub struct LightCtrl {
-    pub position: [f32; 3],   // x, y, z in world space
+    pub position: [f32; 3], // x, y, z in world space
     pub intensity: f32,
     pub color: [f32; 3],
 }
@@ -542,8 +554,12 @@ impl Default for WorldControls {
 
         // Reasonable default sun: slightly from above-left, white-ish
         let mut sdir = [0.117f32, -0.846, -0.520];
-        let len = (sdir[0]*sdir[0] + sdir[1]*sdir[1] + sdir[2]*sdir[2]).sqrt().max(1e-6);
-        sdir[0] /= len; sdir[1] /= len; sdir[2] /= len;
+        let len = (sdir[0] * sdir[0] + sdir[1] * sdir[1] + sdir[2] * sdir[2])
+            .sqrt()
+            .max(1e-6);
+        sdir[0] /= len;
+        sdir[1] /= len;
+        sdir[2] /= len;
 
         Self {
             lights,

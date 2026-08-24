@@ -8,22 +8,23 @@ ash = {version = "0.38.0", features = ["linked"]}
 ash-window = "0.13.0"
 bytemuck = { version = "1.23", features = ["derive"] }
 cgmath = "0.18.0"
-libc = "0.2.174"
 raw-window-handle = "0.6.2"
 winit = "0.30.11"
 imgui = "0.12"
 imgui-winit-support = "0.13"
-memoffset = "0.9.1"
-image = "0.25.6"
-fmt = "0.1.0"
+image = { version = "0.25.6", default-features = false, features = ["jpeg", "png"] }
 vk-mem = "0.5"
 russimp-ng = "3.2.7"
 
 [build-dependencies]
 shaderc = "0.9.1"
 
-# Keep our own code easy to debug, but do not make startup image decoding pay the
-# very large cost of unoptimised pixel-processing loops in development builds.
+# A little optimisation keeps CPU-generated scene data, especially the millions of
+# grass candidates, responsive while retaining debug assertions and symbols.
+[profile.dev]
+opt-level = 1
+
+# Image decoding benefits from full optimisation even in a development build.
 [profile.dev.package.image]
 opt-level = 3
 

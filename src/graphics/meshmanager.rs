@@ -10,10 +10,10 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use crate::vulkan::base::VulkanBase;
+use crate::app::scene::SceneObject;
 use crate::graphics::mesh::LoadedMesh;
 use crate::graphics::mesh::Mesh;
-use crate::app::scene::SceneObject;
+use crate::vulkan::base::VulkanBase;
 use std::error::Error;
 use vk_mem::Allocator;
 
@@ -25,9 +25,7 @@ pub struct MeshManager {
 impl MeshManager {
     /// Creates a new `MeshManager`.
     pub fn new() -> MeshManager {
-        MeshManager {
-            meshes: Vec::new(),
-        }
+        MeshManager { meshes: Vec::new() }
     }
 
     /// Requests a cube mesh. If the mesh already exists, it returns the index of the existing mesh.
@@ -36,18 +34,11 @@ impl MeshManager {
     /// * `vb` - The VulkanBase struct.
     /// # Returns
     /// * `Result<usize, Box<dyn Error>>` - The index of the cube mesh on success, or an error on failure.
-    pub fn request_cube(
-        &mut self,
-        vb: &VulkanBase
-    ) -> Result<usize, Box<dyn Error>> {
-
+    pub fn request_cube(&mut self, vb: &VulkanBase) -> Result<usize, Box<dyn Error>> {
         if let Some(idx) = self.meshes.iter().position(|m| m.name == "Cube") {
             Ok(idx)
         } else {
-            let mesh = LoadedMesh::cube(
-                "Cube".into(),
-                vb.allocator.as_ref().unwrap(),
-            )?;
+            let mesh = LoadedMesh::cube("Cube".into(), vb.allocator.as_ref().unwrap())?;
             self.meshes.push(mesh);
             Ok(self.meshes.len() - 1)
         }
@@ -59,18 +50,11 @@ impl MeshManager {
     /// * `vb` - The VulkanBase struct.
     /// # Returns
     /// * `Result<usize, Box<dyn Error>>` - The index of the unit plane mesh on success, or an error on failure.
-    pub fn request_unit_plane(
-        &mut self,
-        vb: &VulkanBase
-    ) -> Result<usize, Box<dyn Error>> {
-
+    pub fn request_unit_plane(&mut self, vb: &VulkanBase) -> Result<usize, Box<dyn Error>> {
         if let Some(idx) = self.meshes.iter().position(|m| m.name == "UnitPlane") {
             Ok(idx)
         } else {
-            let mesh = LoadedMesh::unit_plane(
-                "UnitPlane".into(),
-                vb.allocator.as_ref().unwrap(),
-            )?;
+            let mesh = LoadedMesh::unit_plane("UnitPlane".into(), vb.allocator.as_ref().unwrap())?;
             self.meshes.push(mesh);
             Ok(self.meshes.len() - 1)
         }

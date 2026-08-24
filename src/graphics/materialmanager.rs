@@ -10,10 +10,10 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use ash::{Device, vk};
 use crate::graphics::material::Material;
 use crate::graphics::texture::TextureCache;
 use crate::vulkan::base::VulkanBase;
+use ash::{Device, vk};
 use std::error::Error;
 use vk_mem::Allocator;
 
@@ -50,10 +50,7 @@ impl MaterialManager {
     /// * `vb` - The VulkanBase struct.
     /// # Returns
     /// * `Result<(), Box<dyn std::error::Error>>` - The result of the pipeline recreation.
-    pub fn recreate_pipelines(
-        &mut self,
-        vb: &VulkanBase
-    ) -> Result<(), Box<dyn Error>> {
+    pub fn recreate_pipelines(&mut self, vb: &VulkanBase) -> Result<(), Box<dyn Error>> {
         for material in &mut self.materials {
             material.recreate_pipeline(vb)?;
         }

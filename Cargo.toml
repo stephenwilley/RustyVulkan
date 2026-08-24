@@ -21,3 +21,17 @@ russimp-ng = "3.2.7"
 
 [build-dependencies]
 shaderc = "0.9.1"
+
+# Keep our own code easy to debug, but do not make startup image decoding pay the
+# very large cost of unoptimised pixel-processing loops in development builds.
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+[profile.dev.package.zune-core]
+opt-level = 3
+
+[profile.dev.package.moxcms]
+opt-level = 3

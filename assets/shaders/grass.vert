@@ -72,6 +72,9 @@ void main() {
     // The second instance attribute arrives as four normalised 16-bit values.
     float rotation = inRotationWidthTintPhase.x * 6.28318530718;
     float blade_width = inRotationWidthTintPhase.y * 0.1;
+    // Fewer mid-distance instances expose more dark soil. A modest width increase
+    // preserves the field's average coverage without restoring near-LOD geometry cost.
+    blade_width *= mix(1.0, 1.50, pc.grassParams.z);
     float wind_phase = inRotationWidthTintPhase.w;
 
     mat2 blade_rotation = rotate2d(rotation);

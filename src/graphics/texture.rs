@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::Path;
+use std::time::Instant;
 
 use ash::vk;
 use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
@@ -76,6 +77,7 @@ impl TextureUploadBatch {
         allocator: &Allocator,
         image_path: &str,
     ) -> Result<Texture, Box<dyn Error>> {
+        let prepare_start = Instant::now();
         // Decode on the CPU first so every source format becomes RGBA8.
         let img = image::open(image_path)?.to_rgba8();
         let (width, height) = img.dimensions();
@@ -198,6 +200,13 @@ impl TextureUploadBatch {
             buffer: staging_buffer,
             allocation: staging_allocation,
         });
+
+        let prepare_ms = prepare_start.elapsed().as_secs_f32() * 1_000.0;
+        if prepare_ms >= 100.0 {
+            println!(
+                "🖼️ Prepared {image_path} ({width}×{height}) in {prepare_ms:.1} ms"
+            );
+        }
 
         // The returned image is ready to use only after the enclosing batch is flushed.
         Ok(Texture { image, allocation, image_view })

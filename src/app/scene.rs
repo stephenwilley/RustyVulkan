@@ -50,10 +50,9 @@ impl Transform {
 
     /// Sets Y so this uniformly scaled, upright object rests on a terrain height.
     ///
-    /// `local_base_y` is the mesh's lowest local Y coordinate: it is `-1.0`
-    /// for the unit cube and sphere, and `0.0` for the imported hut.  This is
-    /// deliberately not physics or a raycast; pitched/rolled objects need a
-    /// transformed bounding box before their lowest point can be determined.
+    /// `local_base_y` is the geometry's lowest object-local Y coordinate.  It is
+    /// known to be `-1.0` for the unit cube; imported multipart objects calculate it
+    /// from retained mesh bounds.  This is deliberately not physics or a raycast.
     pub fn place_on_ground(&mut self, ground_y: f32, local_base_y: f32) {
         self.translation.y = ground_y - local_base_y * self.scale;
     }

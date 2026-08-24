@@ -27,6 +27,7 @@ use crate::graphics::grass::GrassRenderer;
 use crate::graphics::import::import_model_as_object;
 use crate::graphics::materialmanager::{MaterialManager, MaterialProperties};
 use crate::graphics::meshmanager::MeshManager;
+use crate::graphics::sky::SkyRenderer;
 use crate::graphics::terrain::{TerrainSettings, build_heightfield};
 use crate::app::scene::{Scene, SceneObject, ScenePart, Transform as SceneTransform};
 use crate::vulkan::base::{GpuPassTimings, VulkanBase};
@@ -84,6 +85,8 @@ pub struct App {
     pub mesh_manager: MeshManager,
     /// Separate instanced renderer for the dense outdoor grass field.
     pub grass_renderer: Option<GrassRenderer>,
+    /// Fullscreen panorama renderer kept outside the ordinary object/material list.
+    pub sky_renderer: Option<SkyRenderer>,
     /// Monotonic scene time for procedural animation (wind, water, and similar effects).
     pub scene_start_time: Instant,
     pub current_ms_per_frame: f32,
@@ -122,6 +125,7 @@ impl App {
             material_manager: MaterialManager::new(),
             mesh_manager: MeshManager::new(),
             grass_renderer: None,
+            sky_renderer: None,
             scene_start_time: Instant::now(),
             current_ms_per_frame: 0.0,
             current_gpu_ms_per_frame: None,
@@ -286,6 +290,10 @@ impl App {
             &mut self.mesh_manager,
             &mut self.material_manager,
         )?;
+        let hut_local_base_y = self
+            .mesh_manager
+            .object_local_min_y(&hut)
+            .ok_or("imported hut has no mesh bounds")?;
         hut.transform = SceneTransform::from_euler(
             // The importer has already applied the source node transform, so
             // the model's local base is already on the shared ground plane.
@@ -295,9 +303,12 @@ impl App {
             cgmath::Vector3::new(0.0, 0.0, 0.0),
             10.0,
         );
-        hut.transform.place_on_ground(
-            terrain_settings.height_at(hut.transform.translation.x, hut.transform.translation.z),
-            0.0,
+        let hut_ground_y =
+            terrain_settings.height_at(hut.transform.translation.x, hut.transform.translation.z);
+        hut.transform
+            .place_on_ground(hut_ground_y, hut_local_base_y);
+        println!(
+            "🏠 Grounded hut: local base {hut_local_base_y:.3}, world base {hut_ground_y:.3} m"
         );
         hut.visible = true;
 
@@ -319,8 +330,8 @@ impl App {
         );
         sphere.visible = true;
 
-        // The terrain vertices already use world-space positions, so no object scaling is
-        // needed.  Keeping its transform at identity preserves its 0.0..0.25 m height range.
+        // Terrain vertices already contain their world-space valley positions and heights,
+        // so an identity object transform keeps height queries and rendered ground aligned.
         let terrain = SceneObject {
             transform: SceneTransform::identity(),
             parts: vec![ScenePart { transform: SceneTransform::identity(), material_id: terrain_mat_id, mesh_id: terrain_mesh_id }],
@@ -346,6 +357,10 @@ impl App {
         // thousands of ordinary SceneObjects.  It samples the same terrain settings used
         // above, so every clump starts at the surface height.
         self.grass_renderer = Some(GrassRenderer::new(vulkan_base, terrain_settings)?);
+
+        // The sky has no mesh or world position.  Its panorama joins the same batched
+        // texture upload as scene materials, while its tiny draw uses a dedicated pipeline.
+        self.sky_renderer = Some(SkyRenderer::new(vulkan_base, &mut self.material_manager)?);
 
         // All scene materials have now recorded their texture uploads.  Submit
         // them together once, before the first frame can sample the images.
@@ -446,6 +461,10 @@ impl Drop for App {
             // Rust drops fields automatically, but Vulkan handles need this
             // explicit dependency order: passes -> managers -> renderer -> device.
             self.render_graph.cleanup(&vb.device);
+
+            if let Some(mut sky) = self.sky_renderer.take() {
+                sky.cleanup(&vb.device);
+            }
 
             if let Some(mut grass) = self.grass_renderer.take() {
                 grass.cleanup(&vb.device, vb.allocator.as_ref().unwrap());

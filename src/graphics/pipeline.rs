@@ -39,6 +39,10 @@ pub struct Pipeline {
     pub depth_write: bool,
     /// Opaque pipelines avoid the blending read/modify/write path.
     pub alpha_blending: bool,
+    /// Background passes do not need the depth buffer at all.
+    depth_test: bool,
+    /// Debug wireframe applies to scene geometry, but should not turn the sky into one triangle.
+    honor_wireframe: bool,
 }
 
 impl Pipeline {
@@ -57,7 +61,7 @@ impl Pipeline {
         set_layouts: &[vk::DescriptorSetLayout],
         depth_write: bool
     ) -> Result<Self, Box<dyn Error>> {
-        Self::new_with_blending(device, set_layouts, depth_write, true)
+        Self::new_with_options(device, set_layouts, depth_write, true, true, true)
     }
 
     /// Creates a pipeline for geometry whose fragment shader always writes alpha one.
@@ -67,14 +71,24 @@ impl Pipeline {
         set_layouts: &[vk::DescriptorSetLayout],
         depth_write: bool,
     ) -> Result<Self, Box<dyn Error>> {
-        Self::new_with_blending(device, set_layouts, depth_write, false)
+        Self::new_with_options(device, set_layouts, depth_write, false, true, true)
     }
 
-    fn new_with_blending(
+    /// Creates an opaque, depth-free pipeline for a fullscreen background pass.
+    pub fn new_background(
+        device: &ash::Device,
+        set_layouts: &[vk::DescriptorSetLayout],
+    ) -> Result<Self, Box<dyn Error>> {
+        Self::new_with_options(device, set_layouts, false, false, false, false)
+    }
+
+    fn new_with_options(
         device: &ash::Device,
         set_layouts: &[vk::DescriptorSetLayout],
         depth_write: bool,
         alpha_blending: bool,
+        depth_test: bool,
+        honor_wireframe: bool,
     ) -> Result<Self, Box<dyn Error>> {
         // 1 - Define a PushConstantRange covering 2 4×4 MVP matrices (16 floats = 64 bytes) for MV and MVP, a
         // light position vector (3 floats = 12 bytes) and a light intensity float (1 float = 4 bytes)
@@ -105,6 +119,8 @@ impl Pipeline {
             vk_pipeline: vk::Pipeline::null(),
             depth_write,
             alpha_blending,
+            depth_test,
+            honor_wireframe,
         })
     }
 
@@ -200,7 +216,7 @@ impl Pipeline {
         let rasterizer = vk::PipelineRasterizationStateCreateInfo {
             depth_clamp_enable: vk::FALSE,
             rasterizer_discard_enable: vk::FALSE,
-            polygon_mode: if engine_settings.wireframe {
+            polygon_mode: if self.honor_wireframe && engine_settings.wireframe {
                 vk::PolygonMode::LINE
             } else {
                 vk::PolygonMode::FILL
@@ -245,7 +261,7 @@ impl Pipeline {
             .collect();
 
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo {
-            depth_test_enable:     vk::TRUE,
+            depth_test_enable:     if self.depth_test { vk::TRUE } else { vk::FALSE },
             depth_write_enable:    if self.depth_write { vk::TRUE } else { vk::FALSE },
             depth_compare_op:      vk::CompareOp::LESS,
             // stencil is off for now—

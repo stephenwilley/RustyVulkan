@@ -12,6 +12,7 @@ use crate::app::app::{App, WorldControls, MAX_LIGHTS};
 use crate::app::scene::Scene;
 use crate::graphics::camera::Camera;
 use crate::graphics::grass::GrassRenderer;
+use crate::graphics::sky::SkyRenderer;
 use crate::vulkan::base::{GlobalUbo, GpuLight, GpuDirLight, GpuPassTimings};
 use cgmath::{Matrix4, Vector4};
 use crate::graphics::materialmanager::MaterialManager;
@@ -78,6 +79,8 @@ pub struct RenderCtx<'a> {
     pub mesh_manager: &'a MeshManager,
     /// Optional specialised renderer for dense instanced vegetation.
     pub grass_renderer: Option<&'a mut GrassRenderer>,
+    /// Optional fullscreen panorama background.
+    pub sky_renderer: Option<&'a mut SkyRenderer>,
     pub vulkan_base: &'a mut VulkanBase,
     /// Elapsed application time, used by procedural animation such as wind.
     pub time_seconds: f32,
@@ -210,6 +213,9 @@ impl RenderGraph {
             app.material_manager.recreate_pipelines(vb)?;
             if let Some(grass) = app.grass_renderer.as_mut() {
                 grass.recreate_pipeline(vb)?;
+            }
+            if let Some(sky) = app.sky_renderer.as_mut() {
+                sky.recreate_pipeline(vb)?;
             }
             if let Some(renderer) = app.imgui_renderer.as_mut() {
                 renderer.rebuild_pipeline(vb)?;
@@ -399,6 +405,7 @@ impl RenderGraph {
                 material_manager: &app.material_manager,
                 mesh_manager: &app.mesh_manager,
                 grass_renderer: app.grass_renderer.as_mut(),
+                sky_renderer: app.sky_renderer.as_mut(),
                 vulkan_base: vb,
                 time_seconds,
                 ui_ctx,

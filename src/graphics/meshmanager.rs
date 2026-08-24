@@ -13,6 +13,7 @@
 use crate::vulkan::base::VulkanBase;
 use crate::graphics::mesh::LoadedMesh;
 use crate::graphics::mesh::Mesh;
+use crate::app::scene::SceneObject;
 use std::error::Error;
 use vk_mem::Allocator;
 
@@ -100,6 +101,22 @@ impl MeshManager {
         )?;
         self.meshes.push(loaded);
         Ok(self.meshes.len() - 1)
+    }
+
+    /// Returns the lowest object-local Y reached by all of an object's transformed parts.
+    ///
+    /// Imported models can put geometry above or below their nominal origin.  Retained mesh
+    /// bounds let placement use the actual geometry after the large CPU vertex arrays are gone.
+    pub fn object_local_min_y(&self, object: &SceneObject) -> Option<f32> {
+        object
+            .parts
+            .iter()
+            .filter_map(|part| {
+                self.meshes
+                    .get(part.mesh_id)
+                    .map(|mesh| mesh.bounds.transformed_min_y(part.transform.model_matrix()))
+            })
+            .reduce(f32::min)
     }
 
     /// Cleans up all meshes.

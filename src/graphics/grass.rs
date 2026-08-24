@@ -21,22 +21,27 @@ use crate::graphics::terrain::TerrainSettings;
 use crate::vulkan::base::VulkanBase;
 use crate::vulkan::main_pass::compute_push_constant_per_obj;
 
-const GRASS_FIELD_SIZE: f32 = 80.0;
-// 896² grid roots over 80² m gives about 125 roots per square metre. Two density
-// layers turn those into roughly 250 individual blades per square metre before clearings.
-const GRASS_GRID_SIDE: usize = 896;
+/// Vegetation reaches almost to the valley crest, while leaving the final terrain
+/// rollover bare enough that the end of the mesh cannot be mistaken for a grass edge.
+const GRASS_FIELD_SIZE: f32 = 160.0;
+// The grid retains the original 125 roots per square metre.  Outer roots are thinned
+// deterministically below, keeping the centre dense without storing four times as much data.
+const GRASS_GRID_SIDE: usize = 1792;
 /// Two offset samples per grid cell preserve coverage after halving blade dimensions.
 const GRASS_DENSITY_LAYERS: usize = 2;
 /// Chunking lets us avoid submitting vegetation outside the camera's nearby view.
 const GRASS_CHUNK_SIZE: f32 = 5.0;
 const GRASS_CHUNKS_PER_SIDE: usize = (GRASS_FIELD_SIZE / GRASS_CHUNK_SIZE) as usize;
+/// Grass is fully dense around the playable scene, then gradually thins on distant slopes.
+const FULL_DENSITY_RADIUS: f32 = 40.0;
+const OUTER_DENSITY: f32 = 0.30;
 const NEAR_GRASS_DISTANCE: f32 = 24.0;
-const MID_GRASS_DISTANCE: f32 = 48.0;
-const REED_DISTANCE: f32 = 32.0;
+const MID_GRASS_DISTANCE: f32 = 100.0;
+const REED_DISTANCE: f32 = 64.0;
 const MAX_BLADE_WIDTH: f32 = 0.1;
 const WIND_MAP_SIZE: u32 = 128;
 /// Sparse groups of reeds break up the otherwise even lawn-like silhouette.
-const TALL_TUFT_COUNT: usize = 320;
+const TALL_TUFT_COUNT: usize = 1_280;
 const TALL_BLADES_PER_TUFT: usize = 9;
 
 /// One vertex in the small, repeated grass-ribbon mesh.
@@ -633,7 +638,7 @@ impl GrassRenderer {
                 vb.max_draw_indirect_count,
             );
 
-            // Mid-distance grass uses one ribbon segment and one quarter of the instances.
+            // Mid-distance grass uses one ribbon segment and half of the instances.
             device.cmd_bind_pipeline(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -1090,8 +1095,10 @@ fn build_reed_indices() -> Vec<u32> {
 fn build_chunked_grass_instances(terrain: TerrainSettings) -> ChunkedGrassInstances {
     let spacing = GRASS_FIELD_SIZE / GRASS_GRID_SIDE as f32;
     let half_size = GRASS_FIELD_SIZE * 0.5;
-    let mut instances =
-        Vec::with_capacity(GRASS_GRID_SIDE * GRASS_GRID_SIDE * GRASS_DENSITY_LAYERS);
+    // The central field keeps every candidate while the much larger outer area is
+    // thinned, so reserving the complete candidate count would waste considerable RAM.
+    let candidate_count = GRASS_GRID_SIDE * GRASS_GRID_SIDE * GRASS_DENSITY_LAYERS;
+    let mut instances = Vec::with_capacity(candidate_count * 3 / 4);
     let mut chunks = Vec::with_capacity(GRASS_CHUNKS_PER_SIDE * GRASS_CHUNKS_PER_SIDE);
     let cells_per_chunk = GRASS_GRID_SIDE / GRASS_CHUNKS_PER_SIDE;
     let chunk_radius = GRASS_CHUNK_SIZE * std::f32::consts::FRAC_1_SQRT_2 + 0.8;
@@ -1122,6 +1129,12 @@ fn build_chunked_grass_instances(terrain: TerrainSettings) -> ChunkedGrassInstan
                         let z =
                             -2.0 - half_size + (row as f32 + cell_offset_z) * spacing + jitter_z;
 
+                        // Distant blades occupy fewer candidate roots.  The decision is
+                        // stable for each blade, so no grass pops in or moves between frames.
+                        if hash01(id, 31) > grass_density_at(x, z) {
+                            continue;
+                        }
+
                         if is_clearing(x, z) {
                             continue;
                         }
@@ -1140,8 +1153,10 @@ fn build_chunked_grass_instances(terrain: TerrainSettings) -> ChunkedGrassInstan
                                 hash01(id, 6) * std::f32::consts::TAU,
                             ),
                         };
-                        // The mid LOD uses a stable random quarter, avoiding visible rows.
-                        if hash01(id, 30) < 0.25 {
+                        // The mid LOD uses a stable random half, avoiding visible rows. Half
+                        // density preserves the field's colour while its two-triangle ribbon
+                        // remains much cheaper than the near blade's eight triangles.
+                        if hash01(id, 30) < 0.50 {
                             mid_subset.push(instance);
                         } else {
                             remaining.push(instance);
@@ -1177,6 +1192,19 @@ fn build_chunked_grass_instances(terrain: TerrainSettings) -> ChunkedGrassInstan
     }
 
     ChunkedGrassInstances { instances, chunks }
+}
+
+/// Returns the fraction of candidate grass roots retained at a world position.
+fn grass_density_at(x: f32, z: f32) -> f32 {
+    // The field is centred two metres behind the origin to match its existing placement.
+    // A square radius makes density reach the same value along all four field boundaries.
+    let field_radius = x.abs().max((z + 2.0).abs());
+    let half_size = GRASS_FIELD_SIZE * 0.5;
+    let amount = ((field_radius - FULL_DENSITY_RADIUS)
+        / (half_size - FULL_DENSITY_RADIUS))
+        .clamp(0.0, 1.0);
+    let smooth_amount = amount * amount * (3.0 - 2.0 * amount);
+    1.0 - (1.0 - OUTER_DENSITY) * smooth_amount
 }
 
 /// Places a few clusters of simple flower reeds.  Every stalk in a cluster shares its
@@ -1494,7 +1522,7 @@ mod tests {
         GRASS_CHUNKS_PER_SIDE, GRASS_DENSITY_LAYERS, GRASS_GRID_SIDE, TALL_BLADES_PER_TUFT,
         build_blade_indices_for_segments, build_blade_vertices, build_chunked_grass_instances,
         build_reed_indices, build_reed_instances, build_reed_vertices, build_wind_map_pixels,
-        chunk_intersects_frustum,
+        chunk_intersects_frustum, grass_density_at,
     };
     use crate::graphics::terrain::TerrainSettings;
 
@@ -1506,10 +1534,9 @@ mod tests {
 
         assert_eq!(vertices.len(), 10);
         assert_eq!(indices.len(), 24);
-        assert!(
-            chunked.instances.len()
-                > GRASS_GRID_SIDE * GRASS_GRID_SIDE * GRASS_DENSITY_LAYERS * 9 / 10
-        );
+        let candidate_count = GRASS_GRID_SIDE * GRASS_GRID_SIDE * GRASS_DENSITY_LAYERS;
+        assert!(chunked.instances.len() > candidate_count / 5);
+        assert!(chunked.instances.len() < candidate_count * 4 / 5);
         assert_eq!(
             chunked.chunks.len(),
             GRASS_CHUNKS_PER_SIDE * GRASS_CHUNKS_PER_SIDE
@@ -1532,12 +1559,19 @@ mod tests {
                 .iter()
                 .any(|instance| instance.position_height[3] > 0.35)
         );
+        assert!(chunked
+            .instances
+            .iter()
+            .any(|instance| instance.position_height[0].abs() > 70.0));
+        assert_eq!(grass_density_at(0.0, -2.0), 1.0);
+        assert_eq!(grass_density_at(80.0, -2.0), super::OUTER_DENSITY);
         let mid_count: usize = chunked
             .chunks
             .iter()
             .map(|chunk| chunk.mid_grass.count as usize)
             .sum();
-        assert!(mid_count < chunked.instances.len() / 3);
+        assert!(mid_count > chunked.instances.len() * 2 / 5);
+        assert!(mid_count < chunked.instances.len() * 3 / 5);
     }
 
     #[test]

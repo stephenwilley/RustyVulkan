@@ -16,8 +16,14 @@ pub struct TerrainSettings {
     pub world_size: f32,
     /// Number of quads along each edge.  There is one more vertex than quad.
     pub cells_per_side: usize,
-    /// The noise height is always in `0.0..=max_height`.
+    /// Maximum height of the small-scale noise on the valley floor.
     pub max_height: f32,
+    /// Radius of the relatively open valley floor before its enclosing hills begin.
+    pub valley_floor_radius: f32,
+    /// Radius at which the enclosing hills reach their maximum height.
+    pub valley_crest_radius: f32,
+    /// Height added by the hills at their crest.
+    pub valley_wall_height: f32,
     /// Centre of the deliberately level area beneath the hut, in X/Z space.
     pub pad_centre: [f32; 2],
     /// Radius of the completely flat part of the pad.
@@ -31,11 +37,15 @@ pub struct TerrainSettings {
 impl Default for TerrainSettings {
     fn default() -> Self {
         Self {
-            // One-metre cells keep this first terrain inexpensive while still
-            // producing smooth lighting over the scene's visible area.
-            world_size: 100.0,
-            cells_per_side: 100,
-            max_height: 0.25,
+            // The outer half of this larger patch forms the distant valley walls.
+            // One-metre cells are still sufficient for their broad, smooth slopes.
+            world_size: 200.0,
+            cells_per_side: 200,
+            max_height: 1.0,
+            valley_floor_radius: 36.0,
+            valley_crest_radius: 82.0,
+            // Three metres of boundary rise plus at most one metre of local noise.
+            valley_wall_height: 3.0,
             pad_centre: [0.0, -2.0],
             pad_radius: 2.5,
             pad_falloff: 2.0,
@@ -70,6 +80,22 @@ pub fn build_heightfield(settings: TerrainSettings) -> Mesh {
     assert!(
         settings.max_height >= 0.0,
         "terrain height cannot be negative"
+    );
+    assert!(
+        settings.valley_floor_radius >= 0.0,
+        "valley floor radius cannot be negative"
+    );
+    assert!(
+        settings.valley_crest_radius > settings.valley_floor_radius,
+        "valley crest must lie outside the valley floor"
+    );
+    assert!(
+        settings.valley_crest_radius < settings.world_size * 0.5,
+        "valley crest must leave room for the outer slope"
+    );
+    assert!(
+        settings.valley_wall_height >= 0.0,
+        "valley wall height cannot be negative"
     );
     assert!(
         settings.pad_radius >= 0.0,
@@ -152,14 +178,16 @@ pub fn build_heightfield(settings: TerrainSettings) -> Mesh {
     mesh
 }
 
-/// Returns a deterministic height in `0.0..=max_height`, including the hut pad.
+/// Returns the deterministic noise and valley-wall height, including the hut pad.
 fn terrain_height(x: f32, z: f32, settings: TerrainSettings) -> f32 {
-    // Three smooth layers create broad landforms with a little local variation.
-    // Their weights add to one, so the final height remains within the requested range.
-    let noise = 0.68 * value_noise(x, z, 0.035, settings.seed)
-        + 0.24 * value_noise(x, z, 0.09, settings.seed.wrapping_add(1))
-        + 0.08 * value_noise(x, z, 0.21, settings.seed.wrapping_add(2));
-    let noisy_height = settings.max_height * noise;
+    let natural_height = natural_terrain_height(x, z, settings);
+    // Flatten to the height the unmodified terrain would have at the hut centre.  This
+    // creates a building pad without digging the old, conspicuous zero-height bowl.
+    let pad_height = natural_terrain_height(
+        settings.pad_centre[0],
+        settings.pad_centre[1],
+        settings,
+    );
 
     let dx = x - settings.pad_centre[0];
     let dz = z - settings.pad_centre[1];
@@ -170,9 +198,38 @@ fn terrain_height(x: f32, z: f32, settings: TerrainSettings) -> f32 {
         distance_from_pad,
     );
 
-    // `0.0` inside the pad keeps the hut's already-grounded base visible.  The
-    // smoothstep avoids a hard circular edge where the procedural ground resumes.
-    noisy_height * blend_to_terrain
+    lerp(pad_height, natural_height, blend_to_terrain)
+}
+
+/// Combines local noise and the distant valley wall before any building-pad flattening.
+fn natural_terrain_height(x: f32, z: f32, settings: TerrainSettings) -> f32 {
+    // Three smooth layers create broad landforms with a little local variation.
+    // Their weights add to one, so the final height remains within the requested range.
+    let noise = 0.68 * value_noise(x, z, 0.035, settings.seed)
+        + 0.24 * value_noise(x, z, 0.09, settings.seed.wrapping_add(1))
+        + 0.08 * value_noise(x, z, 0.21, settings.seed.wrapping_add(2));
+    let noisy_height = settings.max_height * noise;
+
+    // A fourth-power radius produces a rounded square: it follows the square mesh's
+    // boundary more closely than a circle, without introducing sharp diagonal corners.
+    let boundary_radius = (x.powi(4) + z.powi(4)).sqrt().sqrt();
+    let half_size = settings.world_size * 0.5;
+    let climb = smoothstep(
+        settings.valley_floor_radius,
+        settings.valley_crest_radius,
+        boundary_radius,
+    );
+    let outer_slope = 1.0
+        - smoothstep(
+            settings.valley_crest_radius,
+            half_size,
+            boundary_radius,
+        );
+    // Multiplying two smooth curves gives a rounded crest: the hill rises away from
+    // the playable centre, then falls back toward the base terrain before the mesh ends.
+    let valley_wall = settings.valley_wall_height * climb * outer_slope;
+
+    noisy_height + valley_wall
 }
 
 /// Smooth, grid-based value noise.  Unlike random noise, neighbouring samples blend.
@@ -234,23 +291,48 @@ mod tests {
     use super::{build_heightfield, TerrainSettings};
 
     #[test]
-    fn terrain_stays_low_and_keeps_the_hut_pad_level() {
+    fn terrain_stays_within_its_height_range_and_keeps_the_hut_pad_level() {
         let settings = TerrainSettings::default();
         let mesh = build_heightfield(settings);
 
-        assert_eq!(mesh.vertices.len(), 101 * 101);
-        assert_eq!(mesh.indices.len(), 100 * 100 * 6);
+        assert_eq!(mesh.vertices.len(), 201 * 201);
+        assert_eq!(mesh.indices.len(), 200 * 200 * 6);
         assert!(mesh
             .vertices
             .iter()
-            .all(|vertex| (0.0..=settings.max_height).contains(&vertex.pos[1])));
+            .all(|vertex| {
+                (0.0..=settings.max_height + settings.valley_wall_height)
+                    .contains(&vertex.pos[1])
+            }));
 
         let pad_centre = mesh
             .vertices
             .iter()
             .find(|vertex| vertex.pos[0] == 0.0 && vertex.pos[2] == -2.0)
             .expect("the one-metre grid contains the pad centre");
-        assert_eq!(pad_centre.pos[1], 0.0);
-        assert_eq!(settings.height_at(0.0, -2.0), 0.0);
+        let pad_height = settings.height_at(0.0, -2.0);
+        assert_eq!(pad_centre.pos[1], pad_height);
+        assert!(pad_height > 0.0);
+        // Every point inside the pad radius lands on the same natural centre height.
+        assert_eq!(settings.height_at(1.0, -2.0), pad_height);
+    }
+
+    #[test]
+    fn valley_wall_rises_to_a_crest_then_rounds_down_at_the_boundary() {
+        let settings = TerrainSettings {
+            // Removing noise and moving the pad away isolates the valley profile.
+            max_height: 0.0,
+            pad_centre: [1_000.0, 1_000.0],
+            ..TerrainSettings::default()
+        };
+
+        assert_eq!(settings.height_at(settings.valley_floor_radius, 0.0), 0.0);
+        assert!(settings.height_at(60.0, 0.0) > 0.0);
+        assert_eq!(
+            settings.height_at(settings.valley_crest_radius, 0.0),
+            settings.valley_wall_height
+        );
+        assert!(settings.height_at(90.0, 0.0) < settings.valley_wall_height);
+        assert_eq!(settings.height_at(settings.world_size * 0.5, 0.0), 0.0);
     }
 }

@@ -93,6 +93,19 @@ impl MaterialManager {
         }
     }
 
+    /// Queues a texture for a specialised renderer while keeping the cache as its owner.
+    ///
+    /// The copied Vulkan handles remain valid until [`Self::cleanup`].  This lets renderers
+    /// such as the sky share the material upload batch without owning a duplicate image.
+    pub fn load_shared_texture(
+        &mut self,
+        vb: &VulkanBase,
+        image_path: &str,
+    ) -> Result<(vk::ImageView, vk::Sampler), Box<dyn Error>> {
+        let image_view = self.texture_cache.load(vb, image_path)?;
+        Ok((image_view, self.texture_cache.sampler()))
+    }
+
     /// Submit all texture uploads recorded while materials were created.
     /// This is called once after scene construction, before any material is drawn.
     pub fn finish_loading(&mut self, vb: &VulkanBase) -> Result<(), Box<dyn Error>> {

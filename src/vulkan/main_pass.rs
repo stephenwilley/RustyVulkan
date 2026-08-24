@@ -114,6 +114,12 @@ impl RenderPass for MainPass {
         unsafe {
             device.cmd_begin_rendering(cmd, &rendering_info);
 
+            // The sky does not touch depth.  Drawing it first fills only the background;
+            // all subsequent scene geometry naturally paints over the fullscreen triangle.
+            if let Some(sky) = ctx.sky_renderer.as_deref() {
+                sky.draw(device, cmd, ctx.camera);
+            }
+
             let mut current_pipeline_id = usize::MAX;
             for obj in &ctx.scene.objects {
                 if !obj.visible { continue; }

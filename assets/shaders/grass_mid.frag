@@ -45,7 +45,9 @@ void main() {
 
     vec3 root_green = vec3(0.035, 0.16, 0.015);
     vec3 tip_green = vec3(0.20, 0.52, 0.045);
-    vec3 albedo = mix(root_green, tip_green, vHeightFraction);
+    // Match the near shader's vertical colour curve so an LOD change alters geometry,
+    // not the average material colour of the whole chunk.
+    vec3 albedo = mix(root_green, tip_green, smoothstep(0.0, 1.0, vHeightFraction));
     albedo *= mix(0.78, 1.18, vTint);
 
     float diffuse = max(dot(normal, normalize(-ubo.sun.direction)), 0.0);

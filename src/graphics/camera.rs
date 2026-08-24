@@ -30,7 +30,7 @@ pub struct Camera {
 impl Camera {
     /// Creates a new camera with a default perspective and view.
     ///
-    /// - Default projection: `fov=45°`, `aspect=16:9`, `near=0.5`, `far=5.0`.
+    /// - Default projection: `fov=45°`, `aspect=16:9`, `near=0.5`, `far=220.0`.
     /// - Projection is Vulkan-corrected (Y flipped, depth range 0..1).
     /// - Default view looks toward the origin from `(-2, 3, 8)`.
     ///
@@ -47,7 +47,9 @@ impl Camera {
             fov_deg:    45.0,
             aspect:     16.0/9.0,
             near:       0.5,
-            far:        75.0,
+            // The terrain is 200 m wide.  This keeps its far edge inside the view
+            // even when the camera is standing away from the centre of the valley.
+            far:        220.0,
         };
         cam.rebuild_projection();
         cam.set_view_yxz(cam.position, cam.yaw, cam.pitch, cam.roll);

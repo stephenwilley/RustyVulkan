@@ -22,3 +22,4 @@ pub mod assimp_loader;
 pub mod import;
 pub mod camera;
 pub mod shadow_math;
+pub mod sky;

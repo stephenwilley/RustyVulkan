@@ -14,6 +14,7 @@ use ash::Device;
 use vk_mem::{Alloc, Allocator, Allocation, MemoryUsage};
 use std::error::Error;
 use bytemuck::{Pod, Zeroable, offset_of};
+use cgmath::{Matrix4, Vector4};
 
 
 /// A single vertex: 3D position + normal, color, uv, tangent, bitangent.
@@ -183,6 +184,45 @@ impl IndexBuffer {
 pub struct Mesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
+}
+
+/// Axis-aligned limits retained after CPU vertices have been uploaded and discarded.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeshBounds {
+    pub min: [f32; 3],
+    pub max: [f32; 3],
+}
+
+impl MeshBounds {
+    fn from_vertices(vertices: &[Vertex]) -> Option<Self> {
+        let first = vertices.first()?.pos;
+        let mut bounds = Self {
+            min: first,
+            max: first,
+        };
+        for vertex in &vertices[1..] {
+            for axis in 0..3 {
+                bounds.min[axis] = bounds.min[axis].min(vertex.pos[axis]);
+                bounds.max[axis] = bounds.max[axis].max(vertex.pos[axis]);
+            }
+        }
+        Some(bounds)
+    }
+
+    /// Finds the lowest Y reached by this box after a part-local transform.
+    /// Testing all eight corners also handles rotated imported parts correctly.
+    pub fn transformed_min_y(&self, transform: Matrix4<f32>) -> f32 {
+        let mut minimum_y = f32::INFINITY;
+        for x in [self.min[0], self.max[0]] {
+            for y in [self.min[1], self.max[1]] {
+                for z in [self.min[2], self.max[2]] {
+                    let point = transform * Vector4::new(x, y, z, 1.0);
+                    minimum_y = minimum_y.min(point.y);
+                }
+            }
+        }
+        minimum_y
+    }
 }
 
 impl Mesh {
@@ -457,6 +497,8 @@ pub struct LoadedMesh {
     pub name: String,
     pub v_buffer: VertexBuffer,
     pub i_buffer: IndexBuffer,
+    /// CPU-calculated bounds used for placement and future visibility tests.
+    pub bounds: MeshBounds,
 }
 
 impl LoadedMesh {
@@ -474,11 +516,12 @@ impl LoadedMesh {
     ) -> Result<Self, Box<dyn Error>> {
         let verts = &mesh.vertices;
         let indices = &mesh.indices;
+        let bounds = MeshBounds::from_vertices(verts).ok_or("cannot upload an empty mesh")?;
 
         let vb = VertexBuffer::new(allocator, verts)?;
         let ib = IndexBuffer::new(allocator, indices)?;
 
-        Ok(LoadedMesh { name, v_buffer: vb, i_buffer: ib })
+        Ok(LoadedMesh { name, v_buffer: vb, i_buffer: ib, bounds })
     }
 
     /// Creates a unit plane mesh and uploads it to the GPU.
@@ -528,5 +571,23 @@ impl LoadedMesh {
     pub fn cleanup(&mut self, allocator: &Allocator) {
         self.v_buffer.cleanup(allocator);
         self.i_buffer.cleanup(allocator);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Mesh, MeshBounds};
+    use cgmath::{Matrix4, Vector3};
+
+    #[test]
+    fn retained_bounds_find_the_transformed_bottom_of_a_mesh() {
+        let cube = Mesh::cube();
+        let bounds = MeshBounds::from_vertices(&cube.vertices).unwrap();
+        assert_eq!(bounds.min, [-1.0, -1.0, -1.0]);
+        assert_eq!(bounds.max, [1.0, 1.0, 1.0]);
+
+        let transform = Matrix4::from_translation(Vector3::new(0.0, 5.0, 0.0))
+            * Matrix4::from_scale(0.5);
+        assert_eq!(bounds.transformed_min_y(transform), 4.5);
     }
 }

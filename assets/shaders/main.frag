@@ -9,6 +9,7 @@
 #version 450
 // Keep in sync with Rust `MAX_LIGHTS`
 #define MAX_LIGHTS 8
+#define SHADOW_CASCADE_COUNT 4
 
 layout(push_constant) uniform Push { mat4 mvp; mat4 mv; } pc;
 
@@ -28,12 +29,13 @@ struct DirLight {
 
 layout(std140, set = 0, binding = 0) uniform GlobalUBO {
     DirLight sun;                                  // directional light first
-    mat4     light_vp;                             // light VP
+    mat4     light_vp[SHADOW_CASCADE_COUNT];
+    vec4     cascade_splits;
     Light    lights[MAX_LIGHTS];                   // array of point lights
     uint     light_count; uvec3 _pad0;             // count + pad
 } ubo;
 
-layout(set = 0, binding = 1) uniform sampler2D shadowMap;
+layout(set = 0, binding = 1) uniform sampler2DArray shadowMap;
 layout(set = 1, binding = 0) uniform sampler2D diffuseMap;
 layout(set = 1, binding = 1) uniform sampler2D normalMap;
 
@@ -46,8 +48,12 @@ layout(location = 4) in vec3 vFragPosView;
 layout(location = 0) out vec4 outColor;
 
 float shadow_factor(vec3 fragPosView) {
-    // Transform from VIEW space directly to LIGHT clip using ubo.light_vp (pre-multiplied with inverse(view))
-    vec4 lightPos = ubo.light_vp * vec4(fragPosView, 1.0);
+    float viewDepth = -fragPosView.z;
+    if (viewDepth > ubo.cascade_splits.w) return 1.0;
+    int cascade = viewDepth > ubo.cascade_splits.z ? 3
+                : viewDepth > ubo.cascade_splits.y ? 2
+                : viewDepth > ubo.cascade_splits.x ? 1 : 0;
+    vec4 lightPos = ubo.light_vp[cascade] * vec4(fragPosView, 1.0);
 
     // Perspective divide to NDC
     if (lightPos.w <= 0.0) {
@@ -81,14 +87,14 @@ float shadow_factor(vec3 fragPosView) {
         vec2( 0.62,-0.41),
         vec2( 0.15, 0.68)
     );
-    ivec2 ts = textureSize(shadowMap, 0);
-    vec2 texel = 1.0 / vec2(ts);
+    ivec3 ts = textureSize(shadowMap, 0);
+    vec2 texel = 1.0 / vec2(ts.xy);
     float radius = 1.5; // in texels; tweak per taste
 
     float sum = 0.0;
     for (int i = 0; i < 6; ++i) {
         vec2 uvOff = uv + OFFS[i] * texel * radius;
-        float sm = texture(shadowMap, uvOff).r;
+        float sm = texture(shadowMap, vec3(uvOff, float(cascade))).r;
         sum += (depth - bias <= sm) ? 1.0 : 0.4;
     }
     return sum / 6.0;

@@ -1,19 +1,12 @@
 //! --------------------------------------------------------------------------------------
 //! Shadow Pass (shadow_pass.rs)
 //!
-//! Minimal skeleton pass for directional light shadow mapping.
-//! For now it only:
-//!   - Requests a depth-only shadow attachment (1024x1024, D32_SFLOAT, 1x)
-//!   - Begins depth-only dynamic rendering and clears to 1.0, then ends
-//!   - Does not render any geometry yet
-//!
-//! This lets the render graph create and manage the shadow map resource and
-//! scheduling without changing on-screen visuals.
+//! Renders the scene into four camera-depth slices of a directional shadow map.
 //! --------------------------------------------------------------------------------------
 
 use crate::graphics::mesh::Vertex;
 use crate::graphics::shaders::{ShaderModule, ShaderStageInfo};
-use crate::graphics::shadow_math::compute_tight_light_mats;
+use crate::graphics::shadow_math::compute_shadow_cascades;
 use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use ash::vk;
@@ -199,8 +192,6 @@ impl ShadowPass {
         Ok(())
     }
 
-    // Removed old compute_light_vp; using shared shadow_math instead.
-
     fn flatten_mat4(m: Matrix4<f32>) -> Vec<u8> {
         // Match main pass packing: write in column-major order explicitly.
         let mut bytes = Vec::with_capacity(16 * 4);
@@ -237,27 +228,7 @@ impl RenderPass for ShadowPass {
             },
         };
 
-        let depth_attachment_info = vk::RenderingAttachmentInfo::default()
-            .image_view(shadow_att.view)
-            .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
-            .store_op(vk::AttachmentStoreOp::STORE)
-            .clear_value(clear_depth);
-
-        let rendering_info = vk::RenderingInfo::default()
-            .render_area(vk::Rect2D {
-                offset: vk::Offset2D { x: 0, y: 0 },
-                extent: vk::Extent2D {
-                    width: res,
-                    height: res,
-                },
-            })
-            .layer_count(1)
-            .depth_attachment(&depth_attachment_info);
-
         unsafe {
-            device.cmd_begin_rendering(cmd, &rendering_info);
-            // Bind pipeline
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
 
             // Dynamic viewport/scissor to match current resolution
@@ -279,36 +250,46 @@ impl RenderPass for ShadowPass {
             device.cmd_set_viewport(cmd, 0, &[viewport]);
             device.cmd_set_scissor(cmd, 0, &[scissor]);
 
-            // Draw all scene meshes with light MVP push constants
-            let mats = compute_tight_light_mats(
+            let cascades = compute_shadow_cascades(
                 ctx.camera,
                 ctx.world_controls.sun_direction,
                 res,
                 ctx.vulkan_base.engine_settings.shadow_distance,
             );
-            let light_vp = mats.world_to_light_clip;
-            for obj in &ctx.scene.objects {
-                if !obj.visible {
-                    continue;
-                }
-                let obj_model = obj.transform.model_matrix();
-                for part in &obj.parts {
-                    // Build model matrix and push mvp
-                    let model = obj_model * part.transform.model_matrix();
-                    let mvp = light_vp * model;
-                    let push = Self::flatten_mat4(mvp);
-                    device.cmd_push_constants(
-                        cmd,
-                        self.pipeline_layout,
-                        vk::ShaderStageFlags::VERTEX,
-                        0,
-                        &push,
-                    );
 
-                    ctx.mesh_manager.meshes[part.mesh_id].record(device, cmd);
+            for (cascade_index, cascade) in cascades.iter().enumerate() {
+                let depth_attachment = vk::RenderingAttachmentInfo::default()
+                    .image_view(shadow_att.layer_views[cascade_index])
+                    .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                    .load_op(vk::AttachmentLoadOp::CLEAR)
+                    .store_op(vk::AttachmentStoreOp::STORE)
+                    .clear_value(clear_depth);
+                let rendering_info = vk::RenderingInfo::default()
+                    .render_area(scissor)
+                    .layer_count(1)
+                    .depth_attachment(&depth_attachment);
+                device.cmd_begin_rendering(cmd, &rendering_info);
+
+                for object in &ctx.scene.objects {
+                    if !object.visible {
+                        continue;
+                    }
+                    let object_model = object.transform.model_matrix();
+                    for part in &object.parts {
+                        let model = object_model * part.transform.model_matrix();
+                        let push = Self::flatten_mat4(cascade.world_to_light_clip * model);
+                        device.cmd_push_constants(
+                            cmd,
+                            self.pipeline_layout,
+                            vk::ShaderStageFlags::VERTEX,
+                            0,
+                            &push,
+                        );
+                        ctx.mesh_manager.meshes[part.mesh_id].record(device, cmd);
+                    }
                 }
+                device.cmd_end_rendering(cmd);
             }
-            device.cmd_end_rendering(cmd);
         }
 
         Ok(())

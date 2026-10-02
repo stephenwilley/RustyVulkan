@@ -72,7 +72,11 @@ impl Default for Transform {
     }
 }
 
-/// A drawable sub-part of a SceneObject (e.g., a glTF primitive)
+/// A drawable sub-part of a SceneObject (e.g., a glTF primitive).
+///
+/// Parts are cheap handles plus a transform, so cloning them shares the manager-owned
+/// GPU mesh and material rather than copying either resource.
+#[derive(Clone, Copy)]
 pub struct ScenePart {
     /// Transform in the object's local/model space
     pub transform: Transform,
@@ -81,6 +85,7 @@ pub struct ScenePart {
 }
 
 /// One thing in your world that you can draw. Holds a world-space transform and N parts.
+#[derive(Clone)]
 pub struct SceneObject {
     /// World/scene-space transform for the object root
     pub transform: Transform,

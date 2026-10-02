@@ -418,7 +418,8 @@ impl VulkanBase {
             wireframe: false,
             show_ui: true, // UI enabled by default
             msaa_samples: 4,
-            shadow_map_resolution: 4096,
+            // Four 2048² layers use the same texel count as the old 4096² map.
+            shadow_map_resolution: 2048,
             shadow_distance: 75.0,
         };
 
@@ -500,7 +501,7 @@ impl VulkanBase {
         allocator_info.flags |= vk_mem::AllocatorCreateFlags::EXT_MEMORY_BUDGET;
         let allocator = unsafe { Allocator::new(allocator_info)? };
 
-        // --- Global set-0 layout: binding 0 = UBO, binding 1 = shadow map sampler ---
+        // Binding 1 contains one sampled 2D-array view of all shadow cascades.
         let ubo_binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
             descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
@@ -524,7 +525,9 @@ impl VulkanBase {
             ..Default::default()
         };
         let set0_global_layout = unsafe { device.create_descriptor_set_layout(&set0_info, None)? };
-        println!("🔧 Created global set=0 layout (binding 0 = UBO, binding 1 = shadow)");
+        println!(
+            "🔧 Created global set=0 layout (binding 0 = UBO, binding 1 = cascaded shadow map)"
+        );
 
         let swapchain = Swapchain::new(
             &instance,

@@ -1,7 +1,7 @@
 use super::generation::{
     build_blade_indices_for_segments, build_blade_vertices, build_chunked_grass_instances,
     build_reed_indices, build_reed_instances, build_reed_vertices, chunk_intersects_frustum,
-    grass_density_at, grass_lod, pack_position_height, unpack_position_height,
+    field_edge_density_at, grass_lod, pack_position_height, unpack_position_height,
 };
 use super::{
     GRASS_CHUNKS_PER_SIDE, GRASS_DENSITY_LAYERS, GRASS_GRID_SIDE, GrassInstance, GrassLod,
@@ -51,8 +51,8 @@ fn grass_uses_one_shared_blade_and_many_grounded_instances() {
             .iter()
             .any(|instance| unpack_position_height(instance.position_height)[0].abs() > 70.0)
     );
-    assert_eq!(grass_density_at(0.0, -2.0), 1.0);
-    assert_eq!(grass_density_at(80.0, -2.0), super::OUTER_DENSITY);
+    assert_eq!(field_edge_density_at(0.0, -2.0), 1.0);
+    assert_eq!(field_edge_density_at(80.0, -2.0), super::OUTER_DENSITY);
     let mid_count: usize = chunked
         .chunks
         .iter()

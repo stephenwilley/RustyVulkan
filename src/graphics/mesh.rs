@@ -229,6 +229,34 @@ impl MeshBounds {
         }
         minimum_y
     }
+
+    /// Returns an axis-aligned box containing this box after an arbitrary transform.
+    pub fn transformed(&self, transform: Matrix4<f32>) -> Self {
+        let mut result = Self {
+            min: [f32::INFINITY; 3],
+            max: [f32::NEG_INFINITY; 3],
+        };
+        for x in [self.min[0], self.max[0]] {
+            for y in [self.min[1], self.max[1]] {
+                for z in [self.min[2], self.max[2]] {
+                    let point = transform * Vector4::new(x, y, z, 1.0);
+                    for (axis, value) in [point.x, point.y, point.z].into_iter().enumerate() {
+                        result.min[axis] = result.min[axis].min(value);
+                        result.max[axis] = result.max[axis].max(value);
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Expands this box to include another box.
+    pub fn include(&mut self, other: Self) {
+        for axis in 0..3 {
+            self.min[axis] = self.min[axis].min(other.min[axis]);
+            self.max[axis] = self.max[axis].max(other.max[axis]);
+        }
+    }
 }
 
 impl Mesh {

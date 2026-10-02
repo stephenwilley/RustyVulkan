@@ -7,32 +7,7 @@
 // GLSL 450
 // --------------------------------------------------------------------------------------
 #version 450
-// Keep in sync with Rust `MAX_LIGHTS`
-#define MAX_LIGHTS 8
-
 layout(push_constant) uniform Push { mat4 mvp; mat4 mv; vec4 uv_tiling; } pc;
-
-// Declare Light before using it in UBO
-struct Light {
-    vec3 position;
-    float intensity;
-    vec3 color;
-    float _pad;    // keep 16-byte stride
-};
-
-struct DirLight {
-    vec3 direction; // in view space
-    float intensity;
-    vec3 color;
-    float _pad1;
-};
-
-layout(std140, set = 0, binding = 0) uniform GlobalUBO {
-    DirLight sun;                                  // directional light first
-    mat4     light_vp;                             // light VP
-    Light    lights[MAX_LIGHTS];                   // array of point lights
-    uint     light_count; uvec3 _pad0;             // count + pad
-} ubo;
 
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;

@@ -57,7 +57,7 @@ const MAX_BLADE_WIDTH: f32 = 0.1;
 // Instance positions are stored as UNORM16 within these known scene bounds. The small
 // margin includes reed roots that spread just beyond the regular grass field.
 const INSTANCE_X_RANGE: [f32; 2] = [-80.5, 80.5];
-const INSTANCE_Y_RANGE: [f32; 2] = [0.0, 5.0];
+const INSTANCE_Y_RANGE: [f32; 2] = [0.0, 6.0];
 const INSTANCE_Z_RANGE: [f32; 2] = [-82.5, 78.5];
 const INSTANCE_HEIGHT_RANGE: [f32; 2] = [0.0, 1.0];
 const WIND_MAP_SIZE: u32 = 128;
@@ -99,6 +99,9 @@ struct InstanceRange {
 struct VegetationChunk {
     centre: [f32; 2],
     radius: f32,
+    /// Actual world-space vertical bounds; terrain is no longer a flat Y=0 plane.
+    min_y: f32,
+    max_y: f32,
     near_grass: InstanceRange,
     mid_grass: InstanceRange,
     reeds: InstanceRange,
@@ -547,7 +550,13 @@ impl GrassRenderer {
             let dx = chunk.centre[0] - camera_position.x;
             let dz = chunk.centre[1] - camera_position.z;
             let distance = ((dx * dx + dz * dz).sqrt() - chunk.radius).max(0.0);
-            if distance <= MID_GRASS_DISTANCE && chunk_intersects_frustum(view_projection, chunk) {
+            // A conservative corner test can reject a box intersected by the near plane.
+            // Always retain the chunk under the player, then frustum-test the rest.
+            let camera_is_over_chunk =
+                dx.abs() <= GRASS_CHUNK_SIZE * 0.5 && dz.abs() <= GRASS_CHUNK_SIZE * 0.5;
+            if distance <= MID_GRASS_DISTANCE
+                && (camera_is_over_chunk || chunk_intersects_frustum(view_projection, chunk))
+            {
                 self.visible_chunks.push(VisibleChunk { index, distance });
             }
         }

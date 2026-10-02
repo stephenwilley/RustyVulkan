@@ -1,0 +1,172 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Open Asset Import Library (assimp v6.0.0)"
+  },
+  "extensionsUsed": [
+    "KHR_materials_volume",
+    "FB_ngon_encoding"
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 351,
+      "type": "VEC3",
+      "max": [
+        1.4978611469268799,
+        1.9886651039123535,
+        1.8392531871795654
+      ],
+      "min": [
+        -1.7272872924804688,
+        -0.27113133668899536,
+        -1.1498832702636719
+      ]
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 351,
+      "type": "VEC3",
+      "max": [
+        0.9023314118385315,
+        0.9982209205627441,
+        0.9588155746459961
+      ],
+      "min": [
+        -0.9992876052856445,
+        -0.9999767541885376,
+        -0.9484310746192932
+      ]
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 351,
+      "type": "VEC2",
+      "max": [
+        0.9276419281959534,
+        0.5328682661056519
+      ],
+      "min": [
+        0.07334776967763901,
+        0.0697590708732605
+      ]
+    },
+    {
+      "bufferView": 3,
+      "byteOffset": 0,
+      "componentType": 5125,
+      "count": 1026,
+      "type": "SCALAR",
+      "max": [
+        350
+      ],
+      "min": [
+        0
+      ]
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 15336,
+      "uri": "rock-medium-a.bin"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 4212,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 4212,
+      "byteLength": 4212,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 8424,
+      "byteLength": 2808,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 11232,
+      "byteLength": 4104,
+      "target": 34963
+    }
+  ],
+  "images": [
+    {
+      "name": "Rocks_Diffuse.png",
+      "uri": "rocks-medium.png"
+    }
+  ],
+  "materials": [
+    {
+      "name": "Rocks",
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicFactor": 0.4000000059604645
+      }
+    },
+    {
+      "name": "material"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Rock_Medium_1",
+      "primitives": [
+        {
+          "mode": 4,
+          "material": 0,
+          "indices": 3,
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          }
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "RootNode",
+      "children": [
+        1
+      ]
+    },
+    {
+      "name": "Rock_Medium_1",
+      "mesh": 0
+    }
+  ],
+  "samplers": [
+    {}
+  ],
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    }
+  ],
+  "scene": 0
+}

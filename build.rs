@@ -34,9 +34,13 @@ const SHADERS: &[&str] = &[
     "main.vert",
     "main.frag",
     "passthrough.vert",
+    "rock.vert",
+    "rock.frag",
     "shadow_depth.vert",
     "sky.vert",
     "sky.frag",
+    "terrain.vert",
+    "terrain.frag",
     "vertex_color.vert",
     "vertex_color.frag",
 ];

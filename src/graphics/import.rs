@@ -30,3 +30,22 @@ pub fn import_model_as_object(
 ) -> Result<SceneObject, Box<dyn Error>> {
     crate::graphics::assimp_loader::import_model_as_object(path, vb, meshes, mats)
 }
+
+/// Imports one member of a model pack while reusing a specialised textured material.
+pub fn import_model_as_object_with_shared_textured_material(
+    path: &str,
+    shared_material_name: &str,
+    textured_shader_paths: [&str; 2],
+    vb: &VulkanBase,
+    meshes: &mut MeshManager,
+    mats: &mut MaterialManager,
+) -> Result<SceneObject, Box<dyn Error>> {
+    crate::graphics::assimp_loader::import_model_as_object_with_shared_textured_material(
+        path,
+        shared_material_name,
+        textured_shader_paths,
+        vb,
+        meshes,
+        mats,
+    )
+}

@@ -11,8 +11,7 @@
 //! --------------------------------------------------------------------------------------
 
 use crate::app::scene::SceneObject;
-use crate::graphics::mesh::LoadedMesh;
-use crate::graphics::mesh::Mesh;
+use crate::graphics::mesh::{LoadedMesh, Mesh, MeshBounds};
 use crate::vulkan::base::VulkanBase;
 use std::error::Error;
 use vk_mem::Allocator;
@@ -101,6 +100,24 @@ impl MeshManager {
                     .map(|mesh| mesh.bounds.transformed_min_y(part.transform.model_matrix()))
             })
             .reduce(f32::min)
+    }
+
+    /// Combines retained mesh bounds after each part-local transform.
+    pub fn object_local_bounds(&self, object: &SceneObject) -> Option<MeshBounds> {
+        let mut combined: Option<MeshBounds> = None;
+        for part in &object.parts {
+            let bounds = self
+                .meshes
+                .get(part.mesh_id)?
+                .bounds
+                .transformed(part.transform.model_matrix());
+            if let Some(existing) = &mut combined {
+                existing.include(bounds);
+            } else {
+                combined = Some(bounds);
+            }
+        }
+        combined
     }
 
     /// Cleans up all meshes.

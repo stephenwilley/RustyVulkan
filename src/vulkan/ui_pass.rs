@@ -8,6 +8,7 @@
 //!
 //! --------------------------------------------------------------------------------------
 
+use crate::graphics::shadow_math::SHADOW_CASCADE_COUNT;
 use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use ash::vk;
@@ -90,7 +91,7 @@ impl RenderPass for UiPass {
                     }
                     _msaa_menu.end();
                 }
-                if let Some(_shadow_menu) = ui.begin_menu("Shadow Map Resolution") {
+                if let Some(_shadow_menu) = ui.begin_menu("Cascade Resolution") {
                     let mut cur_res = ctx.vulkan_base.engine_settings.shadow_map_resolution as i32;
                     let prev = cur_res;
                     let choices = [512, 1024, 2048, 4096];
@@ -208,28 +209,39 @@ impl RenderPass for UiPass {
 
         // Shadow Map debug window
         if self.show_shadow_map_window {
-            // Each swapchain image uses a separate descriptor set, avoiding a
-            // device-wide idle wait when the shadow view changes frame to frame.
-            let shadow_tex_id_opt: Option<imgui::TextureId> =
+            // Every image/layer pair has a descriptor, so all widgets keep their
+            // own cascade while the swapchain rotates through in-flight images.
+            let shadow_tex_ids: Option<[imgui::TextureId; SHADOW_CASCADE_COUNT]> =
                 ctx.attachments.get(&AttachmentKind::Shadow).map(|handle| {
-                    ui_ctx.renderer.shadow_texture_id(
-                        ctx.vulkan_base,
-                        ctx.frame.image_index as usize,
-                        ctx.vulkan_base.shadow_sampler,
-                        handle.view,
-                    )
+                    std::array::from_fn(|cascade| {
+                        ui_ctx.renderer.shadow_texture_id(
+                            ctx.vulkan_base,
+                            ctx.frame.image_index as usize,
+                            cascade,
+                            ctx.vulkan_base.shadow_sampler,
+                            handle.layer_views[cascade],
+                        )
+                    })
                 });
 
             let mut open = true;
-            ui.window("Shadow Map")
+            ui.window("Shadow Cascades")
                 .opened(&mut open)
                 .always_auto_resize(true)
                 .build(|| {
-                    if let Some(tex_id) = shadow_tex_id_opt {
-                        imgui::Image::new(tex_id, [256.0, 256.0])
-                            .uv0([0.0, 1.0])
-                            .uv1([1.0, 0.0])
-                            .build(ui);
+                    if let Some(texture_ids) = &shadow_tex_ids {
+                        for (cascade, &texture_id) in texture_ids.iter().enumerate() {
+                            ui.group(|| {
+                                ui.text(format!("Cascade {}", cascade + 1));
+                                imgui::Image::new(texture_id, [224.0, 224.0])
+                                    .uv0([0.0, 1.0])
+                                    .uv1([1.0, 0.0])
+                                    .build(ui);
+                            });
+                            if cascade % 2 == 0 {
+                                ui.same_line();
+                            }
+                        }
                     } else {
                         ui.text("Shadow attachment not available");
                     }

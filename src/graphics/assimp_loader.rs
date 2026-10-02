@@ -41,6 +41,35 @@ pub fn import_model_as_object(
     meshes: &mut MeshManager,
     mats: &mut MaterialManager,
 ) -> Result<SceneObject, Box<dyn Error>> {
+    import_model(path, vb, meshes, mats, None)
+}
+
+/// Imports another mesh using a named material shared by a sibling asset and a specialised
+/// textured shader. Model packs commonly split geometry while retaining one texture atlas.
+pub fn import_model_as_object_with_shared_textured_material(
+    path: &str,
+    shared_material_name: &str,
+    textured_shader_paths: [&str; 2],
+    vb: &VulkanBase,
+    meshes: &mut MeshManager,
+    mats: &mut MaterialManager,
+) -> Result<SceneObject, Box<dyn Error>> {
+    import_model(
+        path,
+        vb,
+        meshes,
+        mats,
+        Some((shared_material_name, textured_shader_paths)),
+    )
+}
+
+fn import_model(
+    path: &str,
+    vb: &VulkanBase,
+    meshes: &mut MeshManager,
+    mats: &mut MaterialManager,
+    shared_material: Option<(&str, [&str; 2])>,
+) -> Result<SceneObject, Box<dyn Error>> {
     use cgmath::{InnerSpace, Rotation};
     use cgmath::{Matrix3, Quaternion as CQuat, Vector3 as CVec3};
 
@@ -68,7 +97,10 @@ pub fn import_model_as_object(
     let mut material_ids: Vec<usize> = Vec::with_capacity(scene.materials.len());
     let mut material_colors: Vec<[f32; 3]> = Vec::with_capacity(scene.materials.len());
     for (i, mat) in scene.materials.iter().enumerate() {
-        let name = format!("{}_mat{}", model_stem, i);
+        let name = shared_material.map_or_else(
+            || format!("{model_stem}_mat{i}"),
+            |(shared, _)| format!("{shared}_mat{i}"),
+        );
         material_colors.push(material_base_color(mat));
 
         // Best-effort fetch of common texture types; PBR expansion comes next
@@ -103,9 +135,14 @@ pub fn import_model_as_object(
         // supplies a neutral diffuse texture for its required albedo binding.
         let use_textured = diffuse_tex.is_some() || normal_tex.is_some();
         let (vs_path, fs_path) = if use_textured {
-            (
-                "assets/shaders/spv/main.vert.spv".into(),
-                "assets/shaders/spv/main.frag.spv".into(),
+            shared_material.map_or_else(
+                || {
+                    (
+                        "assets/shaders/spv/main.vert.spv".into(),
+                        "assets/shaders/spv/main.frag.spv".into(),
+                    )
+                },
+                |(_, paths)| (paths[0].into(), paths[1].into()),
             )
         } else {
             // The colour-only path still receives the global shadow map.

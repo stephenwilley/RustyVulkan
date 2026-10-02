@@ -6,36 +6,12 @@
 // --------------------------------------------------------------------------------------
 #version 450
 
-#define MAX_LIGHTS 8
-
 layout(push_constant) uniform Push {
     mat4 mvp;
     mat4 mv;
     // x = elapsed seconds, y = wind strength, z = LOD (0 near, 0.5 medium, 1 mid).
     vec4 grassParams;
 } pc;
-
-struct Light {
-    vec3 position;
-    float intensity;
-    vec3 color;
-    float _pad;
-};
-
-struct DirLight {
-    vec3 direction;
-    float intensity;
-    vec3 color;
-    float _pad;
-};
-
-layout(std140, set = 0, binding = 0) uniform GlobalUBO {
-    DirLight sun;
-    mat4 light_vp;
-    Light lights[MAX_LIGHTS];
-    uint light_count;
-    uvec3 _pad0;
-} ubo;
 
 // A small, tileable two-channel field. Red contains broad gust shapes and green
 // contains finer turbulence; both are generated once when GrassRenderer is created.
@@ -48,10 +24,11 @@ layout(location = 3) in vec4 inPositionHeight;
 layout(location = 4) in vec4 inRotationWidthTintPhase;
 
 layout(location = 0) out vec3 vNormal;
-layout(location = 1) out vec4 vShadowPosition;
+layout(location = 1) out vec3 vFragPosView;
 layout(location = 2) out float vHeightFraction;
 layout(location = 3) out float vTint;
 layout(location = 4) out float vFlowerHead;
+layout(location = 5) out float vColourNoise;
 
 mat2 rotate2d(float angle) {
     float c = cos(angle);
@@ -73,7 +50,7 @@ void main() {
     // position from the same fixed field bounds used by Rust when packing it.
     vec4 position_height = vec4(
         mix(-80.5, 80.5, inPositionHeight.x),
-        mix(0.0, 5.0, inPositionHeight.y),
+        mix(0.0, 6.0, inPositionHeight.y),
         mix(-82.5, 78.5, inPositionHeight.z),
         mix(0.0, 1.0, inPositionHeight.w)
     );
@@ -122,12 +99,20 @@ void main() {
     );
 
     vec4 position_view = pc.mv * vec4(world_position, 1.0);
-    // Shadow projection is linear across each triangle, so doing this here avoids a matrix
-    // multiply for every grass fragment.
-    vShadowPosition = ubo.light_vp * position_view;
-    vNormal = normalize(mat3(pc.mv) * vec3(normal_xz.x, inLocalNormal.y, normal_xz.y));
+    // Fragment view depth selects the appropriate shadow cascade.
+    vFragPosView = position_view.xyz;
+    vec3 geometric_normal = normalize(vec3(normal_xz.x, inLocalNormal.y, normal_xz.y));
+    // Thin vegetation is normally lit with an artificial upward bias: its geometric
+    // ribbon normal otherwise makes an entire view-facing side go dark at once. Preserve
+    // the rounded flower-head normals, which already describe a real volume.
+    float upward_bias = mix(0.62, 0.0, inFlowerHead);
+    vec3 lighting_normal = normalize(mix(geometric_normal, vec3(0.0, 1.0, 0.0), upward_bias));
+    vNormal = normalize(mat3(pc.mv) * lighting_normal);
     vHeightFraction = height_fraction;
     vTint = inRotationWidthTintPhase.z;
     vFlowerHead = inFlowerHead;
+    // One static sample per vertex gives neighbouring blades coherent colour patches. The
+    // coordinates differ from the moving wind samples, so the colour does not drift.
+    vColourNoise = textureLod(windMap, position_height.xz * 0.028 + vec2(0.37, 0.61), 0.0).g;
     gl_Position = pc.mvp * vec4(world_position, 1.0);
 }

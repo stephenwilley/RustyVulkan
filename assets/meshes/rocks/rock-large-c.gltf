@@ -1,0 +1,190 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "Open Asset Import Library (assimp v6.0.0)"
+  },
+  "extensionsUsed": [
+    "KHR_materials_volume",
+    "FB_ngon_encoding"
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 310,
+      "type": "VEC3",
+      "max": [
+        0.038217511028051376,
+        0.02972995676100254,
+        0.033072348684072495
+      ],
+      "min": [
+        -0.03848927095532417,
+        -0.0031551127322018147,
+        -0.040252454578876495
+      ]
+    },
+    {
+      "bufferView": 1,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 310,
+      "type": "VEC3",
+      "max": [
+        0.9747217297554016,
+        0.9984421133995056,
+        0.9936236143112183
+      ],
+      "min": [
+        -0.9334814548492432,
+        -0.9997496604919434,
+        -0.8684441447257996
+      ]
+    },
+    {
+      "bufferView": 2,
+      "byteOffset": 0,
+      "componentType": 5126,
+      "count": 310,
+      "type": "VEC2",
+      "max": [
+        0.018078185617923737,
+        0.04737508296966553
+      ],
+      "min": [
+        0.01707816869020462,
+        0.04637503623962402
+      ]
+    },
+    {
+      "bufferView": 3,
+      "byteOffset": 0,
+      "componentType": 5125,
+      "count": 666,
+      "type": "SCALAR",
+      "max": [
+        309
+      ],
+      "min": [
+        0
+      ]
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 12584,
+      "uri": "rock-large-c.bin"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 3720,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 3720,
+      "byteLength": 3720,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 7440,
+      "byteLength": 2480,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 9920,
+      "byteLength": 2664,
+      "target": 34963
+    }
+  ],
+  "images": [
+    {
+      "name": "Atlas.png",
+      "uri": "rocks-large.png"
+    }
+  ],
+  "materials": [
+    {
+      "name": "Atlas",
+      "pbrMetallicRoughness": {
+        "baseColorTexture": {
+          "index": 0
+        },
+        "metallicFactor": 0.4000000059604645
+      }
+    },
+    {
+      "name": "material"
+    }
+  ],
+  "meshes": [
+    {
+      "name": "Rock_Large_1",
+      "primitives": [
+        {
+          "mode": 4,
+          "material": 0,
+          "indices": 3,
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          }
+        }
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "RootNode",
+      "children": [
+        1
+      ]
+    },
+    {
+      "name": "Rock_Large_1",
+      "matrix": [
+        100.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        100.0,
+        0.000004371138857095502,
+        0.0,
+        0.0,
+        -0.000004371138857095502,
+        100.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "mesh": 0
+    }
+  ],
+  "samplers": [
+    {}
+  ],
+  "scenes": [
+    {
+      "nodes": [
+        0
+      ]
+    }
+  ],
+  "textures": [
+    {
+      "source": 0,
+      "sampler": 0
+    }
+  ],
+  "scene": 0
+}

@@ -208,6 +208,7 @@ pub struct ImageTransition {
     pub src_stage_mask: vk::PipelineStageFlags,
     pub dst_stage_mask: vk::PipelineStageFlags,
     pub aspect_mask: vk::ImageAspectFlags,
+    pub layer_count: u32,
 }
 
 impl VulkanBase {
@@ -326,7 +327,7 @@ impl VulkanBase {
                     base_mip_level: 0,
                     level_count: 1,
                     base_array_layer: 0,
-                    layer_count: 1,
+                    layer_count: t.layer_count,
                 },
                 ..Default::default()
             });
@@ -834,14 +835,15 @@ pub struct GpuDirLight {
 
 /// Global (per-frame/per-image) uniform buffer object shared across all pipelines via **descriptor set 0, binding 0**.
 /// There is **one buffer per swapchain image** so the CPU can update the UBO while another image is still in-flight.
-/// Keep fields 16-byte aligned for std140-like layouts. The order here must match the GLSL:
-///     Light lights[MAX_LIGHTS]; uint light_count; uvec3 _pad0;
+/// Keep fields 16-byte aligned for std140. Field order must match every GLSL `GlobalUBO`.
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Default)]
 pub struct GlobalUbo {
-    // Directional light + shadow matrix first for clarity
-    pub dir_light: GpuDirLight,  // single directional light (sun)
-    pub light_vp: [[f32; 4]; 4], // light view-projection (column-major)
+    pub dir_light: GpuDirLight,
+    /// One view-to-light-clip matrix for each camera-depth slice.
+    pub light_vp: [[[f32; 4]; 4]; crate::graphics::shadow_math::SHADOW_CASCADE_COUNT],
+    /// Positive view-space far depth for each cascade.
+    pub cascade_splits: [f32; crate::graphics::shadow_math::SHADOW_CASCADE_COUNT],
     // Then the array of point lights (std140 array of structs)
     pub lights: [GpuLight; crate::app::app::MAX_LIGHTS], // array of point lights
     pub light_count: u32,                                // number of active point lights

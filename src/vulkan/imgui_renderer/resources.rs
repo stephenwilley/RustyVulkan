@@ -9,6 +9,8 @@ use ash::vk;
 use imgui::{Context as ImGuiContext, FontAtlasTexture, FontConfig, FontSource};
 use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
 
+use crate::graphics::shadow_math::SHADOW_CASCADE_COUNT;
+
 impl ImGuiRenderer {
     // ----------------------------------------------------------
     // 1 - Font Atlas Upload
@@ -469,25 +471,27 @@ impl ImGuiRenderer {
         &mut self,
         base: &VulkanBase,
         image_index: usize,
+        cascade_index: usize,
         sampler: vk::Sampler,
         view: vk::ImageView,
     ) -> imgui::TextureId {
-        // This descriptor belongs to the acquired image, whose fence has already completed.
-        if self.shadow_tex_ids.len() <= image_index {
-            self.shadow_tex_ids.resize(image_index + 1, None);
+        // Reusing one cache slot would update all four widgets to the final layer.
+        let cache_index = image_index * SHADOW_CASCADE_COUNT + cascade_index;
+        if self.shadow_tex_ids.len() <= cache_index {
+            self.shadow_tex_ids.resize(cache_index + 1, None);
         }
 
-        if let Some((cached_view, texture_id)) = self.shadow_tex_ids[image_index] {
+        if let Some((cached_view, texture_id)) = self.shadow_tex_ids[cache_index] {
             if cached_view == view {
                 return texture_id;
             }
             let texture_id = self.ensure_texture(base, sampler, view, Some(texture_id));
-            self.shadow_tex_ids[image_index] = Some((view, texture_id));
+            self.shadow_tex_ids[cache_index] = Some((view, texture_id));
             return texture_id;
         }
 
         let texture_id = self.ensure_texture(base, sampler, view, None);
-        self.shadow_tex_ids[image_index] = Some((view, texture_id));
+        self.shadow_tex_ids[cache_index] = Some((view, texture_id));
         texture_id
     }
 

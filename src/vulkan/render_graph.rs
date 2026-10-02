@@ -14,7 +14,7 @@ use crate::graphics::camera::Camera;
 use crate::graphics::grass::GrassRenderer;
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::meshmanager::MeshManager;
-use crate::graphics::shadow_math::compute_tight_light_mats;
+use crate::graphics::shadow_math::{SHADOW_CASCADE_COUNT, compute_shadow_cascades};
 use crate::graphics::sky::SkyRenderer;
 use crate::vulkan::attachments::{AttachmentHandle, AttachmentKind, AttachmentRequest};
 use crate::vulkan::base::{FrameCtx, ImageTransition, VulkanBase};
@@ -188,19 +188,19 @@ impl RenderGraph {
             }
         }
 
-        // --- Compute a tight directional-light VP that follows the camera frustum ---
-        let mats =
-            compute_tight_light_mats(camera, world.sun_direction, shadow_res, shadow_distance);
-        let light_vp = mats.view_to_light_clip;
-
-        // Store as column-major [[f32;4];4] matching GLSL/std140 default (Matrix4 fields are columns)
-        let m = light_vp; // no transpose
-        ubo.light_vp = [
-            [m.x.x, m.x.y, m.x.z, m.x.w],
-            [m.y.x, m.y.y, m.y.z, m.y.w],
-            [m.z.x, m.z.y, m.z.z, m.z.w],
-            [m.w.x, m.w.y, m.w.z, m.w.w],
-        ];
+        let cascades =
+            compute_shadow_cascades(camera, world.sun_direction, shadow_res, shadow_distance);
+        for (index, cascade) in cascades.iter().enumerate() {
+            let m = cascade.view_to_light_clip;
+            // cgmath and GLSL both store matrices as columns, so no transpose is needed.
+            ubo.light_vp[index] = [
+                [m.x.x, m.x.y, m.x.z, m.x.w],
+                [m.y.x, m.y.y, m.y.z, m.y.w],
+                [m.z.x, m.z.y, m.z.z, m.z.w],
+                [m.w.x, m.w.y, m.w.z, m.w.w],
+            ];
+            ubo.cascade_splits[index] = cascade.far_distance;
+        }
 
         ubo
     }
@@ -322,14 +322,17 @@ impl RenderGraph {
                 AttachmentKind::SwapchainColor => AttachmentHandle {
                     image: vb.swapchain.images[image_index],
                     view: vb.swapchain.swapchain_image_views[image_index],
+                    layer_views: [vk::ImageView::null(); SHADOW_CASCADE_COUNT],
                 },
                 AttachmentKind::MsaaColor => AttachmentHandle {
                     image: vb.swapchain.color_msaa_image,
                     view: vb.swapchain.color_msaa_image_view,
+                    layer_views: [vk::ImageView::null(); SHADOW_CASCADE_COUNT],
                 },
                 AttachmentKind::MsaaDepth => AttachmentHandle {
                     image: vb.swapchain.depth_msaa_image,
                     view: vb.swapchain.depth_msaa_image_view,
+                    layer_views: [vk::ImageView::null(); SHADOW_CASCADE_COUNT],
                 },
                 AttachmentKind::Depth => {
                     // Build a concrete request for a single-sample depth attachment
@@ -396,6 +399,11 @@ impl RenderGraph {
                         src_stage_mask: state.stage,
                         dst_stage_mask: new_stage,
                         aspect_mask: aspect_for_kind(req.kind),
+                        layer_count: if req.kind == AttachmentKind::Shadow {
+                            SHADOW_CASCADE_COUNT as u32
+                        } else {
+                            1
+                        },
                     });
                     state.layout = new_layout;
                     state.access = new_access;
@@ -466,6 +474,7 @@ impl RenderGraph {
                     src_stage_mask: swapchain_state.stage,
                     dst_stage_mask: vk::PipelineStageFlags::BOTTOM_OF_PIPE,
                     aspect_mask: vk::ImageAspectFlags::COLOR,
+                    layer_count: 1,
                 }],
             );
         }

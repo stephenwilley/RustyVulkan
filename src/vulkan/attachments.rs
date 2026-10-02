@@ -2,6 +2,8 @@ use ash::vk;
 use std::collections::HashMap;
 use vk_mem::{Alloc, Allocation, AllocationCreateInfo, Allocator, MemoryUsage};
 
+use crate::graphics::shadow_math::SHADOW_CASCADE_COUNT;
+
 /// Distinct attachment usages the graph can create and manage.
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -44,7 +46,10 @@ impl AttachmentRequest {
 #[derive(Clone, Copy, Debug)]
 pub struct AttachmentHandle {
     pub image: vk::Image,
+    /// Whole image view (a 2D array for cascaded shadows).
     pub view: vk::ImageView,
+    /// Individual views used while rendering each shadow-map layer.
+    pub layer_views: [vk::ImageView; SHADOW_CASCADE_COUNT],
 }
 
 struct AttachmentInternal {
@@ -140,6 +145,11 @@ impl AttachmentManager {
             AttachmentKind::Depth | AttachmentKind::Shadow => vk::ImageAspectFlags::DEPTH,
             _ => panic!("Unsupported attachment kind for AttachmentManager"),
         };
+        let layer_count = if key.kind == AttachmentKind::Shadow {
+            SHADOW_CASCADE_COUNT as u32
+        } else {
+            1
+        };
         let image_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::TYPE_2D,
             format: key.format,
@@ -149,7 +159,7 @@ impl AttachmentManager {
                 depth: 1,
             },
             mip_levels: 1,
-            array_layers: 1,
+            array_layers: layer_count,
             samples: key.samples,
             tiling: vk::ImageTiling::OPTIMAL,
             usage,
@@ -167,7 +177,11 @@ impl AttachmentManager {
         };
         let view_info = vk::ImageViewCreateInfo {
             image,
-            view_type: vk::ImageViewType::TYPE_2D,
+            view_type: if layer_count > 1 {
+                vk::ImageViewType::TYPE_2D_ARRAY
+            } else {
+                vk::ImageViewType::TYPE_2D
+            },
             format: key.format,
             components: vk::ComponentMapping::default(),
             subresource_range: vk::ImageSubresourceRange {
@@ -175,7 +189,7 @@ impl AttachmentManager {
                 base_mip_level: 0,
                 level_count: 1,
                 base_array_layer: 0,
-                layer_count: 1,
+                layer_count,
             },
             ..Default::default()
         };
@@ -184,7 +198,33 @@ impl AttachmentManager {
                 .create_image_view(&view_info, None)
                 .expect("create view")
         };
-        (AttachmentHandle { image, view }, allocation)
+        let mut layer_views = [vk::ImageView::null(); SHADOW_CASCADE_COUNT];
+        if key.kind == AttachmentKind::Shadow {
+            for (layer, layer_view) in layer_views.iter_mut().enumerate() {
+                let layer_info = vk::ImageViewCreateInfo {
+                    view_type: vk::ImageViewType::TYPE_2D,
+                    subresource_range: vk::ImageSubresourceRange {
+                        base_array_layer: layer as u32,
+                        layer_count: 1,
+                        ..view_info.subresource_range
+                    },
+                    ..view_info
+                };
+                *layer_view = unsafe {
+                    device
+                        .create_image_view(&layer_info, None)
+                        .expect("create shadow cascade view")
+                };
+            }
+        }
+        (
+            AttachmentHandle {
+                image,
+                view,
+                layer_views,
+            },
+            allocation,
+        )
     }
 
     /// Destroys all created attachments and clears internal storage.
@@ -192,6 +232,11 @@ impl AttachmentManager {
         for (_key, mut vec) in self.attachments.drain() {
             for mut att in vec.drain(..) {
                 unsafe {
+                    for view in att.handle.layer_views {
+                        if view != vk::ImageView::null() {
+                            device.destroy_image_view(view, None);
+                        }
+                    }
                     device.destroy_image_view(att.handle.view, None);
                     allocator.destroy_image(att.handle.image, &mut att.allocation);
                 }

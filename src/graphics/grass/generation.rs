@@ -5,6 +5,49 @@
 
 use super::*;
 use cgmath::{Matrix4, Vector4};
+
+/// A compact CPU noise map avoids re-evaluating layered biome noise for every one
+/// of the millions of candidate blades. Bilinear filtering keeps its patches smooth.
+const DENSITY_MAP_SIDE: usize = 129;
+
+struct GrassDensityMap {
+    values: Vec<f32>,
+}
+
+impl GrassDensityMap {
+    fn new(terrain: TerrainSettings) -> Self {
+        let mut values = Vec::with_capacity(DENSITY_MAP_SIDE * DENSITY_MAP_SIDE);
+        let half_size = GRASS_FIELD_SIZE * 0.5;
+        for row in 0..DENSITY_MAP_SIDE {
+            let z =
+                -2.0 - half_size + row as f32 / (DENSITY_MAP_SIDE - 1) as f32 * GRASS_FIELD_SIZE;
+            for column in 0..DENSITY_MAP_SIDE {
+                let x =
+                    -half_size + column as f32 / (DENSITY_MAP_SIDE - 1) as f32 * GRASS_FIELD_SIZE;
+                values.push(terrain.grass_density_at(x, z));
+            }
+        }
+        Self { values }
+    }
+
+    fn sample(&self, x: f32, z: f32) -> f32 {
+        let half_size = GRASS_FIELD_SIZE * 0.5;
+        let map_scale = (DENSITY_MAP_SIDE - 1) as f32;
+        let map_x = ((x + half_size) / GRASS_FIELD_SIZE * map_scale).clamp(0.0, map_scale);
+        let map_z = ((z + 2.0 + half_size) / GRASS_FIELD_SIZE * map_scale).clamp(0.0, map_scale);
+        let x0 = map_x.floor() as usize;
+        let z0 = map_z.floor() as usize;
+        let x1 = (x0 + 1).min(DENSITY_MAP_SIDE - 1);
+        let z1 = (z0 + 1).min(DENSITY_MAP_SIDE - 1);
+        let tx = map_x.fract();
+        let tz = map_z.fract();
+        let at = |column: usize, row: usize| self.values[row * DENSITY_MAP_SIDE + column];
+        let lower = at(x0, z0) + (at(x1, z0) - at(x0, z0)) * tx;
+        let upper = at(x0, z1) + (at(x1, z1) - at(x0, z1)) * tx;
+        lower + (upper - lower) * tz
+    }
+}
+
 pub(super) fn pack_instance_params(rotation: f32, width: f32, tint: f32, phase: f32) -> [u16; 4] {
     let to_unorm = |value: f32| (value.clamp(0.0, 1.0) * u16::MAX as f32).round() as u16;
     [
@@ -184,6 +227,7 @@ pub(super) fn build_reed_indices() -> Vec<u32> {
 /// Builds regular-but-jittered grass in contiguous 5×5 m chunks.  Keeping each chunk's
 /// instances together lets `first_instance` select it without copying GPU data per frame.
 pub(super) fn build_chunked_grass_instances(terrain: TerrainSettings) -> ChunkedGrassInstances {
+    let density_map = GrassDensityMap::new(terrain);
     let spacing = GRASS_FIELD_SIZE / GRASS_GRID_SIDE as f32;
     let half_size = GRASS_FIELD_SIZE * 0.5;
     // The central field keeps every candidate while the much larger outer area is
@@ -201,6 +245,8 @@ pub(super) fn build_chunked_grass_instances(terrain: TerrainSettings) -> Chunked
             let first_column = chunk_column * cells_per_chunk;
             let mut mid_subset = Vec::with_capacity(cells_per_chunk * cells_per_chunk / 2);
             let mut remaining = Vec::with_capacity(cells_per_chunk * cells_per_chunk * 2);
+            let mut min_y = f32::INFINITY;
+            let mut max_y = f32::NEG_INFINITY;
 
             for row in first_row..first_row + cells_per_chunk {
                 for column in first_column..first_column + cells_per_chunk {
@@ -220,9 +266,10 @@ pub(super) fn build_chunked_grass_instances(terrain: TerrainSettings) -> Chunked
                         let z =
                             -2.0 - half_size + (row as f32 + cell_offset_z) * spacing + jitter_z;
 
-                        // Distant blades occupy fewer candidate roots.  The decision is
-                        // stable for each blade, so no grass pops in or moves between frames.
-                        if hash01(id, 31) > grass_density_at(x, z) {
+                        // The broad biome noise and distant-field thinning are deterministic,
+                        // so clearings keep the same shape without per-frame instance changes.
+                        let grass_density = field_edge_density_at(x, z) * density_map.sample(x, z);
+                        if hash01(id, 31) > grass_density {
                             continue;
                         }
 
@@ -230,12 +277,17 @@ pub(super) fn build_chunked_grass_instances(terrain: TerrainSettings) -> Chunked
                             continue;
                         }
 
+                        let ground_y = terrain.height_at(x, z) + 0.003;
+                        let blade_height = 0.14 + hash01(id, 2) * 0.18 + grass_density * 0.08;
+                        min_y = min_y.min(ground_y);
+                        max_y = max_y.max(ground_y + blade_height);
                         let instance = GrassInstance {
                             position_height: pack_position_height(
                                 x,
-                                terrain.height_at(x, z) + 0.003,
+                                ground_y,
                                 z,
-                                0.17 + hash01(id, 2) * 0.21,
+                                // Dense, moist patches grow slightly taller than dry fringes.
+                                blade_height,
                             ),
                             rotation_width_tint_phase: pack_instance_params(
                                 hash01(id, 3) * std::f32::consts::TAU,
@@ -263,12 +315,19 @@ pub(super) fn build_chunked_grass_instances(terrain: TerrainSettings) -> Chunked
             instances.extend(mid_subset);
             instances.extend(remaining);
 
+            let centre = [
+                -half_size + (chunk_column as f32 + 0.5) * GRASS_CHUNK_SIZE,
+                -2.0 - half_size + (chunk_row as f32 + 0.5) * GRASS_CHUNK_SIZE,
+            ];
+            if !min_y.is_finite() {
+                min_y = terrain.height_at(centre[0], centre[1]);
+                max_y = min_y;
+            }
             chunks.push(VegetationChunk {
-                centre: [
-                    -half_size + (chunk_column as f32 + 0.5) * GRASS_CHUNK_SIZE,
-                    -2.0 - half_size + (chunk_row as f32 + 0.5) * GRASS_CHUNK_SIZE,
-                ],
+                centre,
                 radius: chunk_radius,
+                min_y,
+                max_y,
                 near_grass: InstanceRange {
                     first: first_instance,
                     count: near_count,
@@ -296,7 +355,7 @@ pub(super) fn grass_lod(distance: f32) -> GrassLod {
 }
 
 /// Returns the fraction of candidate grass roots retained at a world position.
-pub(super) fn grass_density_at(x: f32, z: f32) -> f32 {
+pub(super) fn field_edge_density_at(x: f32, z: f32) -> f32 {
     // The field is centred two metres behind the origin to match its existing placement.
     // A square radius makes density reach the same value along all four field boundaries.
     let field_radius = x.abs().max((z + 2.0).abs());
@@ -313,6 +372,7 @@ pub(super) fn build_reed_instances(
     terrain: TerrainSettings,
     chunks: &mut [VegetationChunk],
 ) -> Vec<GrassInstance> {
+    let density_map = GrassDensityMap::new(terrain);
     let half_size = GRASS_FIELD_SIZE * 0.5;
     let mut per_chunk = vec![Vec::new(); chunks.len()];
 
@@ -321,7 +381,9 @@ pub(super) fn build_reed_instances(
         let centre_x = -half_size + hash01(tuft_id, 20) * GRASS_FIELD_SIZE;
         let centre_z = -2.0 - half_size + hash01(tuft_id, 21) * GRASS_FIELD_SIZE;
 
-        if is_clearing(centre_x, centre_z) {
+        let density =
+            field_edge_density_at(centre_x, centre_z) * density_map.sample(centre_x, centre_z);
+        if is_clearing(centre_x, centre_z) || hash01(tuft_id, 29) > density {
             continue;
         }
 
@@ -334,13 +396,13 @@ pub(super) fn build_reed_instances(
             let x = centre_x + angle.cos() * radius;
             let z = centre_z + angle.sin() * radius;
 
-            per_chunk[chunk_index_for(centre_x, centre_z)].push(GrassInstance {
-                position_height: pack_position_height(
-                    x,
-                    terrain.height_at(x, z) + 0.004,
-                    z,
-                    0.62 + hash01(blade_id, 24) * 0.18,
-                ),
+            let ground_y = terrain.height_at(x, z) + 0.004;
+            let reed_height = 0.62 + hash01(blade_id, 24) * 0.18;
+            let chunk_index = chunk_index_for(centre_x, centre_z);
+            chunks[chunk_index].min_y = chunks[chunk_index].min_y.min(ground_y);
+            chunks[chunk_index].max_y = chunks[chunk_index].max_y.max(ground_y + reed_height);
+            per_chunk[chunk_index].push(GrassInstance {
+                position_height: pack_position_height(x, ground_y, z, reed_height),
                 rotation_width_tint_phase: pack_instance_params(
                     hash01(blade_id, 25) * std::f32::consts::TAU,
                     0.070 + hash01(blade_id, 26) * 0.018,
@@ -387,7 +449,7 @@ pub(super) fn chunk_intersects_frustum(
     let half_width = GRASS_CHUNK_SIZE * 0.5 + 0.3;
     let mut corners = [Vector4::new(0.0, 0.0, 0.0, 1.0); 8];
     let mut index = 0;
-    for y in [-0.05, 1.05] {
+    for y in [chunk.min_y - 0.05, chunk.max_y + 0.15] {
         for x in [chunk.centre[0] - half_width, chunk.centre[0] + half_width] {
             for z in [chunk.centre[1] - half_width, chunk.centre[1] + half_width] {
                 corners[index] = view_projection * Vector4::new(x, y, z, 1.0);

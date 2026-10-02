@@ -1,167 +1,196 @@
-//! Shadow math helpers for computing a tight light projection that follows
-//! the camera frustum. Kept small and well-documented for learning.
+//! Camera-frustum fitting for cascaded directional shadows.
 
-use cgmath::{EuclideanSpace, InnerSpace, SquareMatrix};
-use cgmath::{Matrix4, Point3, Vector3};
+use cgmath::{EuclideanSpace, InnerSpace, Matrix4, Point3, SquareMatrix, Vector3};
 
 use crate::graphics::camera::Camera;
 
-/// Output matrices for a tight directional-light fit.
-/// - `world_to_light_clip`: Use for rendering the shadow map (MVP = world_to_light_clip * model)
-/// - `view_to_light_clip`:  Use in main pass when transforming view-space positions
-///   directly (e.g. vFragPosView) to light clip space for shadow lookups.
-pub struct TightLightMats {
+/// Four cascades are a useful balance between directional-shadow quality and cost.
+pub const SHADOW_CASCADE_COUNT: usize = 4;
+
+/// Matrices and camera-space depth range belonging to one cascade.
+#[derive(Clone, Copy)]
+pub struct ShadowCascade {
     pub world_to_light_clip: Matrix4<f32>,
     pub view_to_light_clip: Matrix4<f32>,
+    pub far_distance: f32,
 }
 
-/// Compute a tight-fitting directional light projection around the camera frustum.
-///
-/// Steps:
-/// 1) Reconstruct the 8 frustum corners by inverting the camera's view-projection and
-///    transforming the Vulkan NDC cube corners (x,y∈[-1,1], z∈[0,1]).
-/// 2) Build a light view looking from `sun_dir` toward the frustum center. To keep
-///    it stable, choose an alternate up vector if the direction is nearly vertical.
-/// 3) Transform corners into light view space and compute an axis-aligned bounding box (AABB).
-/// 4) Optionally snap the AABB center to the shadow texel grid to reduce shimmering.
-/// 5) Build an orthographic projection from the AABB and correct for Vulkan depth range.
-pub fn compute_tight_light_mats(
+/// Split the shadow range between linear and logarithmic spacing. The logarithmic
+/// part concentrates detail near the camera without starving the distant view.
+fn cascade_splits(camera: &Camera, shadow_distance: f32) -> [f32; SHADOW_CASCADE_COUNT] {
+    let near = camera.get_near().max(0.001);
+    let far = (near + shadow_distance.max(0.001)).min(camera.get_far());
+    let lambda = 0.65;
+    std::array::from_fn(|index| {
+        let fraction = (index + 1) as f32 / SHADOW_CASCADE_COUNT as f32;
+        let logarithmic = near * (far / near).powf(fraction);
+        let linear = near + (far - near) * fraction;
+        lambda * logarithmic + (1.0 - lambda) * linear
+    })
+}
+
+/// Build the same cascade set used by the depth pass and the receiving shaders.
+pub fn compute_shadow_cascades(
     camera: &Camera,
     sun_dir: [f32; 3],
     shadow_res: u32,
     shadow_distance: f32,
-) -> TightLightMats {
-    // 1) Build a camera-aligned frustum slice using FOV/aspect and a limited far distance.
-    // This avoids wasting shadow resolution on distant, irrelevant regions.
+) -> [ShadowCascade; SHADOW_CASCADE_COUNT] {
+    let splits = cascade_splits(camera, shadow_distance);
+    let mut slice_near = camera.get_near();
+    std::array::from_fn(|index| {
+        let slice_far = splits[index];
+        let cascade = fit_frustum_slice(camera, sun_dir, shadow_res, slice_near, slice_far);
+        slice_near = slice_far;
+        cascade
+    })
+}
+
+/// Fit one orthographic light camera around one slice of the view frustum.
+fn fit_frustum_slice(
+    camera: &Camera,
+    sun_dir: [f32; 3],
+    shadow_res: u32,
+    slice_near: f32,
+    slice_far: f32,
+) -> ShadowCascade {
     let view = *camera.get_view();
     let inv_view = view.invert().unwrap_or(Matrix4::identity());
-    let cam_pos = Point3::new(inv_view.w.x, inv_view.w.y, inv_view.w.z);
+    let camera_pos = Point3::new(inv_view.w.x, inv_view.w.y, inv_view.w.z);
     let right = Vector3::new(inv_view.x.x, inv_view.x.y, inv_view.x.z);
     let up = Vector3::new(inv_view.y.x, inv_view.y.y, inv_view.y.z);
     let forward = -Vector3::new(inv_view.z.x, inv_view.z.y, inv_view.z.z);
 
-    let fov_rad = camera.get_fov_deg().to_radians();
-    let aspect = camera.get_aspect();
-    let cam_near = camera.get_near();
-    let cam_far = camera.get_far();
-    // Limit far slice by a practical shadow distance
-    let slice_far = (cam_near + shadow_distance).min(cam_far);
+    let corners_world = frustum_corners(
+        camera_pos,
+        right,
+        up,
+        forward,
+        (camera.get_fov_deg().to_radians() * 0.5).tan(),
+        camera.get_aspect(),
+        slice_near,
+        slice_far,
+    );
 
-    let corners_world: [Point3<f32>; 8] = {
-        // Half‑sizes of the frustum at the near and far slice planes
-        let near_half_height = (fov_rad * 0.5).tan() * cam_near;
-        let near_half_width = near_half_height * aspect;
-        let far_half_height = (fov_rad * 0.5).tan() * slice_far;
-        let far_half_width = far_half_height * aspect;
-
-        // Centers of the near and far planes in world space
-        let near_center = cam_pos + forward * cam_near;
-        let far_center = cam_pos + forward * slice_far;
-
-        [
-            // Near plane (left/right × down/up)
-            near_center - right * near_half_width - up * near_half_height, // left  - down
-            near_center + right * near_half_width - up * near_half_height, // right - down
-            near_center + right * near_half_width + up * near_half_height, // right - up
-            near_center - right * near_half_width + up * near_half_height, // left  - up
-            // Far plane (left/right × down/up)
-            far_center - right * far_half_width - up * far_half_height,
-            far_center + right * far_half_width - up * far_half_height,
-            far_center + right * far_half_width + up * far_half_height,
-            far_center - right * far_half_width + up * far_half_height,
-        ]
-    };
-
-    // Center and radius of the frustum
     let mut center = Vector3::new(0.0, 0.0, 0.0);
-    for c in &corners_world {
-        center += c.to_vec();
+    for corner in &corners_world {
+        center += corner.to_vec();
     }
-    center /= 8.0;
-    let center_p = Point3::from_vec(center);
-    let mut radius: f32 = 0.0;
-    for c in &corners_world {
-        radius = radius.max((c - center_p).magnitude());
-    }
+    let center = Point3::from_vec(center / corners_world.len() as f32);
+    let radius = corners_world
+        .iter()
+        .map(|corner| (corner - center).magnitude())
+        .fold(0.0_f32, f32::max);
 
-    // 2) Light view matrix looking toward the frustum center
-    // Robust normalization (no magic fallback vector):
-    let mut dir = Vector3::new(sun_dir[0], sun_dir[1], sun_dir[2]);
-    let len = dir.magnitude().max(1e-6);
-    dir /= len;
-    let eye = center_p - dir * (radius * 2.0 + 1.0);
-    // Pick an up vector roughly perpendicular to dir
-    let mut up = Vector3::new(0.0, 1.0, 0.0);
-    if dir.dot(up).abs() > 0.99 {
-        up = Vector3::new(0.0, 0.0, 1.0);
-    }
-    let light_view = Matrix4::look_at_rh(eye, center_p, up);
+    let mut direction = Vector3::new(sun_dir[0], sun_dir[1], sun_dir[2]);
+    direction /= direction.magnitude().max(1e-6);
+    let light_eye = center - direction * (radius * 2.0 + 1.0);
+    let light_up = if direction.y.abs() > 0.99 {
+        Vector3::unit_z()
+    } else {
+        Vector3::unit_y()
+    };
+    let light_view = Matrix4::look_at_rh(light_eye, center, light_up);
 
-    // 3) Light-space AABB of frustum corners
-    let mut min_l = Vector3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
-    let mut max_l = Vector3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
-    for c in &corners_world {
-        let v = light_view * c.to_homogeneous();
-        let v3 = Vector3::new(v.x, v.y, v.z);
-        min_l.x = min_l.x.min(v3.x);
-        min_l.y = min_l.y.min(v3.y);
-        min_l.z = min_l.z.min(v3.z);
-        max_l.x = max_l.x.max(v3.x);
-        max_l.y = max_l.y.max(v3.y);
-        max_l.z = max_l.z.max(v3.z);
+    let mut min_light = Vector3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
+    let mut max_light = Vector3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for corner in &corners_world {
+        let point = light_view * corner.to_homogeneous();
+        min_light.x = min_light.x.min(point.x);
+        min_light.y = min_light.y.min(point.y);
+        min_light.z = min_light.z.min(point.z);
+        max_light.x = max_light.x.max(point.x);
+        max_light.y = max_light.y.max(point.y);
+        max_light.z = max_light.z.max(point.z);
     }
 
-    // Slight padding to reduce clipping risk
-    let pad_xy = 0.01 * (max_l.x - min_l.x + max_l.y - min_l.y).max(1e-3);
-    let pad_z = 0.5;
-    min_l.x -= pad_xy;
-    max_l.x += pad_xy;
-    min_l.y -= pad_xy;
-    max_l.y += pad_xy;
-    min_l.z -= pad_z;
-    max_l.z += pad_z;
+    // A square projection changes less as the camera rotates than a tight rectangle.
+    let half_extent =
+        ((max_light.x - min_light.x).max(max_light.y - min_light.y) * 0.51).max(0.001);
+    let units_per_texel = (half_extent * 2.0 / shadow_res.max(1) as f32).max(1e-6);
+    let center_x = ((min_light.x + max_light.x) * 0.5 / units_per_texel).floor() * units_per_texel;
+    let center_y = ((min_light.y + max_light.y) * 0.5 / units_per_texel).floor() * units_per_texel;
 
-    // 4) Texel snapping: align the ortho center to the shadow map grid to reduce shimmering
-    let res_f = shadow_res as f32;
-    let width = max_l.x - min_l.x;
-    let height = max_l.y - min_l.y;
-    let units_per_texel_x = (width / res_f).max(1e-6);
-    let units_per_texel_y = (height / res_f).max(1e-6);
-    let mut center_x = 0.5 * (min_l.x + max_l.x);
-    let mut center_y = 0.5 * (min_l.y + max_l.y);
-    center_x = (center_x / units_per_texel_x).floor() * units_per_texel_x;
-    center_y = (center_y / units_per_texel_y).floor() * units_per_texel_y;
-    let half_w = 0.5 * width;
-    let half_h = 0.5 * height;
-    let left = center_x - half_w;
-    let right = center_x + half_w;
-    let bottom = center_y - half_h;
-    let top = center_y + half_h;
-    // Convert light-view z (negative in front) to positive near/far distances as
-    // expected by a right-handed orthographic projection (like OpenGL).
-    // Points in front: z_l in [-far_z, -near_z].
-    // IMPORTANT: fix near to a small constant to avoid near-plane clipping of casters
-    // when the distribution of corners makes max_l.z quite negative.
-    let min_z = min_l.z; // most negative (furthest forward along light look direction)
-    let eps = 1e-3;
-    let near = eps; // keep tiny near; ortho precision impact is negligible
-    let mut far = (-min_z).max(near + eps);
-    // A little extra padding to be safe on far
-    far += 0.5;
-
-    // 5) Build Vulkan-corrected orthographic projection
-    let proj_gl = cgmath::ortho(left, right, bottom, top, near, far);
-    const OPENGL_TO_VULKAN_MATRIX: Matrix4<f32> = Matrix4::new(
+    // Extra depth leaves room for nearby geometry outside the slice to cast into it.
+    let near = 0.001;
+    let far = (-min_light.z + radius * 0.25 + 0.5).max(near + 0.001);
+    let projection_gl = cgmath::ortho(
+        center_x - half_extent,
+        center_x + half_extent,
+        center_y - half_extent,
+        center_y + half_extent,
+        near,
+        far,
+    );
+    const OPENGL_TO_VULKAN: Matrix4<f32> = Matrix4::new(
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
     );
-    let proj_vk = OPENGL_TO_VULKAN_MATRIX * proj_gl;
+    let world_to_light_clip = OPENGL_TO_VULKAN * projection_gl * light_view;
 
-    // World-space and view-space variants
-    let world_to_light_clip = proj_vk * light_view;
-    let view_to_light_clip = world_to_light_clip * view.invert().unwrap_or(Matrix4::identity());
-
-    TightLightMats {
+    ShadowCascade {
         world_to_light_clip,
-        view_to_light_clip,
+        view_to_light_clip: world_to_light_clip * inv_view,
+        far_distance: slice_far,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn frustum_corners(
+    camera_pos: Point3<f32>,
+    right: Vector3<f32>,
+    up: Vector3<f32>,
+    forward: Vector3<f32>,
+    half_tangent: f32,
+    aspect: f32,
+    near: f32,
+    far: f32,
+) -> [Point3<f32>; 8] {
+    let plane = |distance: f32| {
+        let half_height = half_tangent * distance;
+        let half_width = half_height * aspect;
+        let center = camera_pos + forward * distance;
+        [
+            center - right * half_width - up * half_height,
+            center + right * half_width - up * half_height,
+            center + right * half_width + up * half_height,
+            center - right * half_width + up * half_height,
+        ]
+    };
+    let near_corners = plane(near);
+    let far_corners = plane(far);
+    [
+        near_corners[0],
+        near_corners[1],
+        near_corners[2],
+        near_corners[3],
+        far_corners[0],
+        far_corners[1],
+        far_corners[2],
+        far_corners[3],
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cascade_splits_are_ordered_and_end_at_shadow_distance() {
+        let camera = Camera::new();
+        let splits = cascade_splits(&camera, 75.0);
+
+        assert!(splits.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!((splits[SHADOW_CASCADE_COUNT - 1] - 75.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn fitted_cascade_matrices_are_finite() {
+        let camera = Camera::new();
+        let cascades = compute_shadow_cascades(&camera, [0.3, -1.0, 0.2], 2048, 75.0);
+
+        for cascade in cascades {
+            let matrix: &[[f32; 4]; 4] = cascade.world_to_light_clip.as_ref();
+            assert!(matrix.iter().flatten().all(|value| value.is_finite()));
+        }
     }
 }

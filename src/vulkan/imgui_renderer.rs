@@ -53,9 +53,8 @@ pub struct ImGuiRenderer {
     // Extra textures support (for Image widgets):
     texture_pool: vk::DescriptorPool,
     textures: Vec<vk::DescriptorSet>,
-    // Each swapchain image gets its own descriptor set.  Updating the set for
-    // the image currently being recorded is safe because its fence was waited
-    // before command recording began.
+    // Each swapchain image and shadow cascade gets its own descriptor set.
+    // The acquired image's fence has completed before any set is updated.
     shadow_tex_ids: Vec<Option<(vk::ImageView, imgui::TextureId)>>,
 }
 

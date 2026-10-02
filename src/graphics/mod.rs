@@ -18,6 +18,7 @@ pub mod materialmanager;
 pub mod mesh;
 pub mod meshmanager;
 pub mod pipeline;
+pub mod rocks;
 pub mod shaders;
 pub mod shadow_math;
 pub mod sky;

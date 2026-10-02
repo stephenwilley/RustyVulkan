@@ -25,11 +25,14 @@ use winit::window::{Window, WindowAttributes};
 use crate::app::scene::{Scene, SceneObject, ScenePart, Transform as SceneTransform};
 use crate::graphics::camera::Camera;
 use crate::graphics::grass::GrassRenderer;
-use crate::graphics::import::import_model_as_object;
+use crate::graphics::import::{
+    import_model_as_object, import_model_as_object_with_shared_textured_material,
+};
 use crate::graphics::materialmanager::{MaterialManager, MaterialProperties};
 use crate::graphics::meshmanager::MeshManager;
+use crate::graphics::rocks::{ROCK_ASSET_PATHS, ROCK_MATERIAL_NAMES, cluster_members};
 use crate::graphics::sky::SkyRenderer;
-use crate::graphics::terrain::{TerrainSettings, build_heightfield};
+use crate::graphics::terrain::{ROCK_CLUSTERS, TerrainSettings, build_heightfield};
 use crate::vulkan::base::{GpuPassTimings, VulkanBase};
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
 use crate::vulkan::render_graph::{RenderGraph, RenderPassNode};
@@ -104,6 +107,13 @@ pub struct App {
     pub terrain_obj_index: Option<usize>,
     pub infinite_plane_material_id: usize,
     pub terrain_material_id: usize,
+}
+
+/// CPU-side recipe for instancing one imported rock without duplicating GPU resources.
+struct RockTemplate {
+    parts: Vec<ScenePart>,
+    local_base_y: f32,
+    normalisation_scale: f32,
 }
 
 impl App {
@@ -185,10 +195,11 @@ impl App {
         let terrain_mat_id = self.material_manager.request_material(
             vulkan_base,
             MaterialProperties {
-                // Terrain carries a subtly varied dark dirt colour in its vertices.
-                name: "TerrainDirtMaterial".into(),
-                vs_path: "assets/shaders/spv/vertex_color.vert.spv".into(),
-                fs_path: "assets/shaders/spv/vertex_color.frag.spv".into(),
+                // Vertex colours carry the biome; the dedicated fragment shader adds
+                // stable fine detail without requiring a large ground texture asset.
+                name: "TerrainBiomeMaterial".into(),
+                vs_path: "assets/shaders/spv/terrain.vert.spv".into(),
+                fs_path: "assets/shaders/spv/terrain.frag.spv".into(),
                 diffuse_texture_path: None,
                 normalmap_texture_path: None,
                 depth_write: true,
@@ -205,6 +216,35 @@ impl App {
         )?;
         // The infinite grid remains a separate, flat debug ground option.
         let infinite_plane_mesh_id = self.mesh_manager.request_unit_plane(vulkan_base)?;
+
+        // Import each rock shape once. Files from the same asset pack share one atlas and
+        // material name, avoiding five near-identical pipelines and texture uploads.
+        let mut rock_templates = Vec::with_capacity(ROCK_ASSET_PATHS.len());
+        for (path, material_name) in ROCK_ASSET_PATHS.into_iter().zip(ROCK_MATERIAL_NAMES) {
+            let rock = import_model_as_object_with_shared_textured_material(
+                path,
+                material_name,
+                [
+                    "assets/shaders/spv/rock.vert.spv",
+                    "assets/shaders/spv/rock.frag.spv",
+                ],
+                vulkan_base,
+                &mut self.mesh_manager,
+                &mut self.material_manager,
+            )?;
+            let bounds = self
+                .mesh_manager
+                .object_local_bounds(&rock)
+                .ok_or("imported rock has no mesh bounds")?;
+            let longest_dimension = (0..3)
+                .map(|axis| bounds.max[axis] - bounds.min[axis])
+                .fold(0.0_f32, f32::max);
+            rock_templates.push(RockTemplate {
+                parts: rock.parts,
+                local_base_y: bounds.min[1],
+                normalisation_scale: longest_dimension.recip(),
+            });
+        }
 
         let infinite_plane = SceneObject {
             // Keep transform identity so the infinite grid shader sees stable derivatives
@@ -339,6 +379,31 @@ impl App {
         );
         sphere.visible = true;
 
+        let mut rock_clusters = Vec::with_capacity(ROCK_CLUSTERS.len() * 3);
+        for (cluster_index, placement) in ROCK_CLUSTERS.iter().copied().enumerate() {
+            for member in cluster_members(cluster_index, placement) {
+                let template = &rock_templates[member.variant];
+                let x = placement.position[0] + member.offset[0];
+                let z = placement.position[1] + member.offset[1];
+                let mut transform = SceneTransform::from_euler(
+                    cgmath::Vector3::new(x, 0.0, z),
+                    cgmath::Vector3::new(0.0, member.rotation_degrees, 0.0),
+                    template.normalisation_scale * member.size,
+                );
+                transform.place_on_ground(terrain_settings.height_at(x, z), template.local_base_y);
+                // A shallow burial hides perfectly sharp model bottoms and makes each rock
+                // feel embedded in the heightfield rather than balanced on top of it.
+                transform.translation.y -= member.size * 0.07;
+                rock_clusters.push(SceneObject {
+                    transform,
+                    // Cloning parts copies indices into manager-owned resources; it does not
+                    // duplicate the Vulkan buffers or atlas image.
+                    parts: template.parts.clone(),
+                    visible: true,
+                });
+            }
+        }
+
         // Terrain vertices already contain their world-space valley positions and heights,
         // so an identity object transform keeps height queries and rendered ground aligned.
         let terrain = SceneObject {
@@ -356,6 +421,9 @@ impl App {
         self.scene.add(cube2);
         self.scene.add(hut);
         self.scene.add(sphere);
+        for cluster in rock_clusters {
+            self.scene.add(cluster);
+        }
         // Push both ground variants and track indices
         let inf_idx = self.scene.objects.len();
         self.scene.add(infinite_plane);

@@ -32,7 +32,8 @@ layout(std140, set = 0, binding = 0) uniform GlobalUBO {
     mat4     light_vp[SHADOW_CASCADE_COUNT];
     vec4     cascade_splits;
     Light    lights[MAX_LIGHTS];                   // array of point lights
-    uint     light_count; uint _pad0, _pad1, _pad2; // scalars, not uvec3: std140 would align a uvec3 to 16
+    // Scalar pads, not uvec3: std140 aligns a uvec3 to 16 bytes, which would not match Rust.
+    uint     light_count; uint _pad0, _pad1, _pad2;
 } ubo;
 
 layout(set = 0, binding = 1) uniform sampler2DArray shadowMap;

@@ -554,8 +554,8 @@ impl Default for RenderGraph {
 ///   the layout transition must name that stage to be ordered after the acquire.
 /// * The MSAA images are shared by every frame in flight, so the previous frame's
 ///   attachment writes may still be running on the queue.
-/// * Per-image depth and shadow attachments were last used by a frame whose fence
-///   `begin_frame` has already waited on; naming their stages is merely harmless.
+/// * Per-image color, depth and shadow attachments were last used by a frame whose
+///   fence `begin_frame` has already waited on, so their entries are only conservative.
 fn previous_frame_use(kind: AttachmentKind) -> (vk::AccessFlags, vk::PipelineStageFlags) {
     match kind {
         AttachmentKind::SwapchainColor => (

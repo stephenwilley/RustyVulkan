@@ -851,5 +851,5 @@ pub struct GlobalUbo {
     // Then the array of point lights (std140 array of structs)
     pub lights: [GpuLight; crate::app::app::MAX_LIGHTS], // array of point lights
     pub light_count: u32,                                // number of active point lights
-    pub _pad0: [u32; 3],                                 // pad to 16B multiple (std140)
+    pub _pad0: [u32; 3],                                 // three GLSL uints, never a uvec3 (std140)
 }

@@ -10,15 +10,13 @@
 //!     destroys the handle automatically when the Rust value is dropped.
 //!   • `ShaderStageInfo` - pairs a shader stage flag (vertex/fragment) with its module
 //!     and entry-point C string.
-//!   • `load_default_stages` - convenience function to load both the vertex and
-//!     fragment shaders in one call.
 //!
 //! Usage:
-//!   1. Call `ShaderModule::from_spv_file(device, path)` to read a SPIR-V file and create  
-//!      a module.  
-//!   2. Wrap it in `ShaderStageInfo { stage, shader_module, entry_name }`.  
-//!   3. Use `ShaderStageInfo::to_create_info()` in your pipeline builder.  
-//!   4. Or simply call `load_default_stages(device)` to get both stages at once.
+//!   1. Call `ShaderModule::from_spv_file(device, path)` to read a SPIR-V file and create
+//!      a module.
+//!   2. Wrap it in `ShaderStageInfo { stage, shader_module, entry_name }`.
+//!   3. Use `ShaderStageInfo::to_create_info()` in your pipeline builder.
+//!      (`material::LoadedShaders::load` does steps 1-2 for a vertex/fragment pair.)
 //! --------------------------------------------------------------------------------------
 
 use ash::Device;

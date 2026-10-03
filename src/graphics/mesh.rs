@@ -38,7 +38,8 @@ impl Vertex {
         }
     }
 
-    /// Returns the attribute descriptions (position @ location 0, color @ location 1).
+    /// Returns the attribute descriptions: position, normal, color, uv, tangent and
+    /// bitangent at locations 0-5, in field order.
     pub fn attribute_descriptions() -> [vk::VertexInputAttributeDescription; 6] {
         [
             vk::VertexInputAttributeDescription {
@@ -579,7 +580,7 @@ impl LoadedMesh {
         Self::load(name, allocator, &mesh)
     }
 
-    /// Record only the indexed draw commands into the given secondary CB
+    /// Record the buffer binds and indexed draw into the given command buffer
     /// # Arguments
     /// * `device` - The Vulkan device.
     /// * `cmd_buf` - The command buffer to record into.

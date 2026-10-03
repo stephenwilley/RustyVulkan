@@ -11,6 +11,7 @@
 use cgmath::{Deg, Matrix4, Quaternion, Rotation3, Vector3};
 
 /// A simple 3D transform: position, rotation (as a quaternion), uniform scale.
+/// Shaders rely on the scale being uniform: they transform normals with `mat3(mv)`.
 #[derive(Clone, Copy)]
 pub struct Transform {
     pub translation: Vector3<f32>,

@@ -11,7 +11,7 @@ impl VulkanBase {
         event_loop: &ActiveEventLoop,
         layers: &[*const i8],
     ) -> Result<Instance, Box<dyn Error>> {
-        let app_name = std::ffi::CString::new("Ash Vulkan Tutorial")?;
+        let app_name = std::ffi::CString::new("RustyVulkan")?;
 
         let app_info = vk::ApplicationInfo {
             p_application_name: app_name.as_ptr(),

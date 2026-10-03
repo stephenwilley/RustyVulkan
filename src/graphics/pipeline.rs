@@ -90,9 +90,8 @@ impl Pipeline {
         depth_test: bool,
         honor_wireframe: bool,
     ) -> Result<Self, Box<dyn Error>> {
-        // 1 - Define a PushConstantRange covering 2 4×4 MVP matrices (16 floats = 64 bytes) for MV and MVP, a
-        // light position vector (3 floats = 12 bytes) and a light intensity float (1 float = 4 bytes)
-        // Reserve space for two mat4 (mvp, mv) plus a vec4 for UV tiling (xy used, zw padding)
+        // 1 - Define a PushConstantRange for two mat4 (mvp, mv) plus a vec4 for UV tiling
+        // (xy used, zw padding): 144 bytes, matching the `Push` block in main.vert.
         let push_constant_range = vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             offset: 0,

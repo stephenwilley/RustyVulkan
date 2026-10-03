@@ -1,5 +1,5 @@
 // --------------------------------------------------------------------------------------
-// point_light.vert – Vertex Shader
+// main.vert – Vertex Shader
 //
 // Transforms vertex attributes to view space and passes minimal data needed for
 // correct per-fragment lighting with multiple point lights.
@@ -26,7 +26,9 @@ void main() {
     // View-space position of the fragment (for per-fragment light vectors)
     vFragPosView = (pc.mv * vec4(inPos, 1.0)).xyz;
 
-    // Build T, B, N in view space for correct normal mapping
+    // Build T, B, N in view space for correct normal mapping.  mat3(mv) is a valid
+    // normal matrix only because scene transforms use uniform scale (see `Transform`);
+    // non-uniform scale would need the inverse-transpose for the normal.
     mat3 mv3 = mat3(pc.mv);
     vT = normalize(mv3 * inTangent);
     vB = normalize(mv3 * inBitangent);

@@ -212,7 +212,7 @@ pub struct ImageTransition {
 }
 
 impl VulkanBase {
-    /// Begin a frame: wait/reset fences, acquire the next image, and begin the command buffer & render pass.
+    /// Begin a frame: wait/reset fences, acquire the next image, and begin the command buffer.
     ///
     /// Returns `Ok(None)` when the swapchain is out-of-date so the caller can skip this frame.
     ///
@@ -221,7 +221,7 @@ impl VulkanBase {
     /// 2. Acquire the next swapchain image (signals the per-slot image-available semaphore).
     /// 3. If that image is still owned by another slot, wait on that image's owner fence.
     /// 4. Reset this slot's fence and mark it as the owner of the acquired image.
-    /// 5. Begin the command buffer and open the render pass so the caller can record draws.
+    /// 5. Begin the command buffer so the passes can record their own rendering.
     pub fn begin_frame(&mut self) -> Result<Option<FrameCtx>, Box<dyn Error>> {
         unsafe {
             let slot = self.frame_slot;
@@ -347,10 +347,10 @@ impl VulkanBase {
         }
     }
 
-    /// End a frame: finish the render pass, submit, present, and advance the slot.
+    /// End a frame: end the command buffer, submit, present, and advance the slot.
     ///
     /// # Steps
-    /// 1. End the render pass and command buffer.
+    /// 1. End the command buffer (each pass has already ended its own rendering).
     /// 2. Submit the command buffer: wait on the per-slot image-available semaphore and signal the per-image render-finished semaphore.
     /// 3. Present the image, waiting on the render-finished semaphore for this image.
     /// 4. Advance to the next CPU frame-in-flight slot.

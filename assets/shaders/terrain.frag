@@ -25,7 +25,7 @@ layout(std140, set = 0, binding = 0) uniform GlobalUBO {
     mat4 light_vp[SHADOW_CASCADE_COUNT];
     vec4 cascade_splits;
     Light lights[MAX_LIGHTS];
-    uint light_count; uvec3 _pad0;
+    uint light_count; uint _pad0, _pad1, _pad2;
 } ubo;
 
 layout(set = 0, binding = 1) uniform sampler2DArray shadowMap;

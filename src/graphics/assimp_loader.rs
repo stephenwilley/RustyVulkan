@@ -171,8 +171,8 @@ fn import_model(
             vb,
             crate::graphics::materialmanager::MaterialProperties {
                 name: "assimp_default_mat".into(),
-                vs_path: "assets/shaders/spv/passthrough.vert.spv".into(),
-                fs_path: "assets/shaders/spv/lambert_no_tex.frag.spv".into(),
+                vs_path: "assets/shaders/spv/vertex_color.vert.spv".into(),
+                fs_path: "assets/shaders/spv/vertex_color.frag.spv".into(),
                 diffuse_texture_path: None,
                 normalmap_texture_path: None,
                 depth_write: true,

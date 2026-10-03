@@ -49,7 +49,6 @@ impl ImGuiRenderer {
     /// * `base` - The VulkanBase instance.
     /// * `extent` - The extent of the swapchain.
     /// * `color_format` - The color attachment format.
-    /// * `depth_format` - The depth attachment format.
     /// * `shader_stages` - The shader stage create infos.
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
@@ -58,7 +57,6 @@ impl ImGuiRenderer {
         base: &VulkanBase,
         extent: vk::Extent2D,
         color_format: vk::Format,
-        depth_format: vk::Format,
         shader_stages: &[vk::PipelineShaderStageCreateInfo],
     ) -> Result<(), Box<dyn Error>> {
         let device = &base.device;
@@ -198,7 +196,8 @@ impl ImGuiRenderer {
         let rendering_info = vk::PipelineRenderingCreateInfo {
             color_attachment_count: color_formats.len() as u32,
             p_color_attachment_formats: color_formats.as_ptr(),
-            depth_attachment_format: depth_format,
+            // UiPass begins rendering with no depth attachment.
+            depth_attachment_format: vk::Format::UNDEFINED,
             ..Default::default()
         };
         let mut pipeline_info = vk::GraphicsPipelineCreateInfo {
@@ -247,8 +246,7 @@ impl ImGuiRenderer {
 
         let extent = base.swapchain.extent;
         let color = base.swapchain.color_format;
-        let depth = base.swapchain.depth_format;
-        self.create_pipeline(base, extent, color, depth, &shader_stages)?;
+        self.create_pipeline(base, extent, color, &shader_stages)?;
 
         // 5) Store stages for potential future reload
         self.vert_stage = Some(vert_stage);

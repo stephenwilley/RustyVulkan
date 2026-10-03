@@ -116,12 +116,14 @@ impl ShadowPass {
             ..Default::default()
         };
 
-        // Cull front faces to reduce peter-panning; render back faces into the map
+        // The light projection has no Y flip (the camera's does), so winding is reversed
+        // relative to the main pass: cull FRONT here drops the faces pointing away from the
+        // light, leaving light-facing surfaces in the map.  Acne on those faces is handled by
+        // the slope-scaled bias below plus the receiver bias in main.frag.
         let rasterizer = vk::PipelineRasterizationStateCreateInfo {
             depth_clamp_enable: vk::FALSE,
             rasterizer_discard_enable: vk::FALSE,
             polygon_mode: vk::PolygonMode::FILL,
-            // Cull FRONT faces to render back faces into the shadow map
             cull_mode: vk::CullModeFlags::FRONT,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
             // Enable a small depth bias to reduce acne

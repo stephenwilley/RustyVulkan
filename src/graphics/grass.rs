@@ -445,8 +445,7 @@ impl GrassRenderer {
                 indirect.buffer,
                 near_offset,
                 &self.near_commands,
-                vb.supports_multi_draw_indirect,
-                vb.max_draw_indirect_count,
+                vb,
             );
 
             // The next ring keeps every root but halves each blade's geometry.
@@ -471,8 +470,7 @@ impl GrassRenderer {
                 indirect.buffer,
                 medium_offset,
                 &self.medium_commands,
-                vb.supports_multi_draw_indirect,
-                vb.max_draw_indirect_count,
+                vb,
             );
 
             // Mid-distance grass uses one ribbon segment and half of the instances.
@@ -502,8 +500,7 @@ impl GrassRenderer {
                 indirect.buffer,
                 mid_offset,
                 &self.mid_commands,
-                vb.supports_multi_draw_indirect,
-                vb.max_draw_indirect_count,
+                vb,
             );
 
             // Reeds share the shader and instance layout with grass, but use a different
@@ -529,8 +526,7 @@ impl GrassRenderer {
                 indirect.buffer,
                 reed_offset,
                 &self.reed_commands,
-                vb.supports_multi_draw_indirect,
-                vb.max_draw_indirect_count,
+                vb,
             );
         }
     }
@@ -643,10 +639,7 @@ impl GrassRenderer {
         )
     }
 
-    /// Uses one multi-draw call when supported, retaining a portable per-command fallback.
-    // These values map directly to one Vulkan indirect-draw call; grouping them
-    // would hide rather than simplify that API boundary.
-    #[allow(clippy::too_many_arguments)]
+    /// Uses one multi-draw call when supported, otherwise per-command indirect or direct draws.
     unsafe fn submit_commands(
         &self,
         device: &ash::Device,
@@ -654,15 +647,29 @@ impl GrassRenderer {
         buffer: vk::Buffer,
         offset: vk::DeviceSize,
         commands: &[vk::DrawIndexedIndirectCommand],
-        supports_multi_draw: bool,
-        max_draw_count: u32,
+        vb: &VulkanBase,
     ) {
         let stride = size_of::<vk::DrawIndexedIndirectCommand>() as u32;
         if commands.is_empty() {
             return;
         }
-        if supports_multi_draw {
-            let batch_size = max_draw_count.max(1) as usize;
+        if !vb.supports_draw_indirect_first_instance {
+            // Indirect commands need `drawIndirectFirstInstance` to use `first_instance`, which
+            // selects each chunk's instances; draw directly from the CPU-side list instead.
+            for command in commands {
+                unsafe {
+                    device.cmd_draw_indexed(
+                        cmd,
+                        command.index_count,
+                        command.instance_count,
+                        command.first_index,
+                        command.vertex_offset,
+                        command.first_instance,
+                    )
+                };
+            }
+        } else if vb.supports_multi_draw_indirect {
+            let batch_size = vb.max_draw_indirect_count.max(1) as usize;
             for first in (0..commands.len()).step_by(batch_size) {
                 let count = (commands.len() - first).min(batch_size) as u32;
                 unsafe {

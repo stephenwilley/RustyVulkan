@@ -164,6 +164,7 @@ impl VulkanBase {
         physical_device: vk::PhysicalDevice,
         queue_family_index: u32,
         enable_multi_draw_indirect: bool,
+        enable_draw_indirect_first_instance: bool,
     ) -> Result<(ash::Device, vk::Queue), vk::Result> {
         let queue_priority = [1.0_f32];
 
@@ -172,6 +173,11 @@ impl VulkanBase {
         // creation fail on otherwise usable Vulkan implementations.
         let device_features = vk::PhysicalDeviceFeatures {
             multi_draw_indirect: if enable_multi_draw_indirect {
+                vk::TRUE
+            } else {
+                vk::FALSE
+            },
+            draw_indirect_first_instance: if enable_draw_indirect_first_instance {
                 vk::TRUE
             } else {
                 vk::FALSE
@@ -485,6 +491,8 @@ impl VulkanBase {
             & chosen_props.limits.framebuffer_depth_sample_counts;
         let supported_features = unsafe { instance.get_physical_device_features(physical_device) };
         let supports_multi_draw_indirect = supported_features.multi_draw_indirect == vk::TRUE;
+        let supports_draw_indirect_first_instance =
+            supported_features.draw_indirect_first_instance == vk::TRUE;
         println!("👉 Selected device for next steps: '{}'", chosen_name);
 
         let (device, graphics_queue) = Self::create_logical_device_and_queue(
@@ -492,6 +500,7 @@ impl VulkanBase {
             physical_device,
             graphics_queue_family_index,
             supports_multi_draw_indirect,
+            supports_draw_indirect_first_instance,
         )?;
         // This cache lives for the device lifetime and is shared by every graphics pipeline.
         let pipeline_cache =
@@ -651,6 +660,7 @@ impl VulkanBase {
             pipeline_generation: 0,
             sample_count_flags_supported,
             supports_multi_draw_indirect,
+            supports_draw_indirect_first_instance,
             max_draw_indirect_count: chosen_props.limits.max_draw_indirect_count,
             pending_msaa_samples: None,
             swapchain_recreation_needed: false,

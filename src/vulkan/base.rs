@@ -177,6 +177,8 @@ pub struct VulkanBase {
     pub sample_count_flags_supported: vk::SampleCountFlags,
     /// Whether one indirect command can execute several indexed draws.
     pub supports_multi_draw_indirect: bool,
+    /// Whether indirect draw commands may carry a nonzero `first_instance`.
+    pub supports_draw_indirect_first_instance: bool,
     /// Device limit used to split unusually large indirect command lists safely.
     pub max_draw_indirect_count: u32,
     /// Tracks a pending MSAA sample count change requested by the UI.

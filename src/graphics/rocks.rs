@@ -34,7 +34,7 @@ pub struct RockMember {
 /// Builds three stones around one art-directed anchor. The anchor controls the overall
 /// footprint while the index changes the asset combination without runtime randomness.
 pub fn cluster_members(cluster_index: usize, placement: RockClusterPlacement) -> [RockMember; 3] {
-    let seed = cluster_index as f32 * 1.618_034;
+    let seed = cluster_index as f32 * std::f32::consts::GOLDEN_RATIO;
     let main_variant = (placement.variant + cluster_index) % ROCK_ASSET_PATHS.len();
     let secondary_angle = placement.rotation_degrees + 55.0 + seed.sin() * 24.0;
     let tertiary_angle = placement.rotation_degrees - 68.0 + seed.cos() * 21.0;

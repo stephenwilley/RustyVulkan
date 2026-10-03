@@ -6,7 +6,7 @@
 <title>09 · The frame loop · RustyVulkan Guide</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2">
 <link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 </head>
@@ -14,11 +14,16 @@
 <header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
 <main class="chapter">
   <header class="chapter-head">
-    <p class="kicker">Part 4 · Chapter 09 · <span class="readtime">~8 min read</span></p>
+    <p class="kicker">Part 4 · Chapter 09 · <span class="readtime">~8 min prose skim</span></p>
     <h1>The frame loop</h1>
     <p class="lede">Command buffers, fences and semaphores: how the renderer keeps the CPU and GPU both busy
     without either one using something the other hasn't finished with.</p>
   </header>
+  <nav class="chapter-jumps" aria-label="Sections in this chapter">
+    <a href="#big-picture">Overview</a>
+    <a href="#deep-dive">Source walkthrough</a>
+    <a href="#recap">Recap</a>
+  </nav>
 
   <section id="big-picture">
     <h2><span class="tag">Overview</span> The big picture</h2>
@@ -90,6 +95,10 @@
     buffer, its uniform buffer and descriptor set, its "render finished" semaphore) are tracked separately
     from resources that belong to a <em>slot</em>. The renderer also remembers which slot's fence last used
     each image, and waits on that too if needed.</p>
+    <aside class="callout try"><p class="callout-title">Try this · Read the GPU clock</p>
+      <p>Open Engine → Profiler and move around the meadow. Compare CPU and GPU time: they measure work on different processors and overlap, so adding them does not give the frame time. The GPU figure arrives after the measured frame has completed.</p>
+    </aside>
+    <p class="overview-next"><a href="10-render-graph.html">Skip to next overview →</a></p>
   </section>
 
   <div class="dive-divider"><span>Deeper dive</span></div>
@@ -113,7 +122,7 @@
         // unsignalled. Retrying could hang the next frame.
         event_loop.exit();
     }
-    app.render_graph = graph;</code></pre><figcaption>src/app/input.rs:165-227</figcaption></figure><!--/x-->
+    app.render_graph = graph;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/app/input.rs#L165-L227">src/app/input.rs:165-227</a></figcaption></figure><!--/x-->
     <aside class="callout rust"><p class="callout-title">Rust note · std::mem::take to satisfy the borrow checker</p>
       <p><code>graph.execute(app)</code> needs <code>&amp;mut app</code> (exclusive access to the whole
       application) while the graph is itself a field of <code>app</code>. Rust won't allow two exclusive
@@ -127,7 +136,7 @@
 
     <h2>The synchronisation objects</h2>
     <p>Created in <code>VulkanBase::new</code>:</p>
-    <!--x src/vulkan/base/setup.rs 576-598--><figure class="code"><pre><code class="language-rust">let mut image_available_semaphores = Vec::with_capacity(INFLIGHT_FRAMES);
+    <!--x src/vulkan/base/setup.rs 598-620--><figure class="code"><pre><code class="language-rust">let mut image_available_semaphores = Vec::with_capacity(INFLIGHT_FRAMES);
 let mut in_flight_fences = Vec::with_capacity(INFLIGHT_FRAMES);
 let semaphore_info = vk::SemaphoreCreateInfo::default();
 let fence_info = vk::FenceCreateInfo {
@@ -149,14 +158,14 @@ for _ in 0..image_count {
 }
 
 // Per-swapchain-image tracker: which fence currently owns each image (or null)
-let image_owner_fence = vec![vk::Fence::null(); image_count];</code></pre><figcaption>src/vulkan/base/setup.rs:576-598</figcaption></figure><!--/x-->
+let image_owner_fence = vec![vk::Fence::null(); image_count];</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L598">src/vulkan/base/setup.rs:598-620</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>Two of each per-slot object (<code>INFLIGHT_FRAMES</code> is 2), but one "render finished" semaphore per
     swapchain image, and an owner-fence entry per image, initially empty. The fences start
     <code>SIGNALED</code>: the first frame on each slot waits on its fence, and with nothing yet submitted,
     an unsignalled fence would never fire.</p>
 
     <h2><code>begin_frame</code></h2>
-    <!--x src/vulkan/base.rs 227-233,258-291--><figure class="code"><pre><code class="language-rust">pub fn begin_frame(&amp;mut self) -&gt; Result&lt;Option&lt;FrameCtx&gt;, Box&lt;dyn Error&gt;&gt; {
+    <!--x src/vulkan/base.rs 229-235,260-293--><figure class="code"><pre><code class="language-rust">pub fn begin_frame(&amp;mut self) -&gt; Result&lt;Option&lt;FrameCtx&gt;, Box&lt;dyn Error&gt;&gt; {
     unsafe {
         let slot = self.frame_slot;
 
@@ -197,7 +206,7 @@ let image_owner_fence = vec![vk::Fence::null(); image_count];</code></pre><figca
         let cmd_buf = self.command_buffers[idx];
 
         let begin_info = vk::CommandBufferBeginInfo::default();
-        self.device.begin_command_buffer(cmd_buf, &amp;begin_info)?;</code></pre><figcaption>src/vulkan/base.rs:227-291</figcaption></figure><!--/x-->
+        self.device.begin_command_buffer(cmd_buf, &amp;begin_info)?;</code></pre><figcaption><a href="source/src--vulkan--base.rs.html#L229">src/vulkan/base.rs:229-235</a> · <a href="source/src--vulkan--base.rs.html#L260">260-293</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>In order:</p>
     <ol>
       <li><strong>Wait for this slot's fence.</strong> <code>u64::MAX</code> means no timeout. If the GPU has
@@ -236,7 +245,7 @@ let image_owner_fence = vec![vk::Fence::null(); image_count];</code></pre><figca
     <p>Steps 3–5 are the subject of <a href="10-render-graph.html">Chapter 10</a>.</p>
 
     <h2><code>end_frame</code>: submit and present</h2>
-    <!--x src/vulkan/base.rs 362-382,395-407--><figure class="code"><pre><code class="language-rust">self.device.end_command_buffer(frame.cmd_buf)?;
+    <!--x src/vulkan/base.rs 364-384,397-409--><figure class="code"><pre><code class="language-rust">self.device.end_command_buffer(frame.cmd_buf)?;
 
 // Submit: wait for image-available (slot), signal render-finished (per-image)
 let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -270,7 +279,7 @@ match self
 }
 
 // Advance to next CPU slot
-self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len();</code></pre><figcaption>src/vulkan/base.rs:362-407</figcaption></figure><!--/x-->
+self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len();</code></pre><figcaption><a href="source/src--vulkan--base.rs.html#L364">src/vulkan/base.rs:364-384</a> · <a href="source/src--vulkan--base.rs.html#L397">397-409</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>The submit ties the three hazards together:</p>
     <ul>
       <li><strong>Wait</strong> on the slot's image-available semaphore, but only at the
@@ -305,7 +314,7 @@ self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len()
     are written per frame: start, end of shadows, start and end of vegetation, and end. Reading results
     straight after submitting would mean waiting for the GPU, so instead they're read in a later
     <code>begin_frame</code>, just after that slot's fence wait has guaranteed they're complete:</p>
-    <!--x src/vulkan/base.rs 237-253--><figure class="code"><pre><code class="language-rust">if let Some(prev_image_index) = self.last_image_per_slot[slot] {
+    <!--x src/vulkan/base.rs 239-255--><figure class="code"><pre><code class="language-rust">if let Some(prev_image_index) = self.last_image_per_slot[slot] {
     let base = self.image_query_base(prev_image_index);
     let mut data = [0_u64; TIMESTAMPS_PER_IMAGE as usize];
     let res = self.device.get_query_pool_results(
@@ -321,7 +330,7 @@ self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len()
             scene_ms: self.timestamp_delta_ms(data[1], data[2]),
             vegetation_ms: self.timestamp_delta_ms(data[2], data[3]),
         };
-    }</code></pre><figcaption>src/vulkan/base.rs:237-253</figcaption></figure><!--/x-->
+    }</code></pre><figcaption><a href="source/src--vulkan--base.rs.html#L239">src/vulkan/base.rs:239-255</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>Results are read without asking Vulkan to wait for them; that's safe only because the fence has already
     been waited on. Raw ticks are converted to milliseconds using the device's <code>timestamp_period</code>
     (nanoseconds per tick). The reported numbers therefore describe the frame from two frames ago, which is
@@ -355,7 +364,7 @@ self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len()
 
   <nav class="pager"><a class="prev" href="08-descriptors-materials.html">← 08 · Descriptors and materials</a><a class="next" href="10-render-graph.html">10 · The render graph →</a></nav>
 </main>
-<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<footer class="site">Based on commit <code>79546db</code>, with local device-capability and UI dependency fixes. · <a href="index.html#contents">Contents</a></footer>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>

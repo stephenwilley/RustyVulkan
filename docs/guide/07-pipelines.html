@@ -6,7 +6,7 @@
 <title>07 · Pipelines and dynamic rendering · RustyVulkan Guide</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2">
 <link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 </head>
@@ -14,11 +14,16 @@
 <header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
 <main class="chapter">
   <header class="chapter-head">
-    <p class="kicker">Part 3 · Chapter 07 · <span class="readtime">~8 min read</span></p>
+    <p class="kicker">Part 3 · Chapter 07 · <span class="readtime">~8 min prose skim</span></p>
     <h1>Pipelines and dynamic rendering</h1>
     <p class="lede">The single object that describes how a draw happens, from vertex layout to blending, and
     why Vulkan wants all of it decided up front.</p>
   </header>
+  <nav class="chapter-jumps" aria-label="Sections in this chapter">
+    <a href="#big-picture">Overview</a>
+    <a href="#deep-dive">Source walkthrough</a>
+    <a href="#recap">Recap</a>
+  </nav>
 
   <section id="big-picture">
     <h2><span class="tag">Overview</span> The big picture</h2>
@@ -29,8 +34,11 @@
     driver worked out the consequences at draw time. Some combinations required it to quietly recompile your
     shaders, a common source of OpenGL's unpredictable hitches.</p>
     <p>Vulkan gathers all of that into one immutable object, the <dfn>graphics pipeline</dfn>. You describe
-    every stage of drawing once, the driver compiles the whole thing into GPU-ready form, and at draw time you
-    simply bind the pipeline. Want blending on for some objects and off for others? That's two pipelines.</p>
+    the shaders and most drawing state up front, and the driver builds a pipeline for that combination.
+    At draw time you bind it. Some state can be declared <em>dynamic</em> and supplied in the command buffer;
+    this renderer does that for the viewport and scissor. It keeps blending fixed, so objects with blending
+    on and objects with blending off use different pipelines. Vulkan offers more dynamic state through
+    optional features, but this renderer keeps those choices simple.</p>
 
     <figure class="diagram">
       <svg viewBox="0 0 640 470" role="img" aria-labelledby="pit">
@@ -63,7 +71,7 @@
         <path class="wire" marker-end="url(#pia)" d="M130 324 V331"/>
         <path class="wire" marker-end="url(#pia)" d="M130 378 V385"/>
       </svg>
-      <figcaption>A pipeline fixes every stage. The two shaded stages are programmable; the rest are
+      <figcaption>A pipeline describes each stage, with viewport and scissor values supplied dynamically here. The two shaded stages are programmable; the rest are
       configurable fixed-function hardware.</figcaption>
     </figure>
 
@@ -84,10 +92,17 @@
 
     <h3>The cost: rebuilding when things change</h3>
     <p>Because a pipeline is baked, changing anything baked into it means building a new one. This renderer
-    keeps the size of the window out of its pipelines (it's set per frame instead), so resizing costs nothing.
+    keeps the size of the window out of its pipelines (it's set per frame instead), so a resize does not require pipeline recreation. Rebuilding the swapchain and its images still costs
+    time and requires waiting for GPU work to finish.
     But changing the anti-aliasing sample count, switching to wireframe, or a change in the screen's pixel
     format rebuilds every pipeline. A shared <dfn>pipeline cache</dfn> lets the driver reuse compilation work
     within a run when that happens.</p>
+    <aside class="callout try"><p class="callout-title">Try this · Compare the edges</p>
+      <p>Press <kbd>U</kbd> to release the pointer, then use the Engine menu to compare 1× and 4× MSAA if offered. Look at the hut roof against the sky. MSAA smooths geometry edges; it does not add texture detail.</p>
+      <p>Wireframe is currently unavailable with KosmicKrisp, pending driver implementation of
+      <code>fillModeNonSolid</code>. The Engine menu keeps it greyed out until the driver advertises support.</p>
+    </aside>
+    <p class="overview-next"><a href="08-descriptors-materials.html">Skip to next overview →</a></p>
   </section>
 
   <div class="dive-divider"><span>Deeper dive</span></div>
@@ -100,7 +115,7 @@
 
     <h2 id="pipeline-layout">Creating the layout first</h2>
     <p>A <code>Pipeline</code> is made in two steps. The constructor creates only the layout:</p>
-    <!--x src/graphics/pipeline.rs 85-92,95-113--><figure class="code"><pre><code class="language-rust">fn new_with_options(
+    <!--x src/graphics/pipeline.rs 88-95,98-114--><figure class="code"><pre><code class="language-rust">fn new_with_options(
     device: &amp;ash::Device,
     set_layouts: &amp;[vk::DescriptorSetLayout],
     depth_write: bool,
@@ -112,9 +127,7 @@
     let push_constant_range = vk::PushConstantRange {
         stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
         offset: 0,
-        size: (std::mem::size_of::&lt;[[f32; 4]; 4]&gt;()
-            + std::mem::size_of::&lt;[[f32; 4]; 4]&gt;()
-            + std::mem::size_of::&lt;[f32; 4]&gt;()) as u32,
+        size: PUSH_CONSTANT_BYTES,
     };
 
     // 2 - Build your PipelineLayoutCreateInfo with that push-constant baked in and descriptor set layouts
@@ -127,9 +140,12 @@
     };
 
     // 3 - Create the layout as before
-    let vk_layout = unsafe { device.create_pipeline_layout(&amp;layout_info, None)? };</code></pre><figcaption>src/graphics/pipeline.rs:85-113</figcaption></figure><!--/x-->
+    let vk_layout = unsafe { device.create_pipeline_layout(&amp;layout_info, None)? };</code></pre><figcaption><a href="source/src--graphics--pipeline.rs.html#L88">src/graphics/pipeline.rs:88-95</a> · <a href="source/src--graphics--pipeline.rs.html#L98">98-114</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>The push-constant range is 144 bytes: two 4×4 matrices and a <code>vec4</code>, exactly the
-    <code>Push</code> block of <code>main.vert</code>, visible to both shader stages. <code>set_layouts</code> comes from the
+    <code>Push</code> block of <code>main.vert</code>, visible to both shader stages. This is a renderer requirement,
+    not a universal Vulkan allowance: Vulkan 1.3 guarantees only 128 bytes. Device selection checks
+    <code>max_push_constants_size</code> and skips GPUs that cannot supply 144 bytes, with a diagnostic
+    explaining why. A renderer supporting those GPUs would need a smaller block or a buffer for some data. <code>set_layouts</code> comes from the
     caller: for a material, set 0 is the global layout and, if it's textured, set 1 its texture layout
     (<a href="08-descriptors-materials.html">Chapter 8</a>); the sky and grass pass their own. Three constructors
     choose the remaining options:
@@ -157,14 +173,14 @@ pub fn attribute_descriptions() -&gt; [vk::VertexInputAttributeDescription; 6] {
             location: 0,
             format: vk::Format::R32G32B32_SFLOAT,
             offset: offset_of!(Vertex, pos) as u32,
-        },</code></pre><figcaption>src/graphics/mesh.rs:33-50</figcaption></figure><!--/x-->
+        },</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/mesh.rs#L33-L50">src/graphics/mesh.rs:33-50</a></figcaption></figure><!--/x-->
     <p>The remaining five attributes follow the same pattern for <code>normal</code>, <code>color</code>,
     <code>uv</code>, <code>tangent</code> and <code>bitangent</code>, at locations 1–5 in that order, matching
     <code>main.vert</code>. <code>offset_of!</code> computes each field's offset from
     the <code>#[repr(C)]</code> struct, so the description can't drift from the type. Nothing checks that the
     shader's <code>location</code> numbers match; that's your job. The pipeline wraps these into its vertex
     input state, and says the vertices form a list of separate triangles:</p>
-    <!--x src/graphics/pipeline.rs 184-196--><figure class="code"><pre><code class="language-rust">let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
+    <!--x src/graphics/pipeline.rs 185-197--><figure class="code"><pre><code class="language-rust">let vertex_input_info = vk::PipelineVertexInputStateCreateInfo {
     vertex_binding_description_count: binding_descs.len() as u32,
     p_vertex_binding_descriptions: binding_descs.as_ptr(),
     vertex_attribute_description_count: attribute_descs.len() as u32,
@@ -176,7 +192,7 @@ let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
     topology: vk::PrimitiveTopology::TRIANGLE_LIST,
     primitive_restart_enable: vk::FALSE,
     ..Default::default()
-};</code></pre><figcaption>src/graphics/pipeline.rs:184-196</figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="source/src--graphics--pipeline.rs.html#L185">src/graphics/pipeline.rs:185-197</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>The grass passes in a second, per-instance binding through the same function
     (<a href="14-grass.html">Chapter 14</a>), which is why the descriptions are parameters.</p>
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
@@ -186,7 +202,7 @@ let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
     </aside>
 
     <h2>Dynamic state: viewport and scissor</h2>
-    <!--x src/graphics/pipeline.rs 197-209--><figure class="code"><pre><code class="language-rust">// Viewport and scissor depend on the window size, not on shader compatibility.
+    <!--x src/graphics/pipeline.rs 198-210--><figure class="code"><pre><code class="language-rust">// Viewport and scissor depend on the window size, not on shader compatibility.
 // Making them dynamic lets a resized swapchain keep the existing pipelines.
 let viewport_state = vk::PipelineViewportStateCreateInfo {
     viewport_count: 1,
@@ -198,7 +214,7 @@ let dynamic_state = vk::PipelineDynamicStateCreateInfo {
     dynamic_state_count: dynamic_states.len() as u32,
     p_dynamic_states: dynamic_states.as_ptr(),
     ..Default::default()
-};</code></pre><figcaption>src/graphics/pipeline.rs:197-209</figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="source/src--graphics--pipeline.rs.html#L198">src/graphics/pipeline.rs:198-210</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>The pipeline promises one viewport and one scissor rectangle but leaves their values open. The main
     pass supplies them each frame from the current swapchain size:</p>
     <!--x src/vulkan/main_pass.rs 131-136--><figure class="code"><pre><code class="language-rust">let scissor = vk::Rect2D {
@@ -206,11 +222,11 @@ let dynamic_state = vk::PipelineDynamicStateCreateInfo {
     extent,
 };
 device.cmd_set_viewport(cmd, 0, &amp;[viewport]);
-device.cmd_set_scissor(cmd, 0, &amp;[scissor]);</code></pre><figcaption>src/vulkan/main_pass.rs:131-136</figcaption></figure><!--/x-->
+device.cmd_set_scissor(cmd, 0, &amp;[scissor]);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/main_pass.rs#L131-L136">src/vulkan/main_pass.rs:131-136</a></figcaption></figure><!--/x-->
     <p>Without this, every pipeline would bake in a window size and need rebuilding on every resize.</p>
 
     <h2>Rasterizer and multisampling</h2>
-    <!--x src/graphics/pipeline.rs 211-229--><figure class="code"><pre><code class="language-rust">let rasterizer = vk::PipelineRasterizationStateCreateInfo {
+    <!--x src/graphics/pipeline.rs 212-230--><figure class="code"><pre><code class="language-rust">let rasterizer = vk::PipelineRasterizationStateCreateInfo {
     depth_clamp_enable: vk::FALSE,
     rasterizer_discard_enable: vk::FALSE,
     polygon_mode: if self.honor_wireframe &amp;&amp; engine_settings.wireframe {
@@ -228,10 +244,12 @@ let multisampling = vk::PipelineMultisampleStateCreateInfo {
     rasterization_samples: vk::SampleCountFlags::from_raw(engine_settings.msaa_samples),
     sample_shading_enable: vk::FALSE,
     ..Default::default()
-};</code></pre><figcaption>src/graphics/pipeline.rs:211-229</figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="source/src--graphics--pipeline.rs.html#L212">src/graphics/pipeline.rs:212-230</a> · revised source snapshot</figcaption></figure><!--/x-->
     <ul>
       <li><code>polygon_mode</code> switches to lines when the UI's wireframe toggle is on, unless this pipeline
-      opted out (the sky would otherwise become a single outlined triangle).</li>
+      opted out (the sky would otherwise become a single outlined triangle). Vulkan requires
+      <code>fillModeNonSolid</code> for line mode. Device creation enables it only when supported; the UI
+      disables Wireframe on GPUs without it, and the toggle itself also guards against unsupported use.</li>
       <li>Materials cull back faces (the sky and grass pass <code>NONE</code>), with counter-clockwise triangles counting
       as front. Which way round a triangle
       appears depends on the projection's Y direction, which differs from OpenGL's
@@ -247,7 +265,7 @@ let multisampling = vk::PipelineMultisampleStateCreateInfo {
     </aside>
 
     <h2>Blending and depth</h2>
-    <!--x src/graphics/pipeline.rs 232-248--><figure class="code"><pre><code class="language-rust">let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
+    <!--x src/graphics/pipeline.rs 233-249--><figure class="code"><pre><code class="language-rust">let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
     color_write_mask: vk::ColorComponentFlags::R
         | vk::ColorComponentFlags::G
         | vk::ColorComponentFlags::B
@@ -263,10 +281,10 @@ let multisampling = vk::PipelineMultisampleStateCreateInfo {
     src_alpha_blend_factor: vk::BlendFactor::ONE,
     dst_alpha_blend_factor: vk::BlendFactor::ZERO,
     alpha_blend_op: vk::BlendOp::ADD,
-};</code></pre><figcaption>src/graphics/pipeline.rs:232-248</figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="source/src--graphics--pipeline.rs.html#L233">src/graphics/pipeline.rs:233-249</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>When blending is enabled, this is classic "over" compositing: new colour × its alpha, plus existing
     colour × (1 − alpha). The colour write mask lets all four channels through either way.</p>
-    <!--x src/graphics/pipeline.rs 260-267,269-273--><figure class="code"><pre><code class="language-rust">let depth_stencil = vk::PipelineDepthStencilStateCreateInfo {
+    <!--x src/graphics/pipeline.rs 261-268,270-274--><figure class="code"><pre><code class="language-rust">let depth_stencil = vk::PipelineDepthStencilStateCreateInfo {
     depth_test_enable: if self.depth_test { vk::TRUE } else { vk::FALSE },
     depth_write_enable: if self.depth_write {
         vk::TRUE
@@ -279,7 +297,7 @@ let multisampling = vk::PipelineMultisampleStateCreateInfo {
     front: Default::default(),
     back: Default::default(),
     ..Default::default()
-};</code></pre><figcaption>src/graphics/pipeline.rs:260-273</figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="source/src--graphics--pipeline.rs.html#L261">src/graphics/pipeline.rs:261-268</a> · <a href="source/src--graphics--pipeline.rs.html#L270">270-274</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>Depth testing keeps the fragment nearest the camera (<code>LESS</code>). Depth runs from 0 at the near
     plane to 1 at the far: the viewport above sets <code>min_depth</code> 0 and <code>max_depth</code> 1, and
     the projection matrix must produce clip-space depth in 0..1, not OpenGL's −1..1
@@ -293,7 +311,7 @@ let multisampling = vk::PipelineMultisampleStateCreateInfo {
     </aside>
 
     <h2>Putting it together</h2>
-    <!--x src/graphics/pipeline.rs 275-305--><figure class="code"><pre><code class="language-rust">let color_formats = [color_format];
+    <!--x src/graphics/pipeline.rs 276-306--><figure class="code"><pre><code class="language-rust">let color_formats = [color_format];
 let rendering_info = vk::PipelineRenderingCreateInfo {
     color_attachment_count: color_formats.len() as u32,
     p_color_attachment_formats: color_formats.as_ptr(),
@@ -323,7 +341,7 @@ let pipelines = unsafe {
     device
         .create_graphics_pipelines(pipeline_cache, &amp;[pipeline_info], None)
         .map_err(|(_, e)| e)?
-};</code></pre><figcaption>src/graphics/pipeline.rs:275-305</figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="source/src--graphics--pipeline.rs.html#L276">src/graphics/pipeline.rs:276-306</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p><code>PipelineRenderingCreateInfo</code> is the dynamic-rendering piece: one colour attachment in the
     swapchain's format, and a depth attachment in <code>D32_SFLOAT</code>. It's chained on through
     <code>p_next</code> (by a raw pointer cast, as in <a href="03-instance-devices.html">Chapter 3</a>), and
@@ -332,8 +350,8 @@ let pipelines = unsafe {
     compiles the SPIR-V for this exact combination of state, which is why it's comparatively slow and is
     never done mid-frame.</p>
     <p>The shader stages it receives were converted to create-infos just before the depth state:</p>
-    <!--x src/graphics/pipeline.rs 257-258--><figure class="code"><pre><code class="language-rust">let shader_stage_create_infos: Vec&lt;_&gt; =
-    shader_infos.iter().map(|s| s.to_create_info()).collect();</code></pre><figcaption>src/graphics/pipeline.rs:257-258</figcaption></figure><!--/x-->
+    <!--x src/graphics/pipeline.rs 258-259--><figure class="code"><pre><code class="language-rust">let shader_stage_create_infos: Vec&lt;_&gt; =
+    shader_infos.iter().map(|s| s.to_create_info()).collect();</code></pre><figcaption><a href="source/src--graphics--pipeline.rs.html#L258">src/graphics/pipeline.rs:258-259</a> · revised source snapshot</figcaption></figure><!--/x-->
     <aside class="callout rust"><p class="callout-title">Rust note · two small idioms</p>
       <p><code>shader_infos.iter().map(|s| s.to_create_info()).collect()</code> turns each shader stage into its
       create-info and gathers the results. The <code>Vec&lt;_&gt;</code> annotation on the variable tells
@@ -347,14 +365,17 @@ let pipelines = unsafe {
     <h2>Rebuilding</h2>
     <p>Toggling wireframe, or changing the MSAA sample count or swapchain format, bumps a generation counter on
     <code>VulkanBase</code>:</p>
-    <!--x src/vulkan/base.rs 716-723--><figure class="code"><pre><code class="language-rust">pub fn toggle_wireframe(&amp;mut self) {
+    <!--x src/vulkan/base.rs 718-728--><figure class="code"><pre><code class="language-rust">pub fn toggle_wireframe(&amp;mut self) {
+    if !self.supports_wireframe {
+        return;
+    }
     let old = self.engine_settings.wireframe;
     self.engine_settings.wireframe = !self.engine_settings.wireframe;
     if self.engine_settings.wireframe != old {
         // Wireframe affects pipelines; ensure rebuild next frame
         self.pipeline_generation = self.pipeline_generation.saturating_add(1);
     }
-}</code></pre><figcaption>src/vulkan/base.rs:716-723</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="source/src--vulkan--base.rs.html#L718">src/vulkan/base.rs:718-728</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>At the start of each frame, the render graph compares that counter with the last one it saw. If it has
     changed, the graph waits for the GPU once and asks every owner to rebuild:</p>
     <!--x src/vulkan/render_graph.rs 221-232,242-243--><figure class="code"><pre><code class="language-rust">// Rebuild pipelines only when engine-signaled generation changes (swapchain/MSAA/wireframe)
@@ -371,9 +392,9 @@ if swap_gen != self.swap_gen_seen {
     app.material_manager.recreate_pipelines(vb)?;
 // ...
     self.swap_gen_seen = swap_gen;
-}</code></pre><figcaption>src/vulkan/render_graph.rs:221-243</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/render_graph.rs#L221-L243">src/vulkan/render_graph.rs:221-243</a></figcaption></figure><!--/x-->
     <p>Each material's rebuild goes through <code>Pipeline::recreate</code>:</p>
-    <!--x src/graphics/pipeline.rs 337-352--><figure class="code"><pre><code class="language-rust">let old_pipeline = self.vk_pipeline;
+    <!--x src/graphics/pipeline.rs 338-353--><figure class="code"><pre><code class="language-rust">let old_pipeline = self.vk_pipeline;
 self.create_graphics_pipeline(
     device,
     pipeline_cache,
@@ -388,7 +409,7 @@ self.create_graphics_pipeline(
 unsafe {
     device.destroy_pipeline(old_pipeline, None);
 }
-Ok(())</code></pre><figcaption>src/graphics/pipeline.rs:337-352</figcaption></figure><!--/x-->
+Ok(())</code></pre><figcaption><a href="source/src--graphics--pipeline.rs.html#L338">src/graphics/pipeline.rs:338-353</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>The old pipeline is destroyed only after its replacement exists. If creation fails, <code>?</code>
     returns early and <code>self</code> still holds the old, valid handle, a safer arrangement than the swapchain's (<a href="04-swapchain.html">Chapter 4</a>), whose old handle is
     unusable once replacement has been attempted.</p>
@@ -397,8 +418,8 @@ Ok(())</code></pre><figcaption>src/graphics/pipeline.rs:337-352</figcaption></fi
   <section id="recap" class="recap">
     <h2>Recap</h2>
     <ul>
-      <li>A graphics pipeline bakes shaders and all fixed-function state into one immutable object. Different
-      state means a different pipeline.</li>
+      <li>A graphics pipeline bakes shaders and the state chosen to be fixed into one immutable object.
+      Dynamic state is supplied when recording commands; changing baked state needs a new pipeline.</li>
       <li>The pipeline layout is the resource signature: descriptor set layouts plus a 144-byte push-constant
       range.</li>
       <li>Dynamic rendering replaces render passes and framebuffers; pipelines name only attachment formats.</li>
@@ -409,7 +430,7 @@ Ok(())</code></pre><figcaption>src/graphics/pipeline.rs:337-352</figcaption></fi
 
   <nav class="pager"><a class="prev" href="06-shaders.html">← 06 · Shaders</a><a class="next" href="08-descriptors-materials.html">08 · Descriptors and materials →</a></nav>
 </main>
-<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<footer class="site">Based on commit <code>79546db</code>, with local device-capability and UI dependency fixes. · <a href="index.html#contents">Contents</a></footer>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>

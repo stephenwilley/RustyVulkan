@@ -6,7 +6,7 @@
 <title>03 · Instance, devices and queues · RustyVulkan Guide</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2">
 <link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 </head>
@@ -14,11 +14,16 @@
 <header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
 <main class="chapter">
   <header class="chapter-head">
-    <p class="kicker">Part 2 · Chapter 03 · <span class="readtime">~9 min read</span></p>
+    <p class="kicker">Part 2 · Chapter 03 · <span class="readtime">~9 min prose skim</span></p>
     <h1>Instance, devices and queues</h1>
     <p class="lede">Before anything can be drawn, the program has to connect to Vulkan, look at the GPUs on the
     machine, pick one, switch on the features it needs, and get a queue to send work to.</p>
   </header>
+  <nav class="chapter-jumps" aria-label="Sections in this chapter">
+    <a href="#big-picture">Overview</a>
+    <a href="#deep-dive">Source walkthrough</a>
+    <a href="#recap">Recap</a>
+  </nav>
 
   <section id="big-picture">
     <h2><span class="tag">Overview</span> The big picture</h2>
@@ -96,6 +101,7 @@
     window ("present to a surface") is a separate question that depends on the window. That's why the window's
     <dfn>surface</dfn> is created before the GPU is chosen. This renderer looks for one family that can both draw and present, and uses a single queue from
     it for everything.</p>
+    <p class="overview-next"><a href="04-swapchain.html">Skip to next overview →</a></p>
   </section>
 
   <div class="dive-divider"><span>Deeper dive</span></div>
@@ -106,7 +112,7 @@
     (Patterns from <a href="02-rust-meets-c.html#rust-unsafe">Chapter 2</a> aren't re-explained.)</p>
 
     <h2>Checking for the validation layer</h2>
-    <!--x src/vulkan/base/setup.rs 436-460--><figure class="code"><pre><code class="language-rust">let entry = Entry::linked();
+    <!--x src/vulkan/base/setup.rs 456-480--><figure class="code"><pre><code class="language-rust">let entry = Entry::linked();
 
 #[cfg(debug_assertions)]
 let layer_names = [c"VK_LAYER_KHRONOS_validation"];
@@ -130,7 +136,7 @@ let layer_name_ptrs: Vec&lt;*const i8&gt; = Vec::new();
         }
     }
     println!("✅ Validation layers available and requested.");
-}</code></pre><figcaption>src/vulkan/base/setup.rs:436-460</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L456">src/vulkan/base/setup.rs:456-480</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p><code>Entry::linked()</code> gives the function table for the loader linked in at build time. Then, in
     a debug build, the code asks the loader which layers are installed. If the validation layer is missing, it
     fails with a clear message rather than silently running unchecked (so debug runs need the layer installed,
@@ -166,7 +172,7 @@ let ext_names =
 let mut extension_ptrs: Vec&lt;*const i8&gt; = ext_names.to_vec();
 
 #[cfg(debug_assertions)]
-extension_ptrs.push(ash::ext::debug_utils::NAME.as_ptr());</code></pre><figcaption>src/vulkan/base/setup.rs:14-30</figcaption></figure><!--/x-->
+extension_ptrs.push(ash::ext::debug_utils::NAME.as_ptr());</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L14">src/vulkan/base/setup.rs:14-30</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p><code>enumerate_required_extensions</code> comes from the <code>ash-window</code> crate. It asks the
     windowing system which surface extensions this platform needs (on macOS, the generic surface extension
     plus a Metal-specific one), so the code never names them. In debug builds it adds
@@ -178,7 +184,7 @@ let mut instance_flags = vk::InstanceCreateFlags::empty();
 if supports_portability_enum {
     extension_ptrs.push(vk::KHR_PORTABILITY_ENUMERATION_NAME.as_ptr());
     instance_flags |= vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR;
-}</code></pre><figcaption>src/vulkan/base/setup.rs:40-46</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L40">src/vulkan/base/setup.rs:40-46</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>Some Vulkan implementations, MoltenVK being the best known, run on top of another API and can't support
     every part of the specification. Vulkan calls these <dfn>portability</dfn> drivers. To stop programs
     accidentally using one, the loader hides them unless the instance opts in with this flag and extension.
@@ -189,7 +195,7 @@ if supports_portability_enum {
     <h2>Hearing from the validation layer</h2>
     <p>With the debug extension enabled, the code registers a <dfn>debug messenger</dfn>: a callback that the
     validation layer calls whenever it has something to say.</p>
-    <!--x src/vulkan/base/setup.rs 678-689--><figure class="code"><pre><code class="language-rust">let loader = ash::ext::debug_utils::Instance::new(entry, instance);
+    <!--x src/vulkan/base/setup.rs 701-712--><figure class="code"><pre><code class="language-rust">let loader = ash::ext::debug_utils::Instance::new(entry, instance);
 let create_info = vk::DebugUtilsMessengerCreateInfoEXT {
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
         | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
@@ -200,7 +206,7 @@ let create_info = vk::DebugUtilsMessengerCreateInfoEXT {
     pfn_user_callback: Some(vulkan_debug_callback),
     ..Default::default()
 };
-let messenger = unsafe { loader.create_debug_utils_messenger(&amp;create_info, None)? };</code></pre><figcaption>src/vulkan/base/setup.rs:678-689</figcaption></figure><!--/x-->
+let messenger = unsafe { loader.create_debug_utils_messenger(&amp;create_info, None)? };</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L701">src/vulkan/base/setup.rs:701-712</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>The callback itself just formats the message and prints it to standard error. Returning
     <code>vk::FALSE</code> tells the layer not to abort the Vulkan call that triggered the message:</p>
     <!--x src/vulkan/base.rs 78-86,100-103--><figure class="code"><pre><code class="language-rust">#[cfg(debug_assertions)]
@@ -216,7 +222,7 @@ unsafe extern "system" fn vulkan_debug_callback(
         eprintln!("{} {} {:?}", severity, ty, message);
     }
     vk::FALSE
-}</code></pre><figcaption>src/vulkan/base.rs:78-103</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="source/src--vulkan--base.rs.html#L78">src/vulkan/base.rs:78-86</a> · <a href="source/src--vulkan--base.rs.html#L100">100-103</a> · revised source snapshot</figcaption></figure><!--/x-->
     <aside class="callout rust"><p class="callout-title">Rust note · a function C can call</p>
       <p><code>extern "system"</code> tells the compiler to use the platform's C calling convention, so that
       Vulkan (C code) can call this Rust function through a pointer. Its parameters are raw C types: a raw
@@ -236,10 +242,23 @@ unsafe extern "system" fn vulkan_debug_callback(
     <p>The window surface is created next (<a href="04-swapchain.html">Chapter 4</a>), because presentation
     support is needed to judge GPUs. Then <code>choose_device_and_queue_family</code> tries each GPU, first
     looking only at discrete ones and then at everything else:</p>
-    <!--x src/vulkan/base/setup.rs 91-108,113-118,131-152--><figure class="code"><pre><code class="language-rust">for prefer_discrete in [true, false] {
+    <!--x src/vulkan/base/setup.rs 91-121,126-131,144-165--><figure class="code"><pre><code class="language-rust">for prefer_discrete in [true, false] {
     for &amp;physical_device in physical_devices {
         let props = unsafe { instance.get_physical_device_properties(physical_device) };
         if (props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU) != prefer_discrete {
+            continue;
+        }
+
+        // Scene and grass shaders share a 144-byte push-constant ABI.
+        // Vulkan 1.3 only guarantees 128 bytes, so check before creating resources.
+        if props.limits.max_push_constants_size
+            &lt; crate::graphics::pipeline::PUSH_CONSTANT_BYTES
+        {
+            eprintln!(
+                "Skipping GPU: maxPushConstantsSize={} bytes; renderer requires {}",
+                props.limits.max_push_constants_size,
+                crate::graphics::pipeline::PUSH_CONSTANT_BYTES,
+            );
             continue;
         }
 
@@ -283,10 +302,13 @@ unsafe extern "system" fn vulkan_debug_callback(
     }
 }
 
-Err("No Vulkan device supports graphics, presentation, and dynamic rendering".into())</code></pre><figcaption>src/vulkan/base/setup.rs:91-152</figcaption></figure><!--/x-->
-    <p>For each candidate, it applies three tests in turn and moves to the next GPU (<code>continue</code>) on
+Err("No Vulkan device supports graphics, presentation, dynamic rendering, and at least 144 bytes of push constants".into())</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L91">src/vulkan/base/setup.rs:91-121</a> · <a href="source/src--vulkan--base--setup.rs.html#L126">126-131</a> · <a href="source/src--vulkan--base--setup.rs.html#L144">144-165</a> · revised source snapshot</figcaption></figure><!--/x-->
+    <p>For each candidate, it applies four tests in turn and moves to the next GPU (<code>continue</code>) on
     the first failure:</p>
     <ol>
+      <li><strong>Can it hold this renderer's per-draw data?</strong> The scene and grass use 144 bytes of
+      push constants (<a href="07-pipelines.html#pipeline-layout">Chapter 7</a>). Vulkan 1.3 guarantees only 128, so the device's reported limit must be
+      checked. A GPU below 144 is skipped with a diagnostic before any pipeline is created.</li>
       <li><strong>Can it show images in a window?</strong> That's the swapchain device extension. Without it,
       there's nothing to display.</li>
       <li><strong>Does it have dynamic rendering?</strong> This renderer draws without Vulkan 1.0's "render pass"
@@ -299,12 +321,13 @@ Err("No Vulkan device supports graphics, presentation, and dynamic rendering".in
     </ol>
     <p><code>has_extension</code> is a closure that captures the GPU's extension list.</p>
     <p>Once a GPU is chosen, <code>new</code> records a few of its capabilities for later:</p>
-    <!--x src/vulkan/base/setup.rs 490-495--><figure class="code"><pre><code class="language-rust">let sample_count_flags_supported = chosen_props.limits.framebuffer_color_sample_counts
+    <!--x src/vulkan/base/setup.rs 510-516--><figure class="code"><pre><code class="language-rust">let sample_count_flags_supported = chosen_props.limits.framebuffer_color_sample_counts
     &amp; chosen_props.limits.framebuffer_depth_sample_counts;
 let supported_features = unsafe { instance.get_physical_device_features(physical_device) };
+let supports_wireframe = supported_features.fill_mode_non_solid == vk::TRUE;
 let supports_multi_draw_indirect = supported_features.multi_draw_indirect == vk::TRUE;
 let supports_draw_indirect_first_instance =
-    supported_features.draw_indirect_first_instance == vk::TRUE;</code></pre><figcaption>src/vulkan/base/setup.rs:490-495</figcaption></figure><!--/x-->
+    supported_features.draw_indirect_first_instance == vk::TRUE;</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L510">src/vulkan/base/setup.rs:510-516</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>The supported multisample counts for colour and depth are intersected, giving the anti-aliasing options
     the UI can offer (<a href="10-render-graph.html">Chapter 10</a>). Multi-draw indirect, which lets one
     command issue many draws, and indirect "first instance", which lets those commands pick out a range of
@@ -314,7 +337,13 @@ let supports_draw_indirect_first_instance =
     <h2>Opening the logical device</h2>
     <p><code>create_logical_device_and_queue</code> asks for exactly what the renderer uses and nothing
     more:</p>
-    <!--x src/vulkan/base/setup.rs 174-194,219-237--><figure class="code"><pre><code class="language-rust">let device_features = vk::PhysicalDeviceFeatures {
+    <!--x src/vulkan/base/setup.rs 188-214,239-257--><figure class="code"><pre><code class="language-rust">let device_features = vk::PhysicalDeviceFeatures {
+    // LINE polygon mode requires this feature to be enabled, not just supported.
+    fill_mode_non_solid: if enable_wireframe {
+        vk::TRUE
+    } else {
+        vk::FALSE
+    },
     multi_draw_indirect: if enable_multi_draw_indirect {
         vk::TRUE
     } else {
@@ -354,11 +383,11 @@ let device_create_info = vk::DeviceCreateInfo {
 let device = unsafe { instance.create_device(physical_device, &amp;device_create_info, None)? };
 let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 println!("✅ Logical device and graphics queue ready");
-Ok((device, queue))</code></pre><figcaption>src/vulkan/base/setup.rs:174-237</figcaption></figure><!--/x-->
+Ok((device, queue))</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L188">src/vulkan/base/setup.rs:188-214</a> · <a href="source/src--vulkan--base--setup.rs.html#L239">239-257</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>Reading it in order:</p>
     <ul>
-      <li><strong>Features.</strong> Only multi-draw indirect and indirect first-instance are requested, each
-      only when supported. The
+      <li><strong>Features.</strong> Multi-draw indirect, indirect first-instance and non-solid fill mode
+      (for wireframe) are requested only when supported. The
       comment records a lesson: an earlier version switched on every advertised feature and broke device
       creation on some drivers.</li>
       <li><strong>Queues.</strong> One queue from the chosen family. Every queue needs a priority between 0 and
@@ -402,7 +431,9 @@ Ok((device, queue))</code></pre><figcaption>src/vulkan/base/setup.rs:174-237</fi
       <li>Portability enumeration is enabled whenever the loader offers it, so portability drivers stay usable;
       KosmicKrisp doesn't need it.</li>
       <li>A GPU qualifies if it has the swapchain extension, dynamic rendering, and a queue family that can draw
-      and present to the window's surface. A discrete GPU is preferred.</li>
+      and present to the window's surface, plus at least 144 bytes of push constants. A discrete GPU is preferred.
+      Wireframe is optional: supported devices enable non-solid fill mode, while others keep the UI toggle disabled.
+      It is currently unavailable with KosmicKrisp, pending driver implementation of <code>fillModeNonSolid</code>.</li>
       <li>The logical device enables only the features the renderer uses, and provides the single queue used
       for all work.</li>
     </ul>
@@ -410,7 +441,7 @@ Ok((device, queue))</code></pre><figcaption>src/vulkan/base/setup.rs:174-237</fi
 
   <nav class="pager"><a class="prev" href="02-rust-meets-c.html">← 02 · Rust meets a C API</a><a class="next" href="04-swapchain.html">04 · Surfaces and the swapchain →</a></nav>
 </main>
-<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<footer class="site">Based on commit <code>79546db</code>, with local device-capability and UI dependency fixes. · <a href="index.html#contents">Contents</a></footer>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>

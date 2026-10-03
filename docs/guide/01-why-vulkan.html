@@ -6,7 +6,7 @@
 <title>01 · Why Vulkan, and a map of this repo · RustyVulkan Guide</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2">
 <link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 </head>
@@ -14,14 +14,34 @@
 <header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
 <main class="chapter">
   <header class="chapter-head">
-    <p class="kicker">Part 1 · Chapter 01 · <span class="readtime">~10 min read</span></p>
+    <p class="kicker">Part 1 · Chapter 01 · <span class="readtime">~10 min prose skim</span></p>
     <h1>Why Vulkan, and a map of this repo</h1>
     <p class="lede">What changed when graphics programming moved from OpenGL to Vulkan, what one frame of this
     renderer looks like, and how the program gets itself running on a Mac.</p>
   </header>
+  <nav class="chapter-jumps" aria-label="Sections in this chapter">
+    <a href="#big-picture">Overview</a>
+    <a href="#deep-dive">Source walkthrough</a>
+    <a href="#recap">Recap</a>
+  </nav>
 
   <section id="big-picture">
     <h2><span class="tag">Overview</span> The big picture</h2>
+
+    <p>There is a lot to set up before Vulkan draws anything. If you remember getting an OpenGL triangle
+    on screen in fifty lines, a Vulkan version running to hundreds or even a thousand can feel like a wall.
+    That upfront boilerplate is real: devices, memory, drawing state and synchronisation all need decisions
+    that OpenGL made for you. This chapter starts with the setup, and the next chapters give those decisions
+    meaning. You can follow the overviews first, then return to the source when you want the details.</p>
+
+    <aside class="callout gl"><p class="callout-title">If your OpenGL memories start with glBegin</p>
+      <p>The familiar triangle is still vertices transformed into a picture. The way you supply it has changed:
+      vertex buffers replace streams of <code>glVertex</code> calls; your code builds the matrices that once
+      lived on OpenGL's matrix stacks; and small GPU programs called <em>shaders</em> do the transformation
+      and lighting that <code>glLight</code> and the fixed-function pipeline supplied. GLSL, their C-like
+      language, gets a refresher in <a href="06-shaders.html#big-picture">Chapter 6</a>. You don't need to
+      know VAOs, uniform buffers or instancing yet; the comparisons explain them where they appear.</p>
+    </aside>
 
     <h3>OpenGL did a lot behind your back</h3>
     <p>OpenGL was designed in the early 1990s around a simple idea: the programmer sets some state ("this texture
@@ -44,7 +64,8 @@
       <li>when one piece of work must wait for another.</li>
     </ul>
     <p>The result is famously verbose (a first triangle takes hundreds of lines), but the driver becomes thin
-    and predictable: nothing expensive happens unless you asked for it. Much of this codebase is that explicit
+    and more predictable: more costs and dependencies are explicit, although the driver and operating system
+    still affect performance. Much of this codebase is that explicit
     setup, and this guide is about reading it.</p>
 
     <h3>A few words you'll meet everywhere</h3>
@@ -168,6 +189,7 @@
     <p>Compared with OpenGL, nothing here is implicit. There's no "swap buffers" call that quietly decides when
     work runs and when to wait. The renderer records the whole frame into a command buffer, submits it in one go,
     and every wait is one it asked for, using fences and semaphores (<a href="09-frame-loop.html">Chapter 9</a>).</p>
+    <p class="overview-next"><a href="02-rust-meets-c.html">Skip to next overview →</a></p>
   </section>
 
   <div class="dive-divider"><span>Deeper dive</span></div>
@@ -211,7 +233,7 @@ mod vulkan;
 use app::app::App;
 use std::path::Path;
 #[cfg(target_os = "macos")]
-use std::path::PathBuf;</code></pre><figcaption>src/main.rs:11-18</figcaption></figure><!--/x-->
+use std::path::PathBuf;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/main.rs#L11-L18">src/main.rs:11-18</a></figcaption></figure><!--/x-->
     <aside class="callout rust" id="rust-modules"><p class="callout-title">Rust note · modules</p>
       <p>C has no module system; a program is just a pile of <code>.c</code> files that the linker stitches
       together, with headers to share declarations. In Rust, <code>mod app;</code> says "there is a module
@@ -244,7 +266,7 @@ use std::path::PathBuf;</code></pre><figcaption>src/main.rs:11-18</figcaption></
         return std::process::ExitCode::FAILURE;
     }
     std::process::ExitCode::SUCCESS
-}</code></pre><figcaption>src/main.rs:84-94</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/main.rs#L84-L94">src/main.rs:84-94</a></figcaption></figure><!--/x-->
     <p><code>configure_runtime</code> fixes up the process environment, then <code>App::new().run()</code> runs
     the application until the window closes. If either fails, the error is printed and the process exits with a
     failure status.</p>
@@ -254,6 +276,12 @@ use std::path::PathBuf;</code></pre><figcaption>src/main.rs:11-18</figcaption></
       runs its block only when the result is an error. The <code>?</code> operator you'll see on almost every
       Vulkan call means "if this is an error, return it to my caller right now". The full story is in
       <a href="02-rust-meets-c.html#rust-result">Chapter 2</a>.</p>
+    </aside>
+
+    <aside class="callout"><p class="callout-title">Optional · macOS startup details</p>
+      <p>The rest of this walkthrough explains how the app finds its assets and Vulkan driver on macOS.
+      On a first reading, you can <a href="02-rust-meets-c.html">skip to Chapter 2</a> for the Rust foundations
+      and return here when you're curious about startup or packaging.</p>
     </aside>
 
     <h2>Finding the assets when launched from Finder</h2>
@@ -277,9 +305,10 @@ use std::path::PathBuf;</code></pre><figcaption>src/main.rs:11-18</figcaption></
 
     configure_kosmickrisp(bundle_resources.as_deref())?;
     Ok(())
-}</code></pre><figcaption>src/main.rs:23-37</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/main.rs#L23-L37">src/main.rs:23-37</a></figcaption></figure><!--/x-->
     <aside class="callout rust" id="rust-option"><p class="callout-title">Rust note · Option, and chaining on it</p>
-      <p>Rust has no null pointers. A value that might be absent has type <code>Option&lt;T&gt;</code>, which is
+      <p>Rust references cannot be null; raw pointers used at the C boundary can be. A value that might be absent
+      normally has type <code>Option&lt;T&gt;</code>, which is
       either <code>Some(value)</code> or <code>None</code>, and the compiler won't let you use the value without
       handling the <code>None</code> case.</p>
       <p>The <code>let bundle_resources = …</code> statement is a chain of small steps on an <code>Option</code>. Read them as a pipeline that stops
@@ -339,7 +368,7 @@ fn configure_kosmickrisp(bundle_resources: Option&lt;&amp;Path&gt;) -&gt; std::i
         driver_manifest.display()
     );
     Ok(())
-}</code></pre><figcaption>src/main.rs:39-77</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/main.rs#L39-L77">src/main.rs:39-77</a></figcaption></figure><!--/x-->
     <p>The search order is: the app bundle; otherwise the SDK named by <code>$VULKAN_SDK</code>; otherwise the
     SDK's system-wide install under <code>/usr/local</code>. If none exists, it fails early with
     instructions rather than letting Vulkan fail mysteriously later.</p>
@@ -360,7 +389,7 @@ fn configure_kosmickrisp(bundle_resources: Option&lt;&amp;Path&gt;) -&gt; std::i
     <!--x src/main.rs 79-82--><figure class="code"><pre><code class="language-rust">#[cfg(not(target_os = "macos"))]
 fn configure_kosmickrisp(_bundle_resources: Option&lt;&amp;Path&gt;) -&gt; std::io::Result&lt;()&gt; {
     Ok(())
-}</code></pre><figcaption>src/main.rs:79-82</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/main.rs#L79-L82">src/main.rs:79-82</a></figcaption></figure><!--/x-->
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
       <p>In OpenGL you never chose a driver; the windowing system handed you a context. Vulkan's loader-and-ICD
       design makes the choice explicit and lets several drivers coexist, which is how a Vulkan-on-Metal driver
@@ -391,7 +420,7 @@ fn configure_kosmickrisp(_bundle_resources: Option&lt;&amp;Path&gt;) -&gt; std::
 
   <nav class="pager"><a class="prev" href="index.html#contents">← Contents</a><a class="next" href="02-rust-meets-c.html">02 · Rust meets a C API →</a></nav>
 </main>
-<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<footer class="site">Based on commit <code>79546db</code>, with local device-capability and UI dependency fixes. · <a href="index.html#contents">Contents</a></footer>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>

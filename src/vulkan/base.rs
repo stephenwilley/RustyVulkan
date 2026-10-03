@@ -181,6 +181,8 @@ pub struct VulkanBase {
     pub supports_draw_indirect_first_instance: bool,
     /// Device limit used to split unusually large indirect command lists safely.
     pub max_draw_indirect_count: u32,
+    /// LINE polygon mode is available only when fillModeNonSolid was enabled.
+    pub supports_wireframe: bool,
     /// Tracks a pending MSAA sample count change requested by the UI.
     pending_msaa_samples: Option<u32>,
     /// Set when acquire or presentation reports an out-of-date/suboptimal
@@ -714,6 +716,9 @@ impl VulkanBase {
 
     /// Toggles the wireframe mode in the debug settings.
     pub fn toggle_wireframe(&mut self) {
+        if !self.supports_wireframe {
+            return;
+        }
         let old = self.engine_settings.wireframe;
         self.engine_settings.wireframe = !self.engine_settings.wireframe;
         if self.engine_settings.wireframe != old {

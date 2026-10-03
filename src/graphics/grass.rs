@@ -546,8 +546,8 @@ impl GrassRenderer {
             let dx = chunk.centre[0] - camera_position.x;
             let dz = chunk.centre[1] - camera_position.z;
             let distance = ((dx * dx + dz * dz).sqrt() - chunk.radius).max(0.0);
-            // A conservative corner test can reject a box intersected by the near plane.
-            // Always retain the chunk under the player, then frustum-test the rest.
+            // Retain the chunk beneath the camera as an extra precaution.
+            // Frustum-test the remaining chunks.
             let camera_is_over_chunk =
                 dx.abs() <= GRASS_CHUNK_SIZE * 0.5 && dz.abs() <= GRASS_CHUNK_SIZE * 0.5;
             if distance <= MID_GRASS_DISTANCE

@@ -41,3 +41,4 @@ so a driver can still be selected explicitly for diagnostics.
 
 See [PACKAGING.md](PACKAGING.md) for creating a standalone macOS application.
 See [DEVELOPMENT.md](DEVELOPMENT.md) for the code map, ownership rules, and checks.
+See [docs/guide/index.html](docs/guide/index.html) for a chapter-by-chapter guide to how the renderer works.

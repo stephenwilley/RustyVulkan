@@ -95,6 +95,19 @@ impl VulkanBase {
                     continue;
                 }
 
+                // Scene and grass shaders share a 144-byte push-constant ABI.
+                // Vulkan 1.3 only guarantees 128 bytes, so check before creating resources.
+                if props.limits.max_push_constants_size
+                    < crate::graphics::pipeline::PUSH_CONSTANT_BYTES
+                {
+                    eprintln!(
+                        "Skipping GPU: maxPushConstantsSize={} bytes; renderer requires {}",
+                        props.limits.max_push_constants_size,
+                        crate::graphics::pipeline::PUSH_CONSTANT_BYTES,
+                    );
+                    continue;
+                }
+
                 let extensions =
                     unsafe { instance.enumerate_device_extension_properties(physical_device)? };
                 let has_extension = |required: &CStr| {
@@ -149,7 +162,7 @@ impl VulkanBase {
             }
         }
 
-        Err("No Vulkan device supports graphics, presentation, and dynamic rendering".into())
+        Err("No Vulkan device supports graphics, presentation, dynamic rendering, and at least 144 bytes of push constants".into())
     }
 
     /// Creates a logical device and retrieves the graphics queue.
@@ -165,6 +178,7 @@ impl VulkanBase {
         queue_family_index: u32,
         enable_multi_draw_indirect: bool,
         enable_draw_indirect_first_instance: bool,
+        enable_wireframe: bool,
     ) -> Result<(ash::Device, vk::Queue), vk::Result> {
         let queue_priority = [1.0_f32];
 
@@ -172,6 +186,12 @@ impl VulkanBase {
         // all advertised features and forcing anisotropy on made device
         // creation fail on otherwise usable Vulkan implementations.
         let device_features = vk::PhysicalDeviceFeatures {
+            // LINE polygon mode requires this feature to be enabled, not just supported.
+            fill_mode_non_solid: if enable_wireframe {
+                vk::TRUE
+            } else {
+                vk::FALSE
+            },
             multi_draw_indirect: if enable_multi_draw_indirect {
                 vk::TRUE
             } else {
@@ -490,6 +510,7 @@ impl VulkanBase {
         let sample_count_flags_supported = chosen_props.limits.framebuffer_color_sample_counts
             & chosen_props.limits.framebuffer_depth_sample_counts;
         let supported_features = unsafe { instance.get_physical_device_features(physical_device) };
+        let supports_wireframe = supported_features.fill_mode_non_solid == vk::TRUE;
         let supports_multi_draw_indirect = supported_features.multi_draw_indirect == vk::TRUE;
         let supports_draw_indirect_first_instance =
             supported_features.draw_indirect_first_instance == vk::TRUE;
@@ -501,6 +522,7 @@ impl VulkanBase {
             graphics_queue_family_index,
             supports_multi_draw_indirect,
             supports_draw_indirect_first_instance,
+            supports_wireframe,
         )?;
         // This cache lives for the device lifetime and is shared by every graphics pipeline.
         let pipeline_cache =
@@ -661,6 +683,7 @@ impl VulkanBase {
             sample_count_flags_supported,
             supports_multi_draw_indirect,
             supports_draw_indirect_first_instance,
+            supports_wireframe,
             max_draw_indirect_count: chosen_props.limits.max_draw_indirect_count,
             pending_msaa_samples: None,
             swapchain_recreation_needed: false,

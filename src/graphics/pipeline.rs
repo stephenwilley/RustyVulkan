@@ -28,6 +28,9 @@ use crate::vulkan::base::EngineSettings;
 use super::mesh::Vertex;
 use super::shaders::ShaderStageInfo;
 
+/// Shared scene/grass push-constant ABI: two mat4s and one vec4.
+pub(crate) const PUSH_CONSTANT_BYTES: u32 = 144;
+
 /// Represents the Vulkan graphics pipeline, including shader modules and layout.
 /// It encapsulates the shader modules used for vertex and fragment stages,
 /// and the pipeline layout used for rendering.
@@ -95,9 +98,7 @@ impl Pipeline {
         let push_constant_range = vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             offset: 0,
-            size: (std::mem::size_of::<[[f32; 4]; 4]>()
-                + std::mem::size_of::<[[f32; 4]; 4]>()
-                + std::mem::size_of::<[f32; 4]>()) as u32,
+            size: PUSH_CONSTANT_BYTES,
         };
 
         // 2 - Build your PipelineLayoutCreateInfo with that push-constant baked in and descriptor set layouts

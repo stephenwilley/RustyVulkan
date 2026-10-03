@@ -6,7 +6,7 @@
 <title>05 · GPU memory · RustyVulkan Guide</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2">
 <link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 </head>
@@ -14,11 +14,16 @@
 <header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
 <main class="chapter">
   <header class="chapter-head">
-    <p class="kicker">Part 2 · Chapter 05 · <span class="readtime">~9 min read</span></p>
+    <p class="kicker">Part 2 · Chapter 05 · <span class="readtime">~9 min prose skim</span></p>
     <h1>GPU memory</h1>
     <p class="lede">Buffers and images, the different kinds of memory behind them, and the two ways this
     renderer gets data from the CPU onto the GPU.</p>
   </header>
+  <nav class="chapter-jumps" aria-label="Sections in this chapter">
+    <a href="#big-picture">Overview</a>
+    <a href="#deep-dive">Source walkthrough</a>
+    <a href="#recap">Recap</a>
+  </nav>
 
   <section id="big-picture">
     <h2><span class="tag">Overview</span> The big picture</h2>
@@ -43,8 +48,11 @@
       <li><strong>Device-local</strong>: fastest for the GPU. On a PC graphics card this is the card's own
       memory, which the CPU often can't see at all.</li>
       <li><strong>Host-visible</strong>: the CPU can <em>map</em> it, getting an ordinary pointer to write
-      through. On a discrete card it lives across the bus, so it's slower for the GPU to read.</li>
+      through. It can be system memory or CPU-accessible device-local memory; performance depends on
+      which memory type the driver exposes.</li>
     </ul>
+    <p>These are independent properties: a memory type can be both device-local and host-visible, even
+    on a discrete graphics card.</p>
     <p>On Apple Silicon the CPU and GPU share the same physical memory (<em>unified memory</em>), so the
     distinction is far smaller.
     Vulkan code is still written to handle both, which is why the code states a preference for each
@@ -109,6 +117,7 @@
     arrangement its data is in, and each kind of use expects a particular one. Moving an image from one layout
     to another is an explicit step, recorded with a <em>barrier</em>, which also makes sure the previous step
     has finished. <a href="10-render-graph.html#barriers">Chapter 10</a> covers barriers properly.</p>
+    <p class="overview-next"><a href="06-shaders.html">Skip to next overview →</a></p>
   </section>
 
   <div class="dive-divider"><span>Deeper dive</span></div>
@@ -116,11 +125,11 @@
   <section id="deep-dive">
     <h2>The allocator</h2>
     <p>VMA is created once, straight after the device, in <code>VulkanBase::new</code>:</p>
-    <!--x src/vulkan/base/setup.rs 511-515--><figure class="code"><pre><code class="language-rust">// Create a Vulkan Memory Allocator (VMA) instance.
+    <!--x src/vulkan/base/setup.rs 533-537--><figure class="code"><pre><code class="language-rust">// Create a Vulkan Memory Allocator (VMA) instance.
 let mut allocator_info =
     vk_mem::AllocatorCreateInfo::new(&amp;instance, &amp;device, physical_device);
 allocator_info.flags |= vk_mem::AllocatorCreateFlags::EXT_MEMORY_BUDGET;
-let allocator = unsafe { Allocator::new(allocator_info)? };</code></pre><figcaption>src/vulkan/base/setup.rs:511-515</figcaption></figure><!--/x-->
+let allocator = unsafe { Allocator::new(allocator_info)? };</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L533">src/vulkan/base/setup.rs:533-537</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>The <code>EXT_MEMORY_BUDGET</code> flag lets VMA track how much memory the system is willing to give
     this process. The allocator is stored as an <code>Option</code> so it can be destroyed at a chosen moment
     during teardown (<a href="02-rust-meets-c.html#rust-drop">Chapter 2</a>). That's why later code reaches
@@ -138,7 +147,7 @@ pub struct Vertex {
     pub uv: [f32; 2],
     pub tangent: [f32; 3],
     pub bitangent: [f32; 3],
-}</code></pre><figcaption>src/graphics/mesh.rs:19-29</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/mesh.rs#L19-L29">src/graphics/mesh.rs:19-29</a></figcaption></figure><!--/x-->
     <aside class="callout rust" id="rust-repr-c"><p class="callout-title">Rust note · repr(C), derive, and bytemuck</p>
       <p>By default, Rust may reorder a struct's fields to save space. <code>#[repr(C)]</code> forbids that:
       fields are laid out in declaration order with C's padding rules, so the GPU can be told exactly where
@@ -182,7 +191,7 @@ pub struct Vertex {
     }
 
     Ok(VertexBuffer { buffer, allocation })
-}</code></pre><figcaption>src/graphics/mesh.rs:99-126</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/mesh.rs#L99-L126">src/graphics/mesh.rs:99-126</a></figcaption></figure><!--/x-->
     <p>Step by step:</p>
     <ul>
       <li>The buffer is described: its size in bytes, and that it'll be used as a vertex buffer.</li>
@@ -221,7 +230,7 @@ pub struct Vertex {
     <p>The per-frame block of settings (sun direction, shadow matrices, lights) also lives in host-visible
     buffers, one per swapchain image, created with VMA's <code>MAPPED</code> flag so they stay mapped for their
     whole life. Updating one is just a copy and a flush:</p>
-    <!--x src/vulkan/base.rs 503-520--><figure class="code"><pre><code class="language-rust">pub fn update_global_ubo(&amp;mut self, image_index: usize, ubo: &amp;GlobalUbo) {
+    <!--x src/vulkan/base.rs 505-522--><figure class="code"><pre><code class="language-rust">pub fn update_global_ubo(&amp;mut self, image_index: usize, ubo: &amp;GlobalUbo) {
     let allocator = self.allocator.as_ref().expect("allocator");
     let allocation = &amp;self.ubo_allocations[image_index];
     unsafe {
@@ -238,7 +247,7 @@ pub struct Vertex {
             .flush_allocation(allocation, 0, std::mem::size_of::&lt;GlobalUbo&gt;() as u64)
             .expect("flush UBO");
     }
-}</code></pre><figcaption>src/vulkan/base.rs:503-520</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="source/src--vulkan--base.rs.html#L505">src/vulkan/base.rs:505-522</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p>There's one buffer per swapchain image so that the CPU never overwrites data the GPU is still reading
     for an earlier frame. <a href="09-frame-loop.html">Chapter 9</a> shows how the frame loop guarantees that,
     and <a href="08-descriptors-materials.html">Chapter 8</a> how shaders find these buffers.</p>
@@ -271,7 +280,7 @@ unsafe {
     std::ptr::copy_nonoverlapping(pixels.as_ptr(), data_ptr, pixels.len());
     allocator.flush_allocation(&amp;staging_allocation, 0, pixels.len() as u64)?;
     allocator.unmap_memory(&amp;mut staging_allocation);
-}</code></pre><figcaption>src/graphics/texture.rs:81-105</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/texture.rs#L81-L105">src/graphics/texture.rs:81-105</a></figcaption></figure><!--/x-->
     <p>The <code>image</code> crate decodes PNG or JPEG and converts it to 8-bit RGBA. The staging buffer's
     usage is <code>TRANSFER_SRC</code>: it will only ever be copied from. Next, the real image:</p>
     <!--x src/graphics/texture.rs 108-130--><figure class="code"><pre><code class="language-rust">let image_info = vk::ImageCreateInfo {
@@ -296,7 +305,7 @@ let image_alloc_info = vk_mem::AllocationCreateInfo {
     ..Default::default()
 };
 let (image, allocation) =
-    unsafe { allocator.create_image(&amp;image_info, &amp;image_alloc_info)? };</code></pre><figcaption>src/graphics/texture.rs:108-130</figcaption></figure><!--/x-->
+    unsafe { allocator.create_image(&amp;image_info, &amp;image_alloc_info)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/texture.rs#L108-L130">src/graphics/texture.rs:108-130</a></figcaption></figure><!--/x-->
     <p><code>OPTIMAL</code> tiling is the GPU's own arrangement. The usage flags say it will be copied into
     (<code>TRANSFER_DST</code>) and read by shaders (<code>SAMPLED</code>). <code>AutoPreferDevice</code> asks
     for device-local memory. It has one mip level only: this renderer doesn't generate smaller mipmap
@@ -331,7 +340,7 @@ let (image, allocation) =
         &amp;[],
         &amp;[to_shader_read],
     );
-}</code></pre><figcaption>src/graphics/texture.rs:170-197</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/texture.rs#L170-L197">src/graphics/texture.rs:170-197</a></figcaption></figure><!--/x-->
     <p>Each barrier names two pipeline stages: "work at the first stage must finish before work at the second
     may start". The first waits on nothing earlier (<code>TOP_OF_PIPE</code>), but the transfer stage may not
     start until the layout change is done. The second makes fragment shaders wait for the copy to complete.</p>
@@ -341,7 +350,7 @@ let (image, allocation) =
 self.staging_buffers.push(StagingBuffer {
     buffer: staging_buffer,
     allocation: staging_allocation,
-});</code></pre><figcaption>src/graphics/texture.rs:208-212</figcaption></figure><!--/x-->
+});</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/texture.rs#L208-L212">src/graphics/texture.rs:208-212</a></figcaption></figure><!--/x-->
     <p>When scene construction is done, <code>TextureCache::flush</code> calls <code>finish</code>:</p>
     <!--x src/graphics/texture.rs 234-252--><figure class="code"><pre><code class="language-rust">unsafe {
     // Submit all recorded copies together, then wait once before rendering begins.
@@ -361,7 +370,7 @@ self.staging_buffers.push(StagingBuffer {
         let mut allocation = staging.allocation;
         allocator.destroy_buffer(staging.buffer, &amp;mut allocation);
     }
-}</code></pre><figcaption>src/graphics/texture.rs:234-252</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/texture.rs#L234-L252">src/graphics/texture.rs:234-252</a></figcaption></figure><!--/x-->
     <p>Submit, then wait on a <dfn>fence</dfn> (a CPU-visible "done" signal) until the GPU finishes, and only
     then destroy the staging buffers. Stalling like this is fine at start-up, once. The frame loop, in
     <a href="09-frame-loop.html">Chapter 9</a>, uses the same fence idea but avoids waiting.</p>
@@ -395,7 +404,7 @@ self.staging_buffers.push(StagingBuffer {
 
   <nav class="pager"><a class="prev" href="04-swapchain.html">← 04 · Surfaces and the swapchain</a><a class="next" href="06-shaders.html">06 · Shaders →</a></nav>
 </main>
-<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<footer class="site">Based on commit <code>79546db</code>, with local device-capability and UI dependency fixes. · <a href="index.html#contents">Contents</a></footer>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>

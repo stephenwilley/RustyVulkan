@@ -6,7 +6,7 @@
 <title>06 · Shaders · RustyVulkan Guide</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2">
 <link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
 <link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 </head>
@@ -14,11 +14,16 @@
 <header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
 <main class="chapter">
   <header class="chapter-head">
-    <p class="kicker">Part 3 · Chapter 06 · <span class="readtime">~9 min read</span></p>
+    <p class="kicker">Part 3 · Chapter 06 · <span class="readtime">~9 min prose skim</span></p>
     <h1>Shaders</h1>
     <p class="lede">How GLSL source becomes something Vulkan will accept, how the program loads it, and how a
     shader finds the data it needs, read through the renderer's main pair of shaders.</p>
   </header>
+  <nav class="chapter-jumps" aria-label="Sections in this chapter">
+    <a href="#big-picture">Overview</a>
+    <a href="#deep-dive">Source walkthrough</a>
+    <a href="#recap">Recap</a>
+  </nav>
 
   <section id="big-picture">
     <h2><span class="tag">Overview</span> The big picture</h2>
@@ -26,6 +31,14 @@
     <p><dfn>Shaders</dfn> are the small programs the GPU runs for you: a <em>vertex shader</em> once per
     vertex, to work out where it lands on screen, and a <em>fragment shader</em> once per covered pixel, to
     work out its colour. RustyVulkan writes them in GLSL, the same C-like language OpenGL used.</p>
+
+    <p>If you last used OpenGL's fixed-function pipeline, think of the vertex shader as replacing the
+    built-in matrix transform, and the fragment shader as replacing the built-in lighting and texture
+    combination. You write the rules now. The vertex shader produces <em>clip-space</em> coordinates;
+    the hardware clips triangles and turns them into fragments, interpolating values such as texture
+    coordinates across each triangle. The fragment shader chooses each fragment's colour, which still has
+    to pass depth testing and blending before reaching the image. GLSL looks much like C, with vector and
+    matrix types such as <code>vec3</code> and <code>mat4</code> built in.</p>
 
     <h3>Compiled before the program runs</h3>
     <p>OpenGL took shader <em>source text</em> at run time and handed it to the driver's built-in compiler.
@@ -86,6 +99,10 @@
     <p>Data passed from the vertex shader to the fragment shader is matched by <code>location</code> too, and
     the fragment shader's output at <code>location = 0</code> is the colour written to the image being
     rendered.</p>
+    <aside class="callout try"><p class="callout-title">Try this · A shader is a small program</p>
+      <p>As an optional code experiment, replace the final colour assignment in <code>main.frag</code> with <code>outColor = vec4(UV, 0.0, 1.0);</code>, rebuild, and inspect a textured object. Red and green now show its texture coordinates. Restore the original line afterwards; the build script recompiles the shader.</p>
+    </aside>
+    <p class="overview-next"><a href="07-pipelines.html">Skip to next overview →</a></p>
   </section>
 
   <div class="dive-divider"><span>Deeper dive</span></div>
@@ -107,7 +124,7 @@ const SHADERS: &amp;[&amp;str] = &amp;[
     "grass.frag",
 // ...
     "vertex_color.frag",
-];</code></pre><figcaption>build.rs:23-44</figcaption></figure><!--/x-->
+];</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/build.rs#L23-L44">build.rs:23-44</a></figcaption></figure><!--/x-->
     <p>As the comment says, the list doubles as a manifest. For each entry, the script tells Cargo to rerun it
     if that file changes, works out the shader stage from the extension, and compiles:</p>
     <!--x build.rs 52-68,79-92--><figure class="code"><pre><code class="language-rust">for shader_name in SHADERS {
@@ -141,7 +158,7 @@ const SHADERS: &amp;[&amp;str] = &amp;[
         )
         .expect("📝 Shader compilation failed");
 
-    fs::write(&amp;spv_path, binary_result.as_binary_u8()).unwrap();</code></pre><figcaption>build.rs:52-92</figcaption></figure><!--/x-->
+    fs::write(&amp;spv_path, binary_result.as_binary_u8()).unwrap();</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/build.rs#L52-L92">build.rs:52-92</a></figcaption></figure><!--/x-->
     <p><code>set_target_env(Vulkan, 0)</code> selects Vulkan's flavour of GLSL, which adds things OpenGL GLSL
     lacks, such as descriptor <code>set</code> numbers and push constants. The <code>0</code> means the default
     target, Vulkan 1.0's SPIR-V, which is all these shaders need. (<code>shaderc</code> is Google's wrapper
@@ -174,7 +191,7 @@ const SHADERS: &amp;[&amp;str] = &amp;[
     );
 
 println!("cargo:rustc-link-search=native={}", library_dir.display());
-println!("cargo:rustc-link-arg=-Wl,-rpath,{}", library_dir.display());</code></pre><figcaption>build.rs:109-117</figcaption></figure><!--/x-->
+println!("cargo:rustc-link-arg=-Wl,-rpath,{}", library_dir.display());</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/build.rs#L109-L117">build.rs:109-117</a></figcaption></figure><!--/x-->
     <p>It tells the linker where <code>libvulkan.dylib</code> is, and adds an <em>rpath</em> so the finished
     program can find it again at run time.</p>
 
@@ -194,7 +211,7 @@ println!("cargo:rustc-link-arg=-Wl,-rpath,{}", library_dir.display());</code></p
         device: device.clone(),
         vk_shader_module,
     })
-}</code></pre><figcaption>src/graphics/shaders.rs:49-62</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/shaders.rs#L49-L62">src/graphics/shaders.rs:49-62</a></figcaption></figure><!--/x-->
     <p>SPIR-V is a sequence of 32-bit words, and Vulkan wants it as a pointer to <code>u32</code>s.
     <code>ash::util::read_spv</code> reads the file into a properly aligned <code>Vec&lt;u32&gt;</code> and
     checks the SPIR-V header, which is safer than reinterpreting raw bytes. The resulting
@@ -215,7 +232,7 @@ println!("cargo:rustc-link-arg=-Wl,-rpath,{}", library_dir.display());</code></p
             p_name: self.entry_name.as_ptr(),
             ..Default::default()
         }
-    }</code></pre><figcaption>src/graphics/shaders.rs:77-95</figcaption></figure><!--/x-->
+    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/shaders.rs#L77-L95">src/graphics/shaders.rs:77-95</a></figcaption></figure><!--/x-->
     <aside class="callout rust"><p class="callout-title">Rust note · 'static</p>
       <p><code>&amp;'static CStr</code> is a reference that's valid for the whole run of the program, such as a
       string literal compiled into the binary. Requiring it here means the entry-point name can never dangle
@@ -240,7 +257,7 @@ Ok(LoadedShaders {
         shader_module: fs,
         entry_name: entry,
     },
-})</code></pre><figcaption>src/graphics/material.rs:305-320</figcaption></figure><!--/x-->
+})</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/material.rs#L305-L320">src/graphics/material.rs:305-320</a></figcaption></figure><!--/x-->
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
       <p>A <code>ShaderModule</code> is not a linked program. In OpenGL, <code>glLinkProgram</code> joined the
       stages and checked their interfaces. In Vulkan, that joining happens when a pipeline is created
@@ -282,7 +299,7 @@ void main() {
     vec2 uvScaled = inUV * pc.uv_tiling.xy;
     UV    = vec2(uvScaled.x, 1.0 - uvScaled.y);
     gl_Position = pc.mvp * vec4(inPos, 1.0);
-}</code></pre><figcaption>assets/shaders/main.vert:10-40</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/assets/shaders/main.vert#L10-L40">assets/shaders/main.vert:10-40</a></figcaption></figure><!--/x-->
     <ul>
       <li><strong>Push constants</strong> (the first line): two matrices and a UV tiling factor, sent with each draw.
       <code>mvp</code> takes a vertex all the way to the screen; <code>mv</code> takes it into <em>view
@@ -315,7 +332,7 @@ void main() {
 
 layout(set = 0, binding = 1) uniform sampler2DArray shadowMap;
 layout(set = 1, binding = 0) uniform sampler2D diffuseMap;
-layout(set = 1, binding = 1) uniform sampler2D normalMap;</code></pre><figcaption>assets/shaders/main.frag:30-41</figcaption></figure><!--/x-->
+layout(set = 1, binding = 1) uniform sampler2D normalMap;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/assets/shaders/main.frag#L30-L41">assets/shaders/main.frag:30-41</a></figcaption></figure><!--/x-->
     <p>This is the descriptor side of the table above. <dfn>Set 0</dfn> is global, shared by every object in a
     frame: a uniform buffer of lighting data (binding 0) and the shadow map (binding 1). <dfn>Set 1</dfn> is
     per-material: a colour texture and a normal map. Grouping resources into sets by how often they change lets
@@ -324,7 +341,7 @@ layout(set = 1, binding = 1) uniform sampler2D normalMap;</code></pre><figcaptio
     <p><code>std140</code> fixes the buffer's memory layout by strict rules: for instance, a <code>vec3</code>
     is aligned like a <code>vec4</code>, to 16 bytes. The Rust struct that's copied into this buffer each frame
     (<a href="05-gpu-memory.html">Chapter 5</a>) has to reproduce that layout:</p>
-    <!--x src/vulkan/base.rs 842-857--><figure class="code"><pre><code class="language-rust">/// Global (per-frame/per-image) uniform buffer object shared across all pipelines via **descriptor set 0, binding 0**.
+    <!--x src/vulkan/base.rs 847-862--><figure class="code"><pre><code class="language-rust">/// Global (per-frame/per-image) uniform buffer object shared across all pipelines via **descriptor set 0, binding 0**.
 /// There is **one buffer per swapchain image** so the CPU can update the UBO while another image is still in-flight.
 /// Keep fields 16-byte aligned for std140. Field order must match every GLSL `GlobalUBO`.
 #[repr(C, align(16))]
@@ -339,7 +356,7 @@ pub struct GlobalUbo {
     pub lights: [GpuLight; crate::app::app::MAX_LIGHTS], // array of point lights
     pub light_count: u32,                                // number of active point lights
     pub _pad0: [u32; 3],                                 // three GLSL uints, never a uvec3 (std140)
-}</code></pre><figcaption>src/vulkan/base.rs:842-857</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="source/src--vulkan--base.rs.html#L847">src/vulkan/base.rs:847-862</a> · revised source snapshot</figcaption></figure><!--/x-->
     <p><code>std140</code> is a contract, and the Rust side reproduces it by hand with explicit
     <code>_pad</code> fields and <code>align(16)</code>. Nothing checks that the two agree. Get it wrong and the
     shader silently reads shifted values. <code>cascade_splits</code> shows the care needed: it's a
@@ -372,7 +389,7 @@ float spec_dir = pow(max(dot(normalTangent, Hdir), 0.0), shininess);
 float sun_visibility = shadow_factor(vFragPosView);
 lighting += sun_visibility * ubo.sun.intensity * ubo.sun.color * (diff_dir * albedo + spec_dir * vec3(1.0));
 // ...
-outColor = vec4(clamp(lighting, 0.0, 1.0), 1.0);</code></pre><figcaption>assets/shaders/main.frag:107-161</figcaption></figure><!--/x-->
+outColor = vec4(clamp(lighting, 0.0, 1.0), 1.0);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/assets/shaders/main.frag#L107-L161">assets/shaders/main.frag:107-161</a></figcaption></figure><!--/x-->
     <p>It samples the colour and normal maps, lights the surface with the sun (scaled by
     <code>shadow_factor</code>, which reads the cascaded shadow map and is the subject of
     <a href="11-shadows.html">Chapter 11</a>), adds up to eight point lights in a loop, and writes the clamped
@@ -397,7 +414,7 @@ outColor = vec4(clamp(lighting, 0.0, 1.0), 1.0);</code></pre><figcaption>assets/
 
   <nav class="pager"><a class="prev" href="05-gpu-memory.html">← 05 · GPU memory</a><a class="next" href="07-pipelines.html">07 · Pipelines and dynamic rendering →</a></nav>
 </main>
-<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<footer class="site">Based on commit <code>79546db</code>, with local device-capability and UI dependency fixes. · <a href="index.html#contents">Contents</a></footer>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>

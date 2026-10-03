@@ -7,7 +7,7 @@
 <meta name="description" content="A chapter-by-chapter guide to how the RustyVulkan renderer works, from no Vulkan knowledge to the whole codebase.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 <header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="#contents">Contents</a></header>
@@ -32,7 +32,8 @@
     <p>You don't need any Vulkan, or any Rust, to start. You do need to be comfortable reading code in some
     language, and to know what a mesh, a texture and a camera are. If you remember OpenGL, even only by
     reputation, that's a useful starting point, and the guide will keep comparing against it.</p>
-    <p>Each chapter is designed to be about a ten-minute read, and has two layers:</p>
+    <p>The chapter times estimate a prose skim of the whole chapter. Studying the source alongside it will take
+    longer; the overview alone is a shorter first pass. Each chapter has two layers:</p>
     <ul>
       <li><strong>The big picture</strong> explains what that part of the renderer does, and why, in plain
       language and diagrams. If you want the high-level story, read only these sections, in order. They are
@@ -49,7 +50,13 @@
       idea is explained once and linked back to afterwards.</p></aside>
     </div>
     <p>The guide explains the code as it is. It is not a build-along tutorial. Where the project's own
-    notes say something is unfinished, the guide says so too.</p>
+    notes say something is unfinished, the guide says so too. Use the links at each chapter's top to jump
+    between its overview, source walkthrough and recap. At the end of each overview, a link takes you
+    directly to the next overview.</p>
+    <p>To explore the renderer while reading, follow <a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/README.md">the setup instructions</a>
+    and run <code>cargo run</code> from the repository root. <kbd>WASD</kbd> moves, the mouse looks,
+    <kbd>U</kbd> releases the pointer for menus, and <kbd>Escape</kbd> quits. The chapters include short
+    observations and optional code experiments; you can read them without running the app.</p>
   </section>
 
   <section id="contents">
@@ -101,6 +108,7 @@
     </div>
   </section>
 </main>
-<footer class="site">Written against RustyVulkan commit <code>79546db</code>. Code excerpts are copied from that commit.</footer>
+<footer class="site">Based on RustyVulkan commit <code>79546db</code>, with local device-capability and UI dependency fixes.
+Source links open that commit unless labelled revised source snapshot; those links open the updated source included with the guide.</footer>
 </body>
 </html>

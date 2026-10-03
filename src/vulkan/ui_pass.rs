@@ -17,7 +17,7 @@ use std::sync::atomic::Ordering;
 
 /// Render pass responsible for drawing the ImGui user interface.
 pub struct UiPass {
-    attachments: [AttachmentRequest; 1],
+    attachments: [AttachmentRequest; 2],
     show_point_lights_window: bool,
     show_sun_window: bool,
     show_ground_window: bool,
@@ -29,7 +29,11 @@ impl UiPass {
     /// Create a new [`UiPass`].
     pub fn new() -> Self {
         Self {
-            attachments: [AttachmentRequest::new(AttachmentKind::SwapchainColor)],
+            attachments: [
+                AttachmentRequest::new(AttachmentKind::SwapchainColor),
+                // The cascade preview samples the same shadow map as the main pass.
+                AttachmentRequest::new(AttachmentKind::Shadow),
+            ],
             show_point_lights_window: false,
             show_sun_window: false,
             show_ground_window: false,
@@ -109,7 +113,12 @@ impl RenderPass for UiPass {
                 }
                 // Checkable toggle: wireframe on/off
                 let wireframe = ctx.vulkan_base.engine_settings.wireframe;
-                if ui.menu_item_config("Wireframe").selected(wireframe).build() {
+                if ui
+                    .menu_item_config("Wireframe")
+                    .selected(wireframe)
+                    .enabled(ctx.vulkan_base.supports_wireframe)
+                    .build()
+                {
                     ctx.vulkan_base.toggle_wireframe();
                 }
                 if ui.menu_item("Show Shadow Map") {
@@ -400,6 +409,10 @@ impl RenderPass for UiPass {
             AttachmentKind::SwapchainColor => (
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                 vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            ),
+            AttachmentKind::Shadow => (
+                vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                vk::AccessFlags::SHADER_READ,
             ),
             _ => (vk::ImageLayout::UNDEFINED, vk::AccessFlags::empty()),
         }

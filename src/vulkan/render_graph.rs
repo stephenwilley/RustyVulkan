@@ -357,13 +357,16 @@ impl RenderGraph {
                 _ => vb.get_attachment(*req),
             };
             attachment_handles.insert(req.kind, handle);
+            // Contents are discarded (UNDEFINED), but the first barrier must still wait
+            // for the image's previous use: see `previous_frame_use`.
+            let (access, stage) = previous_frame_use(req.kind);
             attachment_states.insert(
                 req.kind,
                 AttachmentState {
                     handle,
                     layout: vk::ImageLayout::UNDEFINED,
-                    access: vk::AccessFlags::empty(),
-                    stage: vk::PipelineStageFlags::TOP_OF_PIPE,
+                    access,
+                    stage,
                 },
             );
         }
@@ -541,6 +544,37 @@ impl RenderGraph {
 impl Default for RenderGraph {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Access and stage of an attachment's most recent use before this frame records.
+///
+/// These seed the source side of each attachment's first barrier:
+/// * The swapchain image's acquire semaphore only blocks `COLOR_ATTACHMENT_OUTPUT`, so
+///   the layout transition must name that stage to be ordered after the acquire.
+/// * The MSAA images are shared by every frame in flight, so the previous frame's
+///   attachment writes may still be running on the queue.
+/// * Per-image depth and shadow attachments were last used by a frame whose fence
+///   `begin_frame` has already waited on; naming their stages is merely harmless.
+fn previous_frame_use(kind: AttachmentKind) -> (vk::AccessFlags, vk::PipelineStageFlags) {
+    match kind {
+        AttachmentKind::SwapchainColor => (
+            vk::AccessFlags::empty(),
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+        ),
+        AttachmentKind::MsaaColor | AttachmentKind::Color => (
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+        ),
+        AttachmentKind::MsaaDepth | AttachmentKind::Depth => (
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+        ),
+        AttachmentKind::Shadow => (
+            vk::AccessFlags::empty(),
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+        ),
     }
 }
 

@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10 · The render graph · RustyVulkan Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
+<main class="chapter">
+  <header class="chapter-head">
+    <p class="kicker">Part 4 · Chapter 10 · <span class="readtime">~9 min read</span></p>
+    <h1>The render graph</h1>
+    <p class="lede">How a frame is split into passes, how each image is moved into the right layout for each
+    one, and how a missing piece of that bookkeeping turned into a real bug.</p>
+  </header>
+
+  <section id="big-picture">
+    <h2><span class="tag">Overview</span> The big picture</h2>
+
+    <h3>Three passes</h3>
+    <p>Every frame is drawn in three <dfn>passes</dfn>, each a stretch of rendering into a particular set of
+    images:</p>
+    <ol>
+      <li><strong>Shadow pass</strong>: renders the scene's depth from the sun's point of view into a shadow
+      map, four times over (<a href="11-shadows.html">Chapter 11</a>).</li>
+      <li><strong>Main pass</strong>: draws the sky, the objects and the grass into a colour image and a depth
+      buffer, reading the shadow map as it goes (<a href="12-main-pass-scene.html">Chapter 12</a>).</li>
+      <li><strong>UI pass</strong>: draws the ImGui panels on top of the finished scene
+      (<a href="15-imgui.html">Chapter 15</a>).</li>
+    </ol>
+
+    <h3>Images change jobs, so they change layouts</h3>
+    <p><a href="05-gpu-memory.html">Chapter 5</a> introduced <em>layouts</em>: each kind of use wants an image's
+    data arranged a particular way. The shadow map is a depth target in pass 1, then a texture in pass 2. The
+    swapchain image is a render target, then something to hand to the display. Every change of job needs a
+    <dfn id="barriers">barrier</dfn>, which does three things at once:</p>
+    <ul>
+      <li><strong>Waits</strong>: work at some earlier stage must finish before work at some later stage
+      starts (an <em>execution dependency</em>).</li>
+      <li><strong>Publishes</strong>: writes made before the barrier become visible to reads after it (a
+      <em>memory dependency</em>). GPUs have caches, and without this a later pass could read stale data.</li>
+      <li><strong>Rearranges</strong>: moves the image from its old layout to its new one.</li>
+    </ul>
+    <p>Each side of a barrier is described with a <em>stage</em> (where in the GPU's pipeline) and an
+    <em>access</em> (what kind of reading or writing). Getting them too broad wastes performance. Getting them
+    too narrow is a bug that may only show up on another GPU, months later.</p>
+
+    <h3>What the "render graph" does</h3>
+    <p>Rather than hand-writing every barrier, each pass declares which images it uses and how. The render graph
+    runs the passes in order, remembers each image's current layout, access and stage, and inserts exactly the
+    barriers needed between one pass and the next. <code>DEVELOPMENT.md</code> is careful to call it "a
+    linear pass scheduler, not a general graph compiler". It doesn't reorder passes or share memory between
+    images. It just keeps the bookkeeping honest.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 640 300" role="img" aria-labelledby="rgt">
+        <title id="rgt">Each image's layout through one frame</title>
+        <text x="150" y="22" font-size="13" font-weight="700" text-anchor="middle">Shadow pass</text>
+        <text x="330" y="22" font-size="13" font-weight="700" text-anchor="middle">Main pass</text>
+        <text x="470" y="22" font-size="13" font-weight="700" text-anchor="middle">UI pass</text>
+        <text x="580" y="22" font-size="13" font-weight="700" text-anchor="middle">Present</text>
+        <line class="wire" x1="240" y1="30" x2="240" y2="270" stroke-dasharray="4 4"/>
+        <line class="wire" x1="410" y1="30" x2="410" y2="270" stroke-dasharray="4 4"/>
+        <line class="wire" x1="530" y1="30" x2="530" y2="270" stroke-dasharray="4 4"/>
+        <g font-size="12">
+          <text x="10" y="64" font-weight="700" font-size="13">Shadow map</text>
+          <rect class="box-aside" x="90" y="46" width="140" height="28" rx="5"/><text x="160" y="65" text-anchor="middle">depth target</text>
+          <rect class="box-gl" x="250" y="46" width="150" height="28" rx="5"/><text x="325" y="65" text-anchor="middle">shader read</text>
+          <text x="10" y="124" font-weight="700" font-size="13">MSAA colour</text>
+          <rect class="box-accent" x="250" y="106" width="150" height="28" rx="5"/><text x="325" y="125" text-anchor="middle">colour target</text>
+          <text x="10" y="184" font-weight="700" font-size="13">MSAA depth</text>
+          <rect class="box-aside" x="250" y="166" width="150" height="28" rx="5"/><text x="325" y="185" text-anchor="middle">depth target</text>
+          <text x="10" y="244" font-weight="700" font-size="13">Swapchain</text>
+          <rect class="box-accent" x="250" y="226" width="150" height="28" rx="5"/><text x="325" y="245" text-anchor="middle">resolve target</text>
+          <rect class="box-accent" x="420" y="226" width="100" height="28" rx="5"/><text x="470" y="245" text-anchor="middle">colour target</text>
+          <rect class="box" x="540" y="226" width="90" height="28" rx="5"/><text x="585" y="245" text-anchor="middle">present</text>
+          <text x="325" y="290" text-anchor="middle" class="muted">(with anti-aliasing on; at 1× the main pass draws straight into the swapchain image and a plain depth buffer)</text>
+        </g>
+      </svg>
+      <figcaption>Every box starts with a barrier wherever the layout or access differs from the box before it.
+      The first box in each row also needs a barrier, against whatever used that image last.</figcaption>
+    </figure>
+
+    <h3>Anti-aliasing and the resolve</h3>
+    <p>With multisample anti-aliasing (MSAA) on, the main pass draws into separate images that store several
+    samples per pixel. At the end of the pass, each pixel's samples are averaged into the single-sample
+    swapchain image: the <dfn>resolve</dfn>. The multisampled images are then thrown away; only the resolved
+    result is kept.</p>
+  </section>
+
+  <div class="dive-divider"><span>Deeper dive</span></div>
+
+  <section id="deep-dive">
+    <h2>What a pass looks like to the graph</h2>
+    <p>Every pass implements one trait:</p>
+    <!--x src/vulkan/render_graph.rs 102-122--><figure class="code"><pre><code class="language-rust">/// Trait implemented by all render passes.
+pub trait RenderPass {
+    /// Record commands for this pass using the supplied [`RenderCtx`].
+    fn execute(&amp;mut self, ctx: &amp;mut RenderCtx) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt;;
+
+    /// List of attachment requests needed by this pass.
+    fn attachments(&amp;self) -&gt; &amp;[AttachmentRequest];
+
+    /// Whether an attachment is active for the current MSAA configuration.
+    /// Most passes use all of their declared attachments.
+    fn uses_attachment(&amp;self, _kind: AttachmentKind, _msaa_samples: u32) -&gt; bool {
+        true
+    }
+
+    /// Provides the graph with the required layout and access mask for a given attachment.
+    fn attachment_info(&amp;self, kind: AttachmentKind) -&gt; (vk::ImageLayout, vk::AccessFlags);
+
+    /// Optional cleanup hook for passes that own GPU objects (pipelines, layouts, etc.).
+    /// Default is no-op.
+    fn cleanup(&amp;mut self, _device: &amp;ash::Device) {}
+}</code></pre><figcaption>src/vulkan/render_graph.rs:102-122</figcaption></figure><!--/x-->
+    <aside class="callout rust"><p class="callout-title">Rust note · traits and trait objects</p>
+      <p>A <em>trait</em> is a set of methods a type promises to provide, like an interface. Methods with a body,
+      such as <code>uses_attachment</code> and <code>cleanup</code>, are defaults a type may override. The graph
+      stores its passes as <code>Vec&lt;(RenderPassNode, Box&lt;dyn RenderPass&gt;)&gt;</code>: each is a
+      heap-allocated value of <em>some</em> type implementing the trait, called through a table of function
+      pointers, much like a C++ virtual call. That's how three different pass types share one list.</p>
+    </aside>
+    <p>Passes are kept in a fixed order whatever order they're added in, by giving each a priority and
+    inserting at the right position. The app adds the shadow and main passes, then enables the UI pass
+    separately through <code>set_pass_enabled</code>, and the priorities keep the result correct either
+    way:</p>
+    <!--x src/vulkan/render_graph.rs 48-54--><figure class="code"><pre><code class="language-rust">fn pass_order(node: RenderPassNode) -&gt; u8 {
+    match node {
+        RenderPassNode::Shadow =&gt; 50,
+        RenderPassNode::Main =&gt; 100,
+        RenderPassNode::UI =&gt; 200,
+    }
+}</code></pre><figcaption>src/vulkan/render_graph.rs:48-54</figcaption></figure><!--/x-->
+
+    <h2>Declaring attachments</h2>
+    <p>The main pass asks for five images, and states how it uses each:</p>
+    <!--x src/vulkan/main_pass.rs 25-32,237-260--><figure class="code"><pre><code class="language-rust">    let attachments = [
+        AttachmentRequest::new(AttachmentKind::MsaaColor),
+        AttachmentRequest::new(AttachmentKind::MsaaDepth),
+        AttachmentRequest::new(AttachmentKind::SwapchainColor),
+        AttachmentRequest::new(AttachmentKind::Depth),
+        // Read-only shadow map so the graph can manage transitions
+        AttachmentRequest::new(AttachmentKind::Shadow),
+    ];
+// ...
+fn uses_attachment(&amp;self, kind: AttachmentKind, msaa_samples: u32) -&gt; bool {
+    // MainPass either renders directly to the swapchain (1x) or uses the
+    // two MSAA attachments and resolves into it (&gt;1x).
+    match kind {
+        AttachmentKind::MsaaColor | AttachmentKind::MsaaDepth =&gt; msaa_samples &gt; 1,
+        AttachmentKind::Depth =&gt; msaa_samples == 1,
+        AttachmentKind::SwapchainColor | AttachmentKind::Shadow | AttachmentKind::Color =&gt; true,
+    }
+}
+
+fn attachment_info(&amp;self, kind: AttachmentKind) -&gt; (vk::ImageLayout, vk::AccessFlags) {
+    match kind {
+        AttachmentKind::MsaaColor | AttachmentKind::SwapchainColor | AttachmentKind::Color =&gt; (
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+        ),
+        AttachmentKind::MsaaDepth | AttachmentKind::Depth =&gt; (
+            vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        ),
+        AttachmentKind::Shadow =&gt; (
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::AccessFlags::SHADER_READ,
+        ),</code></pre><figcaption>src/vulkan/main_pass.rs:25-260</figcaption></figure><!--/x-->
+    <p>Not all five are used at once. With MSAA on, it draws into the two multisampled images and resolves into
+    the swapchain image; at 1×, it draws straight into the swapchain image and a single-sample depth buffer.
+    <code>uses_attachment</code> tells the graph which set is live. <code>attachment_info</code> gives the
+    layout and access each needs: write access as a colour or depth target, but read-only access to the shadow
+    map, which the main pass only samples.</p>
+
+    <h2>Finding the actual images</h2>
+    <p>Each frame, the graph turns those requests into real images. Some come from the swapchain; the rest from
+    an <code>AttachmentManager</code>:</p>
+    <!--x src/vulkan/render_graph.rs 321-332,337-344--><figure class="code"><pre><code class="language-rust">let handle = match req.kind {
+    AttachmentKind::SwapchainColor =&gt; AttachmentHandle {
+        image: vb.swapchain.images[image_index],
+        view: vb.swapchain.swapchain_image_views[image_index],
+        layer_views: [vk::ImageView::null(); SHADOW_CASCADE_COUNT],
+    },
+    AttachmentKind::MsaaColor =&gt; AttachmentHandle {
+        image: vb.swapchain.color_msaa_image,
+        view: vb.swapchain.color_msaa_image_view,
+        layer_views: [vk::ImageView::null(); SHADOW_CASCADE_COUNT],
+    },
+    AttachmentKind::MsaaDepth =&gt; AttachmentHandle {
+// ...
+    AttachmentKind::Depth =&gt; {
+        // Build a concrete request for a single-sample depth attachment
+        let mut depth_req = *req;
+        depth_req.format = vb.swapchain.depth_format; // engine’s chosen depth format
+        depth_req.extent = vb.swapchain.extent; // match swapchain size
+        depth_req.samples = vk::SampleCountFlags::TYPE_1; // single-sampled
+        vb.get_attachment(depth_req)
+    }</code></pre><figcaption>src/vulkan/render_graph.rs:321-344</figcaption></figure><!--/x-->
+    <p>The swapchain image is the one just acquired. The MSAA images live in the <code>Swapchain</code>
+    struct, because they share its size (<a href="04-swapchain.html">Chapter 4</a>), so there's one pair for
+    everything. Depth and shadow images come from the manager, which creates them on first request and keeps
+    one per swapchain image:</p>
+    <!--x src/vulkan/attachments.rs 96-109--><figure class="code"><pre><code class="language-rust">/// Gets or lazily creates an attachment matching the request for a given image index.
+pub fn get_attachment(
+    &amp;mut self,
+    device: &amp;ash::Device,
+    allocator: &amp;Allocator,
+    image_index: usize,
+    request: AttachmentRequest,
+) -&gt; AttachmentHandle {
+    let key = AttachmentKey::from(request);
+    if !self.attachments.contains_key(&amp;key) {
+        self.create_attachments(device, allocator, &amp;key);
+    }
+    self.attachments[&amp;key][image_index].handle
+}</code></pre><figcaption>src/vulkan/attachments.rs:96-109</figcaption></figure><!--/x-->
+    <p>The key is the full description (kind, format, size, sample count), so a request with a new size, after
+    a resize or a shadow-resolution change, simply produces new images. (Old ones stay cached until the next
+    swapchain recreation clears the manager.) The shadow map is a four-layer image
+    array, one layer per cascade, and gets an extra view for each layer so the shadow pass can render into them
+    one at a time while the main pass reads all four through a single array view:</p>
+    <!--x src/vulkan/attachments.rs 201-219--><figure class="code"><pre><code class="language-rust">let mut layer_views = [vk::ImageView::null(); SHADOW_CASCADE_COUNT];
+if key.kind == AttachmentKind::Shadow {
+    for (layer, layer_view) in layer_views.iter_mut().enumerate() {
+        let layer_info = vk::ImageViewCreateInfo {
+            view_type: vk::ImageViewType::TYPE_2D,
+            subresource_range: vk::ImageSubresourceRange {
+                base_array_layer: layer as u32,
+                layer_count: 1,
+                ..view_info.subresource_range
+            },
+            ..view_info
+        };
+        *layer_view = unsafe {
+            device
+                .create_image_view(&amp;layer_info, None)
+                .expect("create shadow cascade view")
+        };
+    }
+}</code></pre><figcaption>src/vulkan/attachments.rs:201-219</figcaption></figure><!--/x-->
+    <aside class="callout rust"><p class="callout-title">Rust note · struct update from another value</p>
+      <p><code>..view_info</code> and <code>..view_info.subresource_range</code> are the same struct update syntax
+      as <code>..Default::default()</code> (<a href="02-rust-meets-c.html#rust-builders">Chapter 2</a>), but
+      copying the remaining fields from an existing value: "like the whole-array view, but one layer".</p>
+    </aside>
+
+    <h2>Starting each frame</h2>
+    <p>The graph tracks each attachment's state as it goes. At the start of a frame every image is treated as
+    <code>UNDEFINED</code>: its old contents are thrown away, since every pass here clears or overwrites its
+    images anyway. The first barrier must still wait for whatever used the image last (the display, for a
+    swapchain image; the previous frame, for the shared MSAA images), so the starting state records that earlier
+    use:</p>
+    <!--x src/vulkan/render_graph.rs 359-371--><figure class="code"><pre><code class="language-rust">attachment_handles.insert(req.kind, handle);
+// Contents are discarded (UNDEFINED), but the first barrier must still wait
+// for the image's previous use: see `previous_frame_use`.
+let (access, stage) = previous_frame_use(req.kind);
+attachment_states.insert(
+    req.kind,
+    AttachmentState {
+        handle,
+        layout: vk::ImageLayout::UNDEFINED,
+        access,
+        stage,
+    },
+);</code></pre><figcaption>src/vulkan/render_graph.rs:359-371</figcaption></figure><!--/x-->
+    <p>A small function, <code>previous_frame_use</code>, supplies the stage and access of that earlier use for
+    each kind of image.</p>
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>None of this existed in OpenGL. Render-to-texture with an FBO "just worked" because the driver tracked
+      every image's state and inserted the equivalent of these barriers itself. That tracking is a large part
+      of what made OpenGL drivers heavy, and it's exactly the work Vulkan makes the application do.</p>
+    </aside>
+
+    <h2>Barriers between passes</h2>
+    <p>Before each pass records, the graph compares what the pass wants with each image's current state:</p>
+    <!--x src/vulkan/render_graph.rs 385-419--><figure class="code"><pre><code class="language-rust">let mut transitions: Vec&lt;ImageTransition&gt; = Vec::new();
+for req in pass.attachments() {
+    if !pass.uses_attachment(req.kind, vb.engine_settings.msaa_samples) {
+        continue;
+    }
+    let (new_layout, new_access) = pass.attachment_info(req.kind);
+    let new_stage = pipeline_stage_for_access(new_access);
+
+    let state = attachment_states.get_mut(&amp;req.kind).unwrap();
+
+    if state.layout != new_layout || state.access != new_access {
+        transitions.push(ImageTransition {
+            image: state.handle.image,
+            old_layout: state.layout,
+            new_layout,
+            src_access_mask: state.access,
+            dst_access_mask: new_access,
+            src_stage_mask: state.stage,
+            dst_stage_mask: new_stage,
+            aspect_mask: aspect_for_kind(req.kind),
+            layer_count: if req.kind == AttachmentKind::Shadow {
+                SHADOW_CASCADE_COUNT as u32
+            } else {
+                1
+            },
+        });
+        state.layout = new_layout;
+        state.access = new_access;
+        state.stage = new_stage;
+    }
+}
+
+if !transitions.is_empty() {
+    vb.insert_attachment_barriers(cmd, &amp;transitions);
+}</code></pre><figcaption>src/vulkan/render_graph.rs:385-419</figcaption></figure><!--/x-->
+    <p>If the layout or access differs, it records a transition from the current state to the new one, deriving
+    the destination stage from the access type, and updates its record. All the transitions for one pass go into
+    a single <code>vkCmdPipelineBarrier</code> call, with the stage masks combined, so the barrier can be a
+    little broader than any one image needs:</p>
+    <!--x src/vulkan/base.rs 315-349--><figure class="code"><pre><code class="language-rust">let mut barriers: Vec&lt;vk::ImageMemoryBarrier&gt; = Vec::new();
+let mut src_stage = vk::PipelineStageFlags::empty();
+let mut dst_stage = vk::PipelineStageFlags::empty();
+for t in transitions {
+    barriers.push(vk::ImageMemoryBarrier {
+        src_access_mask: t.src_access_mask,
+        dst_access_mask: t.dst_access_mask,
+        old_layout: t.old_layout,
+        new_layout: t.new_layout,
+        src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+        dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+        image: t.image,
+        subresource_range: vk::ImageSubresourceRange {
+            aspect_mask: t.aspect_mask,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: t.layer_count,
+        },
+        ..Default::default()
+    });
+    src_stage |= t.src_stage_mask;
+    dst_stage |= t.dst_stage_mask;
+}
+unsafe {
+    self.device.cmd_pipeline_barrier(
+        cmd,
+        src_stage,
+        dst_stage,
+        vk::DependencyFlags::empty(),
+        &amp;[],
+        &amp;[],
+        &amp;barriers,
+    );
+}</code></pre><figcaption>src/vulkan/base.rs:315-349</figcaption></figure><!--/x-->
+    <p>Following the shadow map through a frame shows it working. Before the shadow pass: <code>UNDEFINED</code>
+    → depth attachment, writing. Before the main pass: depth attachment → shader-read-only, so the main pass's
+    fragment shaders wait for the shadow pass's depth writes to finish and be visible. The UI pass doesn't
+    declare the shadow map, so nothing more happens to it.</p>
+    <p>The swapchain image shows one more rule. The UI pass keeps the same layout, but it <em>loads</em> the main
+    pass's result and blends over it, so it declares read as well as write access. That difference is what makes
+    the graph insert a barrier, so the UI can't read the image before the main pass has finished writing it.</p>
+
+    <h2>Beginning rendering, and the resolve</h2>
+    <p>Once its barriers are in, a pass starts rendering with <code>cmd_begin_rendering</code> from dynamic
+    rendering (<a href="07-pipelines.html">Chapter 7</a>), naming the actual image views. Here's the main pass's MSAA path:</p>
+    <!--x src/vulkan/main_pass.rs 59-73--><figure class="code"><pre><code class="language-rust">let (color_attachment_info, depth_attachment_info) = if msaa_samples &gt; 1 {
+    // MSAA path: render to MSAA color/depth and resolve to swapchain
+    let color_att = ctx.attachments[&amp;AttachmentKind::MsaaColor];
+    let depth_att = ctx.attachments[&amp;AttachmentKind::MsaaDepth];
+    let resolve_att = ctx.attachments[&amp;AttachmentKind::SwapchainColor];
+
+    let color_attachment_info = vk::RenderingAttachmentInfo::default()
+        .image_view(color_att.view)
+        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::DONT_CARE) // resolve writes final color
+        .clear_value(clear_color)
+        .resolve_mode(vk::ResolveModeFlags::AVERAGE)
+        .resolve_image_view(resolve_att.view)
+        .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);</code></pre><figcaption>src/vulkan/main_pass.rs:59-73</figcaption></figure><!--/x-->
+    <p><code>load_op: CLEAR</code> clears the image at the start of rendering. <code>store_op:
+    DONT_CARE</code> says the multisampled samples needn't be written back to memory afterwards. Instead, the
+    resolve averages them (<code>AVERAGE</code>) into the swapchain image's view. Apple's GPUs render the screen in
+    small tiles held in fast on-chip memory. Combined with the <code>TRANSIENT_ATTACHMENT</code> usage these
+    images were created with (<a href="04-swapchain.html">Chapter 4</a>), that lets the driver avoid writing the
+    full multisampled image out to main memory. Depth is cleared and discarded the same way. Then the pass begins:</p>
+    <!--x src/vulkan/main_pass.rs 107-118--><figure class="code"><pre><code class="language-rust">let color_attachments = [color_attachment_info];
+let rendering_info = vk::RenderingInfo::default()
+    .render_area(vk::Rect2D {
+        offset: vk::Offset2D::default(),
+        extent: ctx.vulkan_base.swapchain.extent,
+    })
+    .layer_count(1)
+    .color_attachments(&amp;color_attachments)
+    .depth_attachment(&amp;depth_attachment_info);
+
+unsafe {
+    device.cmd_begin_rendering(cmd, &amp;rendering_info);</code></pre><figcaption>src/vulkan/main_pass.rs:107-118</figcaption></figure><!--/x-->
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>The OpenGL version was a multisampled FBO, a <code>glBlitFramebuffer</code> to resolve it, and
+      <code>glInvalidateFramebuffer</code> to hint that the samples could be dropped. Here all three are fields
+      of one struct, decided before drawing starts.</p>
+    </aside>
+
+    <h2>Handing the image to the display</h2>
+    <p>After the last pass, the swapchain image goes to the layout presentation expects:</p>
+    <!--x src/vulkan/render_graph.rs 464-483--><figure class="code"><pre><code class="language-rust">// --- 4. Final transition for presentation ---
+let swapchain_state = attachment_states
+    .get_mut(&amp;AttachmentKind::SwapchainColor)
+    .unwrap();
+if swapchain_state.layout != vk::ImageLayout::PRESENT_SRC_KHR {
+    vb.insert_attachment_barriers(
+        frame.cmd_buf,
+        &amp;[ImageTransition {
+            image: swapchain_state.handle.image,
+            old_layout: swapchain_state.layout,
+            new_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+            src_access_mask: swapchain_state.access,
+            dst_access_mask: vk::AccessFlags::empty(), // No access needed for present
+            src_stage_mask: swapchain_state.stage,
+            dst_stage_mask: vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            layer_count: 1,
+        }],
+    );
+}</code></pre><figcaption>src/vulkan/render_graph.rs:464-483</figcaption></figure><!--/x-->
+    <p>The destination is "bottom of pipe, no access": nothing later in this command buffer touches the image.
+    Ordering against the presentation engine is handled by the render-finished semaphore, not by this barrier
+    (<a href="09-frame-loop.html">Chapter 9</a>).</p>
+  </section>
+
+  <section id="recap" class="recap">
+    <h2>Recap</h2>
+    <ul>
+      <li>A frame is three passes in fixed order: shadow, main, UI. Each declares the attachments it uses and
+      the layout and access it needs.</li>
+      <li>Barriers wait, publish writes, and change layouts. The graph tracks every attachment's state and
+      inserts the barriers between passes.</li>
+      <li>Each image's first barrier in a frame waits for whatever used it last, and a pass that reads an image
+      declares it, so it waits for the writes before it.</li>
+      <li>With MSAA, the main pass draws into multisampled images and resolves into the swapchain image,
+      discarding the samples. A final barrier readies the image for presentation.</li>
+    </ul>
+  </section>
+
+  <nav class="pager"><a class="prev" href="09-frame-loop.html">← 09 · The frame loop</a><a class="next" href="11-shadows.html">11 · Shadows →</a></nav>
+</main>
+<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>
+<script src="guide.js"></script>
+</body>
+</html>

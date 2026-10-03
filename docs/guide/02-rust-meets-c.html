@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>02 · Rust meets a C API · RustyVulkan Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
+<main class="chapter">
+  <header class="chapter-head">
+    <p class="kicker">Part 1 · Chapter 02 · <span class="readtime">~10 min read</span></p>
+    <h1>Rust meets a C API</h1>
+    <p class="lede">Vulkan is defined in C. This chapter shows how the <code>ash</code> crate presents it to Rust,
+    and why, even in a "memory-safe" language, this codebase has to keep track of who destroys what by hand.</p>
+  </header>
+
+  <section id="big-picture">
+    <h2><span class="tag">Overview</span> The big picture</h2>
+
+    <h3>The shape of the Vulkan C API</h3>
+    <p>Almost everything in Vulkan follows one pattern. To make an object, you fill in a "create info"
+    struct describing what you want and pass it to a <code>vkCreate…</code> function. You get back a
+    <dfn>handle</dfn>: an opaque number that names the object inside the driver. When you're finished, you pass
+    that handle to the matching <code>vkDestroy…</code> function. Every call reports success or failure with a
+    result code.</p>
+    <p>Objects depend on each other. A buffer is created from a device; a device from an instance. Vulkan's
+    rule is that you must destroy them in the reverse order, children before parents, and never destroy
+    something the GPU is still using. Break the rule and the behaviour is undefined: maybe nothing happens,
+    maybe a crash, maybe a corrupted frame.</p>
+
+    <h3>What <code>ash</code> adds, and what it doesn't</h3>
+    <p><code>ash</code> is a deliberately thin layer. Its functions correspond one-to-one with Vulkan's, and
+    its structs have exactly the same fields. What it adds is Rust's vocabulary on top:</p>
+    <ul>
+      <li>Result codes become Rust <code>Result</code> values, so a failed call is hard to ignore by accident.</li>
+      <li>Create-info structs come with sensible defaults, and optional "builder" methods that let the compiler
+      check that the data a struct points at lives long enough.</li>
+      <li>Functions are grouped onto the object they belong to: device functions are methods on a
+      <code>Device</code>, and so on.</li>
+    </ul>
+    <p>What <code>ash</code> does <em>not</em> do is hide anything. Every call is still the raw Vulkan call,
+    with all of its rules, which is why nearly every call is marked <code>unsafe</code> in Rust.</p>
+
+    <h3>Rust's safety net has a GPU-shaped hole</h3>
+    <p>Rust's best-known feature is that it manages memory without a garbage collector. Every value has
+    exactly one <em>owner</em>; when the owner goes away, the value is cleaned up automatically, at a
+    predictable moment. That works perfectly for things Rust understands, such as strings, vectors and files.</p>
+    <p>A Vulkan handle, though, is just a number to Rust. Rust can't know that the number refers to a texture in
+    GPU memory, that the device must outlive it, or that the GPU might still be reading it. So this codebase
+    adopts a convention, stated in its own <code>DEVELOPMENT.md</code>: <strong>every Vulkan resource has
+    exactly one owner in the code, and that owner destroys it explicitly, in the right order</strong>.
+    Anywhere else a handle appears, it's merely borrowed.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 640 420" role="img" aria-labelledby="d3t">
+        <title id="d3t">Shutdown order</title>
+        <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" class="fill-muted"/></marker></defs>
+        <g font-size="14">
+          <rect class="box-accent" x="20" y="10" width="600" height="44" rx="8"/>
+          <text x="40" y="37" font-weight="700">1 · Wait until the GPU is idle</text>
+          <rect class="box" x="20" y="74" width="600" height="62" rx="8"/>
+          <text x="40" y="99" font-weight="700">2 · App::drop releases what it built on top of the device</text>
+          <text x="40" y="122" class="muted">render passes, sky, grass, materials and textures, meshes, debug UI</text>
+          <rect class="box" x="20" y="156" width="600" height="62" rx="8"/>
+          <text x="40" y="181" font-weight="700">3 · VulkanBase::drop releases the device's children</text>
+          <text x="40" y="204" class="muted">render targets, swapchain, sync objects, buffers, … (all explained later)</text>
+          <rect class="box-rust" x="20" y="238" width="600" height="44" rx="8"/>
+          <text x="40" y="265" font-weight="700">4 · The GPU memory allocator, and the memory it holds</text>
+          <rect class="box" x="20" y="302" width="600" height="44" rx="8"/>
+          <text x="40" y="329" font-weight="700">5 · The logical device</text>
+          <rect class="box" x="20" y="366" width="600" height="44" rx="8"/>
+          <text x="40" y="393" font-weight="700">6 · The window surface, debug messenger, then the instance</text>
+        </g>
+        <path class="wire" marker-end="url(#a2)" d="M320 54 V71"/>
+        <path class="wire" marker-end="url(#a2)" d="M320 136 V153"/>
+        <path class="wire" marker-end="url(#a2)" d="M320 218 V235"/>
+        <path class="wire" marker-end="url(#a2)" d="M320 282 V299"/>
+        <path class="wire" marker-end="url(#a2)" d="M320 346 V363"/>
+      </svg>
+      <figcaption>Teardown runs in reverse dependency order: whatever was created from something is destroyed
+      before it.</figcaption>
+    </figure>
+  </section>
+
+  <div class="dive-divider"><span>Deeper dive</span></div>
+
+  <section id="deep-dive">
+    <h2>Entry, Instance, Device: three tables of functions</h2>
+    <p>In C, you call free functions like <code>vkCreateBuffer(device, …)</code>. <code>ash</code> makes the
+    function lookup explicit with three types, each holding a table of function pointers for one level:</p>
+    <ul>
+      <li><code>ash::Entry</code>: functions that need no Vulkan object yet, such as listing layers and
+      creating an instance. <code>Entry::linked()</code> uses the loader linked in at build time (the
+      <code>linked</code> feature from <a href="01-why-vulkan.html">Chapter 1</a>).</li>
+      <li><code>ash::Instance</code>: the instance handle plus functions that act on it (enumerating GPUs,
+      creating a device).</li>
+      <li><code>ash::Device</code>: the device handle plus every device-level function (create buffers, record
+      commands, submit work).</li>
+    </ul>
+    <p>Extensions, optional features outside core Vulkan, get their own small tables, created from the base
+    ones. The window-surface and swapchain functions are extensions, so <code>VulkanBase::new</code> builds
+    loaders for them:</p>
+    <!--x src/vulkan/base/setup.rs 436,471,555--><figure class="code"><pre><code class="language-rust">let entry = Entry::linked();
+// ...
+let surface_loader = surface::Instance::new(&amp;entry, &amp;instance);
+// ...
+let swapchain_loader = swapchain::Device::new(&amp;instance, &amp;device);</code></pre><figcaption>src/vulkan/base/setup.rs:436-555</figcaption></figure><!--/x-->
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>This is the same job that GLEW or glad did for you: OpenGL functions past version 1.1 had to be fetched
+      as function pointers at run time. <code>ash</code> fetches device functions per device, which avoids the
+      loader's per-call dispatch step.</p>
+    </aside>
+
+    <h2>Create-info structs</h2>
+    <p>Here is how the code creates its Vulkan instance (<code>app_info</code> and the two name lists are built
+    just above). It's nearly a literal translation:</p>
+    <!--x src/vulkan/base/setup.rs 49-59--><figure class="code"><pre><code class="language-rust">let create_info = vk::InstanceCreateInfo {
+    flags: instance_flags,
+    p_application_info: &amp;app_info,
+    enabled_layer_count: layers.len() as u32,
+    pp_enabled_layer_names: layers.as_ptr(),
+    enabled_extension_count: extension_ptrs.len() as u32,
+    pp_enabled_extension_names: extension_ptrs.as_ptr(),
+    ..Default::default()
+};
+
+Ok(unsafe { entry.create_instance(&amp;create_info, None)? })</code></pre><figcaption>src/vulkan/base/setup.rs:49-59</figcaption></figure><!--/x-->
+    <p>In C you'd write <code>VkInstanceCreateInfo info = {0};</code>, set
+    <code>info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO</code>, and fill in the fields. The Rust version
+    does the same, but <code>..Default::default()</code> fills every field not mentioned, and <code>ash</code>'s
+    default sets <code>s_type</code> correctly for you. Pointer-and-count pairs are filled from Rust vectors with <code>.as_ptr()</code> and <code>.len()</code>.</p>
+    <aside class="callout rust" id="rust-builders"><p class="callout-title">Rust note · struct literals, defaults and builders</p>
+      <p><code>Type { a: 1, b: 2, ..Default::default() }</code> is <em>struct update syntax</em>: "these fields
+      as given, everything else from the default value". <code>Default</code> is a <em>trait</em>, Rust's name
+      for an interface that a type can implement; here it supplies the zero/empty value.</p>
+      <p><code>ash</code> also offers <em>builder methods</em>, one per field, which you'll see in places. Here
+      <code>code</code> is the SPIR-V shader program as a slice of 32-bit words:</p>
+      <!--x src/graphics/shaders.rs 55--><figure class="code"><pre><code class="language-rust">let create_info = vk::ShaderModuleCreateInfo::default().code(&amp;code);</code></pre><figcaption>src/graphics/shaders.rs:55</figcaption></figure><!--/x-->
+      <p>The difference matters. A raw <code>.as_ptr()</code> pointer in a struct literal is invisible to the
+      compiler: if the vector it points into were freed before the create call, you'd pass a dangling pointer,
+      just as in C. Builder methods take a Rust reference instead, and <code>ash</code>'s structs carry a
+      <em>lifetime</em> parameter so the
+      compiler refuses to let the struct outlive the data it points at. This codebase mostly uses struct
+      literals, so it keeps the pointed-to data in local variables that live until the call returns.</p>
+    </aside>
+    <p>Vulkan extends structs through a <code>pNext</code> pointer chain: a linked list of extra structs hanging
+    off the main one, used for features added after the original struct was defined. The builder
+    <code>push_next</code> links one in safely. Here it's used to ask a GPU
+    whether it supports <em>dynamic rendering</em>, a Vulkan 1.3 feature this renderer depends on
+    (<a href="07-pipelines.html">Chapter 7</a>):</p>
+    <!--x src/vulkan/base/setup.rs 120-126--><figure class="code"><pre><code class="language-rust">let supports_dynamic_rendering = unsafe {
+    let mut features = vk::PhysicalDeviceDynamicRenderingFeatures::default();
+    let mut features2 =
+        vk::PhysicalDeviceFeatures2::default().push_next(&amp;mut features);
+    instance.get_physical_device_features2(physical_device, &amp;mut features2);
+    features.dynamic_rendering == vk::TRUE
+};</code></pre><figcaption>src/vulkan/base/setup.rs:120-126</figcaption></figure><!--/x-->
+
+    <h2>Why it's all <code>unsafe</code></h2>
+    <aside class="callout rust" id="rust-unsafe"><p class="callout-title">Rust note · unsafe</p>
+      <p>Most Rust code is checked by the compiler for memory errors: no dangling pointers, no use after free,
+      no data races. An <code>unsafe { … }</code> block doesn't turn those checks off. It permits a few extra
+      operations the compiler can't verify, chiefly calling functions marked <code>unsafe</code> and following
+      raw pointers. It's the programmer's promise that the rules those operations depend on hold.</p>
+      <p>Vulkan's specification lists thousands of "valid usage" rules: this handle must be alive, that image
+      must be in the right layout, this buffer must not be in use by the GPU. Apart from the
+      pointer lifetimes its builders track, <code>ash</code> can't check them, so it marks nearly every function
+      <code>unsafe</code>. In practice, the compile-time check
+      is replaced by a run-time one: the <em>validation layers</em>, an optional checking layer between your
+      program and the driver, which this project enables in debug builds
+      (<a href="03-instance-devices.html">Chapter 3</a>).</p>
+    </aside>
+    <p>That's why the codebase is dotted with blocks like this, often covering a whole function body:</p>
+    <!--x src/vulkan/base/setup.rs 234-235--><figure class="code"><pre><code class="language-rust">let device = unsafe { instance.create_device(physical_device, &amp;device_create_info, None)? };
+let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></pre><figcaption>src/vulkan/base/setup.rs:234-235</figcaption></figure><!--/x-->
+
+    <h2>Errors: <code>Result</code> and <code>?</code></h2>
+    <aside class="callout rust" id="rust-result"><p class="callout-title">Rust note · Result, ?, and Box&lt;dyn Error&gt;</p>
+      <p>A fallible function returns <code>Result&lt;T, E&gt;</code>, either <code>Ok(T)</code> or
+      <code>Err(E)</code>. You can't use the <code>T</code> without dealing with the possibility of
+      <code>E</code>. Writing <code>?</code> after a call means "unwrap the <code>Ok</code> value, or return the
+      <code>Err</code> to my caller immediately". It replaces the C idiom of
+      <code>if (res != VK_SUCCESS) return res;</code> after every line.</p>
+      <p><code>ash</code> turns each <code>VkResult</code> into <code>Result&lt;T, vk::Result&gt;</code>, where
+      <code>vk::Result</code> is the error code. Many functions here return
+      <code>Result&lt;…, Box&lt;dyn Error&gt;&gt;</code> instead, meaning "any kind of error". <code>dyn
+      Error</code> is a value of some type implementing the <code>Error</code> trait; <code>Box</code> puts it
+      on the heap so different error types fit in one return type. Because <code>vk::Result</code> implements
+      <code>Error</code>, <code>?</code> (or an explicit <code>.into()</code>) converts it automatically, so
+      different error types can flow out of one function.</p>
+    </aside>
+    <!--x src/vulkan/base/setup.rs 9-14--><figure class="code"><pre><code class="language-rust">fn create_instance(
+    entry: &amp;Entry,
+    event_loop: &amp;ActiveEventLoop,
+    layers: &amp;[*const i8],
+) -&gt; Result&lt;Instance, Box&lt;dyn Error&gt;&gt; {
+    let app_name = std::ffi::CString::new("RustyVulkan")?;</code></pre><figcaption>src/vulkan/base/setup.rs:9-14</figcaption></figure><!--/x-->
+    <p>Below, <code>CString::new</code> can fail with yet another error type (a string containing a zero byte),
+    and the <code>?</code> on the last line handles it the same way.</p>
+    <p>Sometimes a specific error is expected and handled rather than passed up. Acquiring a swapchain image can
+    return <code>ERROR_OUT_OF_DATE_KHR</code> when the window has been resized. That isn't a failure, just a
+    signal to rebuild, so <code>begin_frame</code> pattern-matches on it:</p>
+    <!--x src/vulkan/base.rs 259-271--><figure class="code"><pre><code class="language-rust">let (image_index, is_suboptimal) = match self.swapchain_loader.acquire_next_image(
+    self.swapchain.handle,
+    u64::MAX,
+    self.image_available_semaphores[slot],
+    vk::Fence::null(),
+) {
+    Ok(result) =&gt; result,
+    Err(vk::Result::ERROR_OUT_OF_DATE_KHR) =&gt; {
+        self.swapchain_recreation_needed = true;
+        return Ok(None);
+    }
+    Err(e) =&gt; return Err(e.into()),
+};</code></pre><figcaption>src/vulkan/base.rs:259-271</figcaption></figure><!--/x-->
+    <p><code>match</code> is like a <code>switch</code> that must cover every case and can look inside values:
+    <code>Ok(result)</code> pulls out the success value; the second arm catches one particular error; the last
+    converts anything else with <code>.into()</code> and returns it.</p>
+
+    <h2>Borrowing</h2>
+    <aside class="callout rust" id="rust-borrowing"><p class="callout-title">Rust note · references and borrowing</p>
+      <p><code>&amp;T</code> is a <em>shared reference</em>: a pointer that lets you read a value without
+      owning it. <code>&amp;mut T</code> is an <em>exclusive reference</em> that allows changes. The compiler
+      enforces two rules: a reference never outlives the thing it points to, and while something is borrowed
+      mutably, nothing else can access it.</p>
+      <p>Most functions in this codebase take the big objects by reference (<code>&amp;Instance</code>,
+      <code>&amp;ash::Device</code>), because they only need to use them. Handles, being <code>Copy</code> (see below),
+      are usually passed by value, like <code>physical_device</code> here:</p>
+      <!--x src/vulkan/base/setup.rs 162-168--><figure class="code"><pre><code class="language-rust">fn create_logical_device_and_queue(
+    instance: &amp;Instance,
+    physical_device: vk::PhysicalDevice,
+    queue_family_index: u32,
+    enable_multi_draw_indirect: bool,
+    enable_draw_indirect_first_instance: bool,
+) -&gt; Result&lt;(ash::Device, vk::Queue), vk::Result&gt; {</code></pre><figcaption>src/vulkan/base/setup.rs:162-168</figcaption></figure><!--/x-->
+    </aside>
+
+    <h2>Handles are just numbers</h2>
+    <aside class="callout rust" id="rust-handles-copy"><p class="callout-title">Rust note · Copy types, and why handles are one</p>
+      <p>Normally, assigning a Rust value <em>moves</em> it: the old variable can no longer be used, which is
+      how Rust guarantees a single owner. Types marked <code>Copy</code> are the exception: small, plain values
+      like integers that are simply duplicated.</p>
+      <p>Every <code>ash</code> handle type (<code>vk::Buffer</code>, <code>vk::Image</code>,
+      <code>vk::Fence</code>…) is a <code>Copy</code> wrapper around a plain number or pointer. Copying one does
+      <strong>not</strong> create a second GPU object, and letting a copy go out of scope does
+      <strong>not</strong> destroy anything. That's exactly C's behaviour, and it's why ownership has to be
+      a convention here rather than something the compiler enforces.</p>
+    </aside>
+    <p>You can see this in shutdown code. <code>for &amp;sem in &amp;self.…</code> borrows the vector and the <code>&amp;sem</code> pattern copies each handle out of it, then destroys the object it
+    names:</p>
+    <!--x src/vulkan/base.rs 767-769--><figure class="code"><pre><code class="language-rust">for &amp;sem in &amp;self.image_available_semaphores {
+    self.device.destroy_semaphore(sem, None);
+}</code></pre><figcaption>src/vulkan/base.rs:767-769</figcaption></figure><!--/x-->
+
+    <h2><code>Drop</code>: automatic clean-up, and its limits</h2>
+    <aside class="callout rust" id="rust-drop"><p class="callout-title">Rust note · Drop</p>
+      <p>When a value's owner goes out of scope, Rust calls that type's <code>Drop</code> implementation, if it
+      has one, and then drops each of its fields in turn. It's the same idea as a C++ destructor (RAII). It
+      happens exactly once, at a point you can predict from the code.</p>
+    </aside>
+    <p>The simplest use in the codebase is <code>ShaderModule</code>, a type that wraps exactly one Vulkan
+    handle and destroys it in <code>Drop</code>:</p>
+    <!--x src/graphics/shaders.rs 36-39,65-74--><figure class="code"><pre><code class="language-rust">pub struct ShaderModule {
+    device: Device,
+    vk_shader_module: vk::ShaderModule,
+}
+// ...
+impl Drop for ShaderModule {
+    fn drop(&amp;mut self) {
+        // This value uniquely owns the Vulkan handle, so its destructor runs
+        // exactly once when a scope ends or an owning field is replaced.
+        unsafe {
+            self.device
+                .destroy_shader_module(self.vk_shader_module, None)
+        };
+    }
+}</code></pre><figcaption>src/graphics/shaders.rs:36-74</figcaption></figure><!--/x-->
+    <p>It keeps its own copy of the <code>ash::Device</code> so it can call
+    <code>destroy_shader_module</code>. As the comment at its definition warns, cloning that wrapper only
+    copies the function table; it doesn't keep the real Vulkan device alive. The application still has to make
+    sure shader modules die before the device does.</p>
+    <p>For the big objects, the code uses explicit ordering instead. <code>VulkanBase</code> owns the device
+    and everything hanging off it, and its <code>Drop</code> waits for the GPU and then destroys things in
+    reverse order:</p>
+    <!--x src/vulkan/base.rs 745-754,791-810--><figure class="code"><pre><code class="language-rust">fn drop(&amp;mut self) {
+    println!("💧 Dropping VulkanBase");
+    unsafe {
+        // `Drop` gives us `&amp;mut self`, but Vulkan does not know Rust's
+        // ownership graph.  Destroy resources in reverse dependency order.
+        // Destructors must not panic, including after device loss or while
+        // another error is unwinding the application's ownership tree.
+        if let Err(error) = self.device.device_wait_idle() {
+            eprintln!("Failed to wait for device during shutdown: {error}");
+        }
+// ...
+        self.device.destroy_command_pool(self.command_pool, None);
+        // `Option::take` moves the allocator out while we only have `&amp;mut self`.
+        // Dropping it here frees VMA memory before its Vulkan device disappears.
+        if let Some(alloc) = self.allocator.take() {
+            // (optional) quick summary before it goes away
+            if let Ok(stats) = alloc.calculate_statistics() {
+                let s = stats.total.statistics;
+                println!(
+                    "🗑️ VMA total before drop: allocs={} blocks={} allocBytes={} blockBytes={}",
+                    s.allocationCount, s.blockCount, s.allocationBytes, s.blockBytes
+                );
+            }
+            drop(alloc);
+        }
+        self.device.destroy_device(None);
+        self.surface_loader.destroy_surface(self.surface, None);
+        #[cfg(debug_assertions)]
+        self.debug_utils_loader
+            .destroy_debug_utils_messenger(self.debug_messenger, None);
+        self.instance.destroy_instance(None);</code></pre><figcaption>src/vulkan/base.rs:745-810</figcaption></figure><!--/x-->
+    <p>Note that it logs the wait-idle error rather than returning it with <code>?</code>: a destructor has no
+    caller to report to, and panicking in a destructor while another panic is unwinding aborts the program.
+    The allocator is stored as an <code>Option</code> so it can be
+    destroyed in a chosen place. <code>Option::take()</code> moves the value out and leaves <code>None</code>
+    behind, which is how you take ownership of a field when you only have <code>&amp;mut self</code>.</p>
+    <p><code>VulkanBase</code> itself lives inside <code>App</code>, which owns the renderers and resource
+    managers built on top of it. After a <code>drop</code> body finishes, Rust drops the struct's fields in
+    declaration order, which isn't the order Vulkan needs. So <code>App::drop</code> takes the backend out first, cleans up everything that
+    depends on it, and only then lets it go:</p>
+    <!--x src/app/app.rs 551-563,577-585--><figure class="code"><pre><code class="language-rust">impl Drop for App {
+    fn drop(&amp;mut self) {
+        // `take` moves VulkanBase out of the Option.  Its own Drop runs only
+        // after the managers below release resources that depend on its device.
+        if let Some(vb) = self.vulkan_base.take() {
+            unsafe {
+                let _ = vb.device.device_wait_idle();
+            }
+
+            // Rust drops fields automatically, but Vulkan handles need this
+            // explicit dependency order: passes -&gt; managers -&gt; renderer -&gt; device.
+            self.render_graph.cleanup(&amp;vb.device);
+
+// ...
+            self.mesh_manager.cleanup(vb.allocator.as_ref().unwrap());
+
+            if let Some(mut renderer) = self.imgui_renderer.take() {
+                println!("🗑️ Cleaning up ImGui renderer");
+                renderer.cleanup(vb.allocator.as_ref().unwrap());
+            }
+        }
+    }
+}</code></pre><figcaption>src/app/app.rs:551-585</figcaption></figure><!--/x-->
+    <p>At the end of the <code>if let</code> block, <code>vb</code> goes out of scope and <code>VulkanBase</code>'s own
+    <code>Drop</code>, above, runs last.</p>
+
+    <h2>When creation fails halfway</h2>
+    <p>The harder case is a function that creates several objects and fails on, say, the third: the first two
+    now need destroying, or they leak. The project's rule is to record
+    ownership after each step and release what's been made if a later step fails. Here it is in the code that
+    creates one uniform buffer per swapchain image:</p>
+    <!--x src/vulkan/base/setup.rs 335-347--><figure class="code"><pre><code class="language-rust">    let (buffer, allocation) =
+        match unsafe { allocator.create_buffer(&amp;buffer_info, &amp;alloc_info) } {
+            Ok(resource) =&gt; resource,
+            Err(error) =&gt; {
+                for (buffer, mut allocation) in buffers.into_iter().zip(allocations) {
+                    unsafe { allocator.destroy_buffer(buffer, &amp;mut allocation) };
+                }
+                return Err(error);
+            }
+        };
+    buffers.push(buffer);
+    allocations.push(allocation);
+}</code></pre><figcaption>src/vulkan/base/setup.rs:335-347</figcaption></figure><!--/x-->
+    <p>If creating buffer <em>n</em> fails, the error arm destroys buffers 0 to <em>n</em>−1 before
+    returning (<code>zip</code> pairs the two vectors; <code>into_iter</code> consumes them).</p>
+    <aside class="callout aside"><p class="callout-title">Not finished yet</p>
+      <p><code>DEVELOPMENT.md</code> is candid that this isn't applied everywhere. Some start-up paths,
+      including much of <code>VulkanBase::new</code>, which uses <code>?</code> after each step without unwinding
+      earlier ones, and the texture, grass and ImGui upload code, don't yet release everything on a partial
+      failure, and several helpers still panic on Vulkan errors. For a program that exits on any start-up
+      error this costs little, but don't copy it wholesale.</p>
+    </aside>
+  </section>
+
+  <section id="recap" class="recap">
+    <h2>Recap</h2>
+    <ul>
+      <li><code>ash</code> mirrors Vulkan one-to-one, organised into <code>Entry</code>, <code>Instance</code>
+      and <code>Device</code> function tables plus per-extension loaders.</li>
+      <li>Nearly every call is <code>unsafe</code> because Vulkan's rules can't be checked at compile time;
+      validation layers check them at run time.</li>
+      <li>Errors are <code>Result</code>s, propagated with <code>?</code> or matched when expected.</li>
+      <li>Handles are <code>Copy</code> numbers, so ownership is a convention: one owner per resource,
+      destroyed in reverse dependency order.</li>
+    </ul>
+  </section>
+
+  <nav class="pager"><a class="prev" href="01-why-vulkan.html">← 01 · Why Vulkan, and a map of this repo</a><a class="next" href="03-instance-devices.html">03 · Instance, devices and queues →</a></nav>
+</main>
+<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>
+<script src="guide.js"></script>
+</body>
+</html>

@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>03 · Instance, devices and queues · RustyVulkan Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
+<main class="chapter">
+  <header class="chapter-head">
+    <p class="kicker">Part 2 · Chapter 03 · <span class="readtime">~9 min read</span></p>
+    <h1>Instance, devices and queues</h1>
+    <p class="lede">Before anything can be drawn, the program has to connect to Vulkan, look at the GPUs on the
+    machine, pick one, switch on the features it needs, and get a queue to send work to.</p>
+  </header>
+
+  <section id="big-picture">
+    <h2><span class="tag">Overview</span> The big picture</h2>
+
+    <p>In OpenGL, asking the window system for a context gave you everything at once: a GPU chosen for you,
+    all its features on, and an implicit place to send commands. Vulkan splits that single step into several
+    explicit ones, each a decision you make.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 640 400" role="img" aria-labelledby="d4t">
+        <title id="d4t">From instance to queue</title>
+        <defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" class="fill-muted"/></marker></defs>
+        <g font-size="14">
+          <rect class="box-accent" x="20" y="14" width="250" height="70" rx="8"/>
+          <text x="38" y="42" font-weight="700" font-size="16">Instance</text>
+          <text x="38" y="64" class="muted">+ layers (validation)</text>
+          <text x="38" y="80" class="muted" font-size="12">+ instance extensions</text>
+          <rect class="box" x="370" y="14" width="250" height="70" rx="8"/>
+          <text x="388" y="42" font-weight="700" font-size="16">Surface</text>
+          <text x="388" y="64" class="muted">the window, as Vulkan sees it</text>
+          <rect class="box" x="20" y="124" width="180" height="56" rx="8"/>
+          <text x="36" y="150" font-weight="700">Physical device</text>
+          <text x="36" y="170" class="muted" font-size="12">e.g. Apple M-series GPU</text>
+          <rect class="box" x="220" y="124" width="180" height="56" rx="8" stroke-dasharray="5 4"/>
+          <text x="236" y="150" font-weight="700" class="muted">Physical device</text>
+          <text x="236" y="170" class="muted" font-size="12">another GPU, if any</text>
+          <rect class="box-aside" x="420" y="124" width="200" height="56" rx="8"/>
+          <text x="436" y="148" font-weight="700">Can it present</text>
+          <text x="436" y="168" font-weight="700">to this surface?</text>
+          <rect class="box-accent" x="20" y="226" width="380" height="70" rx="8"/>
+          <text x="38" y="254" font-weight="700" font-size="16">Logical device</text>
+          <text x="38" y="276" class="muted">chosen GPU + the features and device extensions you enabled</text>
+          <rect class="box-rust" x="20" y="326" width="380" height="56" rx="8"/>
+          <text x="38" y="352" font-weight="700" font-size="16">Queue</text>
+          <text x="38" y="372" class="muted">from a family that can draw and present</text>
+        </g>
+        <path class="wire" marker-end="url(#a3)" d="M110 84 V121"/>
+        <path class="wire" marker-end="url(#a3)" d="M230 84 Q300 100 310 121"/>
+        <path class="wire" marker-end="url(#a3)" d="M495 84 V121"/>
+        <path class="wire" d="M520 180 V200 H20 M20 194 V200 M400 194 V200"/>
+        <text x="520" y="216" font-size="12" class="muted" text-anchor="middle">asked of each GPU</text>
+        <path class="wire-accent" marker-end="url(#a3)" d="M110 180 V223"/>
+        <path class="wire" marker-end="url(#a3)" d="M210 296 V323"/>
+      </svg>
+      <figcaption>The instance lists the GPUs. The surface helps decide which one is usable. The chosen GPU is
+      opened as a logical device, which hands out queues.</figcaption>
+    </figure>
+
+    <h3>The instance, layers and extensions</h3>
+    <p>The <dfn>instance</dfn> is the program's connection to Vulkan. Creating it is where you declare which
+    version of the API you're written against (1.3 here), and what optional extras you want:</p>
+    <ul>
+      <li><dfn>Layers</dfn> sit between your program and the driver, intercepting every call. The important one
+      is the <em>validation layer</em>, Khronos's checker for Vulkan's usage rules. With it on, mistakes that
+      would otherwise be silent produce a readable message. It costs speed, so this project enables it only in
+      debug builds.</li>
+      <li><dfn>Extensions</dfn> add functionality beyond the core API. Some belong to the instance (talking to
+      the window system, receiving debug messages); others belong to a device (the swapchain, for showing
+      images on screen).</li>
+    </ul>
+
+    <h3>Physical and logical devices</h3>
+    <p>A <dfn>physical device</dfn> is a GPU as Vulkan reports it: its name, its type (built-in or discrete),
+    its limits, and what optional features it supports. You can ask questions of it, but you can't use it yet.
+    A <dfn>logical device</dfn> is what you create from it: your own session with that GPU, with exactly the
+    features and extensions you asked for switched on. Nearly every other Vulkan object is created from the
+    logical device, and it's what the codebase means whenever it says <code>device</code>.</p>
+    <p>RustyVulkan's choice is simple: prefer a discrete graphics card, but only if it can do everything the
+    renderer needs. On an Apple Silicon Mac there is only one GPU, so the question is really "does this one
+    qualify?".</p>
+
+    <h3>Queues and queue families</h3>
+    <p>Work reaches the GPU through <dfn>queues</dfn>. A GPU groups its queues into <dfn>families</dfn>
+    by what they can do: graphics, compute, data transfer. Whether a family can show images in a particular
+    window ("present to a surface") is a separate question that depends on the window. That's why the window's
+    <dfn>surface</dfn> is created before the GPU is chosen. This renderer looks for one family that can both draw and present, and uses a single queue from
+    it for everything.</p>
+  </section>
+
+  <div class="dive-divider"><span>Deeper dive</span></div>
+
+  <section id="deep-dive">
+    <p>All of this happens in <code>VulkanBase::new</code> in <code>src/vulkan/base/setup.rs</code>, which
+    builds the whole backend in one long function. It reads top to bottom in the order of the diagram.
+    (Patterns from <a href="02-rust-meets-c.html#rust-unsafe">Chapter 2</a> aren't re-explained.)</p>
+
+    <h2>Checking for the validation layer</h2>
+    <!--x src/vulkan/base/setup.rs 436-460--><figure class="code"><pre><code class="language-rust">let entry = Entry::linked();
+
+#[cfg(debug_assertions)]
+let layer_names = [c"VK_LAYER_KHRONOS_validation"];
+#[cfg(debug_assertions)]
+let layer_name_ptrs: Vec&lt;*const i8&gt; = layer_names.iter().map(|s| s.as_ptr()).collect();
+
+#[cfg(not(debug_assertions))]
+let layer_name_ptrs: Vec&lt;*const i8&gt; = Vec::new();
+
+#[cfg(debug_assertions)]
+{
+    unsafe {
+        let available_layers = entry.enumerate_instance_layer_properties()?;
+        let validation_layer_name = c"VK_LAYER_KHRONOS_validation";
+        let is_layer_available = available_layers.iter().any(|layer| {
+            let name = CStr::from_ptr(layer.layer_name.as_ptr());
+            name == validation_layer_name
+        });
+        if !is_layer_available {
+            return Err("Validation layers requested, but not available.".into());
+        }
+    }
+    println!("✅ Validation layers available and requested.");
+}</code></pre><figcaption>src/vulkan/base/setup.rs:436-460</figcaption></figure><!--/x-->
+    <p><code>Entry::linked()</code> gives the function table for the loader linked in at build time. Then, in
+    a debug build, the code asks the loader which layers are installed. If the validation layer is missing, it
+    fails with a clear message rather than silently running unchecked (so debug runs need the layer installed,
+    as <code>DEVELOPMENT.md</code> says). Every item marked <code>#[cfg(debug_assertions)]</code>, even the bare
+    <code>{ … }</code> block, is compiled only into debug builds (<a href="01-why-vulkan.html#rust-cfg">Chapter
+    1</a>). In a release build the layer list is simply empty.</p>
+    <aside class="callout rust" id="rust-cstr"><p class="callout-title">Rust note · C strings</p>
+      <p>Rust's own strings (<code>String</code>, <code>&amp;str</code>) store a length and are not
+      zero-terminated, so they can't be handed to C directly. <code>c"…"</code> is a <em>C string literal</em>:
+      a zero-terminated string of type <code>&amp;CStr</code>. <code>CStr::from_ptr</code> goes the other way,
+      wrapping a <code>const char*</code> from Vulkan so it can be compared. <code>CString</code> is the owned
+      version, used when building one at run time. The type <code>*const i8</code> is Rust's spelling of
+      <code>const char*</code>; a <code>Vec</code> of them is the <code>const char* const*</code> array Vulkan
+      wants for name lists.</p>
+    </aside>
+
+    <h2>Creating the instance</h2>
+    <p><code>create_instance</code> starts by describing the application and collecting the instance
+    extensions it needs:</p>
+    <!--x src/vulkan/base/setup.rs 14-30--><figure class="code"><pre><code class="language-rust">let app_name = std::ffi::CString::new("RustyVulkan")?;
+
+let app_info = vk::ApplicationInfo {
+    p_application_name: app_name.as_ptr(),
+    application_version: vk::make_api_version(0, 1, 0, 0),
+    p_engine_name: app_name.as_ptr(),
+    engine_version: vk::make_api_version(0, 1, 0, 0),
+    api_version: vk::API_VERSION_1_3,
+    ..Default::default()
+};
+
+let ext_names =
+    enumerate_required_extensions(event_loop.display_handle().unwrap().as_raw())?;
+let mut extension_ptrs: Vec&lt;*const i8&gt; = ext_names.to_vec();
+
+#[cfg(debug_assertions)]
+extension_ptrs.push(ash::ext::debug_utils::NAME.as_ptr());</code></pre><figcaption>src/vulkan/base/setup.rs:14-30</figcaption></figure><!--/x-->
+    <p><code>enumerate_required_extensions</code> comes from the <code>ash-window</code> crate. It asks the
+    windowing system which surface extensions this platform needs (on macOS, the generic surface extension
+    plus a Metal-specific one), so the code never names them. In debug builds it adds
+    <code>VK_EXT_debug_utils</code>, which lets the validation layer report back to us.</p>
+    <p>Then comes a small piece of driver diplomacy:</p>
+    <!--x src/vulkan/base/setup.rs 40-46--><figure class="code"><pre><code class="language-rust">// Enable portability enumeration only when the active loader exposes it.
+// KosmicKrisp does not need it, while MoltenVK and some other drivers do.
+let mut instance_flags = vk::InstanceCreateFlags::empty();
+if supports_portability_enum {
+    extension_ptrs.push(vk::KHR_PORTABILITY_ENUMERATION_NAME.as_ptr());
+    instance_flags |= vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR;
+}</code></pre><figcaption>src/vulkan/base/setup.rs:40-46</figcaption></figure><!--/x-->
+    <p>Some Vulkan implementations, MoltenVK being the best known, run on top of another API and can't support
+    every part of the specification. Vulkan calls these <dfn>portability</dfn> drivers. To stop programs
+    accidentally using one, the loader hides them unless the instance opts in with this flag and extension.
+    KosmicKrisp doesn't need it, but rather than hard-coding a driver, the code opts in whenever the loader
+    offers the extension. After that, the create call shown in <a href="02-rust-meets-c.html#rust-builders">Chapter 2</a>
+    makes the instance.</p>
+
+    <h2>Hearing from the validation layer</h2>
+    <p>With the debug extension enabled, the code registers a <dfn>debug messenger</dfn>: a callback that the
+    validation layer calls whenever it has something to say.</p>
+    <!--x src/vulkan/base/setup.rs 678-689--><figure class="code"><pre><code class="language-rust">let loader = ash::ext::debug_utils::Instance::new(entry, instance);
+let create_info = vk::DebugUtilsMessengerCreateInfoEXT {
+    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
+        | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+        | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
+    message_type: vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+        | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+        | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+    pfn_user_callback: Some(vulkan_debug_callback),
+    ..Default::default()
+};
+let messenger = unsafe { loader.create_debug_utils_messenger(&amp;create_info, None)? };</code></pre><figcaption>src/vulkan/base/setup.rs:678-689</figcaption></figure><!--/x-->
+    <p>The callback itself just formats the message and prints it to standard error. Returning
+    <code>vk::FALSE</code> tells the layer not to abort the Vulkan call that triggered the message:</p>
+    <!--x src/vulkan/base.rs 78-86,100-103--><figure class="code"><pre><code class="language-rust">#[cfg(debug_assertions)]
+unsafe extern "system" fn vulkan_debug_callback(
+    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    _p_user_data: *mut std::ffi::c_void,
+) -&gt; vk::Bool32 {
+    unsafe {
+        let message = CStr::from_ptr((*p_callback_data).p_message);
+// ...
+        eprintln!("{} {} {:?}", severity, ty, message);
+    }
+    vk::FALSE
+}</code></pre><figcaption>src/vulkan/base.rs:78-103</figcaption></figure><!--/x-->
+    <aside class="callout rust"><p class="callout-title">Rust note · a function C can call</p>
+      <p><code>extern "system"</code> tells the compiler to use the platform's C calling convention, so that
+      Vulkan (C code) can call this Rust function through a pointer. Its parameters are raw C types: a raw
+      pointer <code>*const</code> to a struct, and a <code>*mut c_void</code> (C's <code>void*</code>), unused
+      here. Reading through raw pointers is one of the operations that needs <code>unsafe</code>.
+      <code>pfn_user_callback: Some(vulkan_debug_callback)</code> stores the function pointer in an
+      <code>Option</code>, because a C function pointer may be null and Rust models "maybe null" that way.</p>
+    </aside>
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>This is the Vulkan cousin of <code>glDebugMessageCallback</code> from OpenGL 4.3. The difference is
+      that OpenGL drivers usually did their own (cheap, partial) checking all the time, while Vulkan drivers check almost
+      nothing. The validation layer is where nearly all the checking lives, and you choose when to pay for
+      it.</p>
+    </aside>
+
+    <h2>Choosing a GPU</h2>
+    <p>The window surface is created next (<a href="04-swapchain.html">Chapter 4</a>), because presentation
+    support is needed to judge GPUs. Then <code>choose_device_and_queue_family</code> tries each GPU, first
+    looking only at discrete ones and then at everything else:</p>
+    <!--x src/vulkan/base/setup.rs 91-108,113-118,131-152--><figure class="code"><pre><code class="language-rust">for prefer_discrete in [true, false] {
+    for &amp;physical_device in physical_devices {
+        let props = unsafe { instance.get_physical_device_properties(physical_device) };
+        if (props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU) != prefer_discrete {
+            continue;
+        }
+
+        let extensions =
+            unsafe { instance.enumerate_device_extension_properties(physical_device)? };
+        let has_extension = |required: &amp;CStr| {
+            extensions.iter().any(|extension| {
+                let name = unsafe { CStr::from_ptr(extension.extension_name.as_ptr()) };
+                name == required
+            })
+        };
+        if !has_extension(vk::KHR_SWAPCHAIN_NAME) {
+            continue;
+        }
+// ...
+        let supports_dynamic_rendering_extension =
+            has_extension(vk::KHR_DYNAMIC_RENDERING_NAME);
+        if props.api_version &lt; vk::API_VERSION_1_3 &amp;&amp; !supports_dynamic_rendering_extension
+        {
+            continue;
+        }
+// ...
+        let queue_families = unsafe {
+            instance.get_physical_device_queue_family_properties(physical_device)
+        };
+        for (index, family) in queue_families.iter().enumerate() {
+            if !family.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+                continue;
+            }
+            if unsafe {
+                surface_loader.get_physical_device_surface_support(
+                    physical_device,
+                    index as u32,
+                    surface,
+                )?
+            } {
+                println!("🎯 Found graphics/present queue family at index {}", index);
+                return Ok((physical_device, index as u32));
+            }
+        }
+    }
+}
+
+Err("No Vulkan device supports graphics, presentation, and dynamic rendering".into())</code></pre><figcaption>src/vulkan/base/setup.rs:91-152</figcaption></figure><!--/x-->
+    <p>For each candidate, it applies three tests in turn and moves to the next GPU (<code>continue</code>) on
+    the first failure:</p>
+    <ol>
+      <li><strong>Can it show images in a window?</strong> That's the swapchain device extension. Without it,
+      there's nothing to display.</li>
+      <li><strong>Does it have dynamic rendering?</strong> This renderer draws without Vulkan 1.0's "render pass"
+      objects, using a feature that became core in Vulkan 1.3 (<a href="07-pipelines.html">Chapter 7</a>). So
+      the GPU must support Vulkan 1.3 or the older extension, and then (elided here) report the feature as
+      supported, using the <code>push_next</code> query shown in
+      <a href="02-rust-meets-c.html#rust-builders">Chapter 2</a>.</li>
+      <li><strong>Is there a queue family that can both draw and present to our surface?</strong> The first
+      one found wins, and the function returns the GPU and that family's index together.</li>
+    </ol>
+    <p><code>has_extension</code> is a closure that captures the GPU's extension list.</p>
+    <p>Once a GPU is chosen, <code>new</code> records a few of its capabilities for later:</p>
+    <!--x src/vulkan/base/setup.rs 490-495--><figure class="code"><pre><code class="language-rust">let sample_count_flags_supported = chosen_props.limits.framebuffer_color_sample_counts
+    &amp; chosen_props.limits.framebuffer_depth_sample_counts;
+let supported_features = unsafe { instance.get_physical_device_features(physical_device) };
+let supports_multi_draw_indirect = supported_features.multi_draw_indirect == vk::TRUE;
+let supports_draw_indirect_first_instance =
+    supported_features.draw_indirect_first_instance == vk::TRUE;</code></pre><figcaption>src/vulkan/base/setup.rs:490-495</figcaption></figure><!--/x-->
+    <p>The supported multisample counts for colour and depth are intersected, giving the anti-aliasing options
+    the UI can offer (<a href="10-render-graph.html">Chapter 10</a>). Multi-draw indirect, which lets one
+    command issue many draws, and indirect "first instance", which lets those commands pick out a range of
+    instances, are both used by the grass if available (<a href="14-grass.html">Chapter 14</a>).
+    The <code>&amp;</code> between two flag sets is a bitwise AND, just as in C.</p>
+
+    <h2>Opening the logical device</h2>
+    <p><code>create_logical_device_and_queue</code> asks for exactly what the renderer uses and nothing
+    more:</p>
+    <!--x src/vulkan/base/setup.rs 174-194,219-237--><figure class="code"><pre><code class="language-rust">let device_features = vk::PhysicalDeviceFeatures {
+    multi_draw_indirect: if enable_multi_draw_indirect {
+        vk::TRUE
+    } else {
+        vk::FALSE
+    },
+    draw_indirect_first_instance: if enable_draw_indirect_first_instance {
+        vk::TRUE
+    } else {
+        vk::FALSE
+    },
+    ..Default::default()
+};
+
+let queue_info = vk::DeviceQueueCreateInfo {
+    s_type: vk::StructureType::DEVICE_QUEUE_CREATE_INFO,
+    queue_family_index,
+    queue_count: 1,
+    p_queue_priorities: queue_priority.as_ptr(),
+    ..Default::default()
+};
+// ...
+let mut dynamic_rendering_features = vk::PhysicalDeviceDynamicRenderingFeatures {
+    dynamic_rendering: vk::TRUE,
+    ..Default::default()
+};
+
+let device_create_info = vk::DeviceCreateInfo {
+    p_next: &amp;mut dynamic_rendering_features as *mut _ as *const _,
+    p_queue_create_infos: &amp;queue_info,
+    queue_create_info_count: 1,
+    pp_enabled_extension_names: device_extensions.as_ptr(),
+    enabled_extension_count: device_extensions.len() as u32,
+    p_enabled_features: &amp;device_features,
+    ..Default::default()
+};
+
+let device = unsafe { instance.create_device(physical_device, &amp;device_create_info, None)? };
+let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
+println!("✅ Logical device and graphics queue ready");
+Ok((device, queue))</code></pre><figcaption>src/vulkan/base/setup.rs:174-237</figcaption></figure><!--/x-->
+    <p>Reading it in order:</p>
+    <ul>
+      <li><strong>Features.</strong> Only multi-draw indirect and indirect first-instance are requested, each
+      only when supported. The
+      comment records a lesson: an earlier version switched on every advertised feature and broke device
+      creation on some drivers.</li>
+      <li><strong>Queues.</strong> One queue from the chosen family. Every queue needs a priority between 0 and
+      1, passed as a pointer to an array; <code>queue_priority</code> is that array, kept in a local
+      variable so the pointer stays valid until <code>create_device</code> returns.</li>
+      <li><strong>Extensions.</strong> Built just above (elided): the swapchain extension, plus the older
+      dynamic-rendering extension if listed, and <code>VK_KHR_portability_subset</code> if listed. A
+      portability driver uses that one to declare which features it can't provide, and Vulkan requires you
+      to enable it when it's present.</li>
+      <li><strong>Dynamic rendering, switched on.</strong> Supporting a feature isn't enough; it must be
+      enabled. The feature struct is linked through <code>p_next</code> by a raw pointer cast here, the
+      hand-written equivalent of <code>push_next</code>.</li>
+      <li><strong>The queue.</strong> <code>get_device_queue</code> doesn't create anything. Queues are made
+      with the device; this just fetches the handle of queue 0 in our family.</li>
+    </ul>
+    <aside class="callout rust"><p class="callout-title">Rust note · that pointer cast</p>
+      <p><code>&amp;mut dynamic_rendering_features as *mut _ as *const _</code> turns a Rust reference into a
+      raw pointer in two steps, with <code>_</code> asking the compiler to infer the pointee type. Creating raw
+      pointers is safe in Rust; only reading through them needs <code>unsafe</code>. Unlike
+      <code>push_next</code>, nothing here ties the pointer's lifetime to the struct, so correctness rests on
+      both being locals used immediately.</p>
+    </aside>
+
+    <h2>What else <code>new</code> sets up</h2>
+    <p>After the device, <code>VulkanBase::new</code> carries on creating the objects the rest of the guide is
+    about. In order: a <em>pipeline cache</em> shared by all pipelines (<a href="07-pipelines.html">Chapter
+    7</a>); a command pool (<a href="09-frame-loop.html">Chapter 9</a>); the VMA memory allocator
+    (<a href="05-gpu-memory.html#vma">Chapter 5</a>); the global descriptor layout
+    (<a href="08-descriptors-materials.html">Chapter 8</a>); the swapchain (<a href="04-swapchain.html">Chapter 4</a>); uniform buffers,
+    descriptor sets and the shadow sampler; per-frame fences and semaphores and the command buffers
+    (<a href="09-frame-loop.html">Chapter 9</a>); and a timestamp query pool used to measure GPU time per pass, which is where the "GPU: 11.05
+    ms" in the screenshot's menu bar comes from. Everything ends up as a field of the <code>VulkanBase</code>
+    struct, which is the single owner from <a href="02-rust-meets-c.html#rust-drop">Chapter 2</a>.</p>
+  </section>
+
+  <section id="recap" class="recap">
+    <h2>Recap</h2>
+    <ul>
+      <li>The instance declares the API version (1.3), layers and instance extensions. Validation is on in
+      debug builds and reports through a debug-messenger callback.</li>
+      <li>Portability enumeration is enabled whenever the loader offers it, so portability drivers stay usable;
+      KosmicKrisp doesn't need it.</li>
+      <li>A GPU qualifies if it has the swapchain extension, dynamic rendering, and a queue family that can draw
+      and present to the window's surface. A discrete GPU is preferred.</li>
+      <li>The logical device enables only the features the renderer uses, and provides the single queue used
+      for all work.</li>
+    </ul>
+  </section>
+
+  <nav class="pager"><a class="prev" href="02-rust-meets-c.html">← 02 · Rust meets a C API</a><a class="next" href="04-swapchain.html">04 · Surfaces and the swapchain →</a></nav>
+</main>
+<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>
+<script src="guide.js"></script>
+</body>
+</html>

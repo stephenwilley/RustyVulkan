@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RustyVulkan Guide</title>
+<meta name="description" content="A chapter-by-chapter guide to how the RustyVulkan renderer works, from no Vulkan knowledge to the whole codebase.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="#contents">Contents</a></header>
+
+<section class="hero">
+  <div class="hero-inner">
+    <p class="kicker">A guided tour of a Rust + Vulkan renderer</p>
+    <h1>Rusty<span>Vulkan</span></h1>
+    <p class="pitch">A small real-time renderer: a meadow of millions of grass blades, cascaded sun shadows, a
+    procedural valley, a panoramic sky and an ImGui control panel, written in Rust directly against the Vulkan API.
+    This guide uses its code to explain how modern, explicit GPU programming works, one short chapter at a time.</p>
+    <figure class="shot">
+      <img src="images/screenshot.jpg" width="2000" height="1188"
+           alt="The running renderer: a wooden hut stands in a dense grassy meadow dotted with red and white flowers, rocks and a marble sphere, under a blue sky with clouds. ImGui panels show sun-light controls on the left and four shadow-cascade depth maps on the right, with CPU and GPU frame times in the menu bar.">
+    </figure>
+  </div>
+</section>
+
+<main class="cover">
+  <section class="intro">
+    <h2>How to read this guide</h2>
+    <p>You don't need any Vulkan, or any Rust, to start. You do need to be comfortable reading code in some
+    language, and to know what a mesh, a texture and a camera are. If you remember OpenGL, even only by
+    reputation, that's a useful starting point, and the guide will keep comparing against it.</p>
+    <p>Each chapter is designed to be about a ten-minute read, and has two layers:</p>
+    <ul>
+      <li><strong>The big picture</strong> explains what that part of the renderer does, and why, in plain
+      language and diagrams. If you want the high-level story, read only these sections, in order. They are
+      written to stand on their own.</li>
+      <li><strong>Deeper dive</strong> walks through the actual source, excerpt by excerpt, with every
+      excerpt labelled with its file and line numbers so you can open it alongside.</li>
+    </ul>
+    <p>Two kinds of side note appear throughout:</p>
+    <div class="legend">
+      <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>Maps a Vulkan idea onto what OpenGL used to do for you, or explains why OpenGL had nothing like it.</p></aside>
+      <aside class="callout rust"><p class="callout-title">Rust note</p>
+      <p>Explains a piece of Rust as it appears, especially where Rust handles a C API differently from C. Each
+      idea is explained once and linked back to afterwards.</p></aside>
+    </div>
+    <p>The guide explains the code as it is. It is not a build-along tutorial. Where the project's own
+    notes say something is unfinished, the guide says so too.</p>
+  </section>
+
+  <section id="contents">
+    <div class="part">
+      <h2>Part 1 · Foundations</h2>
+      <ul class="cards">
+        <li><a href="01-why-vulkan.html"><span class="num">01</span><span class="title">Why Vulkan, and a map of this repo</span><span class="desc">What changed after OpenGL, the shape of one frame, and how the program starts on macOS.</span></a></li>
+        <li><a href="02-rust-meets-c.html"><span class="num">02</span><span class="title">Rust meets a C API</span><span class="desc">How Rust wraps Vulkan through <code>ash</code>, and who is responsible for destroying what.</span></a></li>
+      </ul>
+    </div>
+    <div class="part">
+      <h2>Part 2 · Talking to the GPU</h2>
+      <ul class="cards">
+        <li><a href="03-instance-devices.html"><span class="num">03</span><span class="title">Instance, devices and queues</span><span class="desc">Connecting to the driver, picking a GPU, and getting somewhere to submit work.</span></a></li>
+        <li><a href="04-swapchain.html"><span class="num">04</span><span class="title">Surfaces and the swapchain</span><span class="desc">How images get from the GPU to the window, and what happens when the window changes.</span></a></li>
+        <li><a href="05-gpu-memory.html"><span class="num">05</span><span class="title">GPU memory</span><span class="desc">Buffers, images, memory types, and getting meshes and textures onto the GPU.</span></a></li>
+      </ul>
+    </div>
+    <div class="part">
+      <h2>Part 3 · Drawing things</h2>
+      <ul class="cards">
+        <li><a href="06-shaders.html"><span class="num">06</span><span class="title">Shaders</span><span class="desc">GLSL compiled to SPIR-V at build time, and how a shader reads its inputs.</span></a></li>
+        <li><a href="07-pipelines.html"><span class="num">07</span><span class="title">Pipelines and dynamic rendering</span><span class="desc">All of OpenGL's draw state baked into one object, up front.</span></a></li>
+        <li><a href="08-descriptors-materials.html"><span class="num">08</span><span class="title">Descriptors and materials</span><span class="desc">How shaders find their textures and data, and how materials share them.</span></a></li>
+      </ul>
+    </div>
+    <div class="part">
+      <h2>Part 4 · Making frames</h2>
+      <ul class="cards">
+        <li><a href="09-frame-loop.html"><span class="num">09</span><span class="title">The frame loop</span><span class="desc">Command buffers, fences and semaphores: keeping the CPU and GPU busy without tripping over each other.</span></a></li>
+        <li><a href="10-render-graph.html"><span class="num">10</span><span class="title">The render graph</span><span class="desc">Ordering the passes and moving images between layouts with barriers.</span></a></li>
+      </ul>
+    </div>
+    <div class="part">
+      <h2>Part 5 · The scene</h2>
+      <ul class="cards">
+        <li><a href="11-shadows.html"><span class="num">11</span><span class="title">Shadows</span><span class="desc">Cascaded shadow maps: rendering the world from the sun, four times.</span></a></li>
+        <li><a href="12-main-pass-scene.html"><span class="num">12</span><span class="title">The main pass and the scene</span><span class="desc">The camera, loading models, and the loop that draws them.</span></a></li>
+        <li><a href="13-procedural-world.html"><span class="num">13</span><span class="title">A procedural world</span><span class="desc">A valley, a sky and a scatter of rocks, generated rather than modelled.</span></a></li>
+        <li><a href="14-grass.html"><span class="num">14</span><span class="title">Grass</span><span class="desc">Millions of blades through instancing, levels of detail and wind.</span></a></li>
+        <li><a href="15-imgui.html"><span class="num">15</span><span class="title">The ImGui overlay</span><span class="desc">Drawing an immediate-mode UI on top of the scene in its own pass.</span></a></li>
+      </ul>
+    </div>
+    <div class="part">
+      <h2>Part 6 · Bringing it together</h2>
+      <ul class="cards">
+        <li><a href="16-app-shell.html"><span class="num">16</span><span class="title">The app shell</span><span class="desc">The event loop, input, resizing, shutdown order, and packaging a macOS app.</span></a></li>
+      </ul>
+    </div>
+  </section>
+</main>
+<footer class="site">Written against RustyVulkan commit <code>79546db</code>. Code excerpts are copied from that commit.</footer>
+</body>
+</html>

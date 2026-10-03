@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>14 · Grass · RustyVulkan Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
+<main class="chapter">
+  <header class="chapter-head">
+    <p class="kicker">Part 5 · Chapter 14 · <span class="readtime">~9 min read</span></p>
+    <h1>Grass</h1>
+    <p class="lede">Drawing about 3.7 million blades of grass at interactive frame rates: one tiny mesh, a lot of
+    compact per-blade data, culling, levels of detail, and wind computed on the GPU.</p>
+  </header>
+
+  <section id="big-picture">
+    <h2><span class="tag">Overview</span> The big picture</h2>
+
+    <h3>Instancing</h3>
+    <p>The meadow in the screenshot holds about 3.7 million blades (3,661,366, to be exact) of grass and 6,570 flower stalks. Drawing
+    each as its own object, with its own draw call, would bury the CPU. Instead the renderer uses
+    <dfn>instancing</dfn>: one draw call says "draw this blade mesh <em>N</em> times", and the GPU runs the vertex
+    shader for every vertex of every copy, telling it which copy (instance) it's working on. The blade's shape is
+    stored once, ten vertices. Each instance adds just 16 bytes (half what plain floats would take), holding where its root is, how tall, which way it
+    faces, how wide, a tint, and a wind phase. The vertex shader combines the two.</p>
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>This is <code>glDrawElementsInstanced</code> with a second vertex buffer advanced by
+      <code>glVertexAttribDivisor(…, 1)</code>. In Vulkan the "divisor" is the binding's input rate,
+      <code>INSTANCE</code>, fixed in the pipeline (<a href="07-pipelines.html">Chapter 7</a>).</p>
+    </aside>
+
+    <h3>Only draw what's near and visible</h3>
+    <p>Even instanced, 3.7 million blades every frame would be wasteful, because most are behind the camera or
+    far away. So the field is cut into a 32 × 32 grid of 5 m <dfn>chunks</dfn>, and each chunk's blades are stored
+    together. Each frame the CPU checks every chunk against the camera's view, skips those outside it or over
+    100 m away, and chooses a <dfn>level of detail</dfn> (LOD) for the rest by distance: <em>near</em> (up to
+    12 m), <em>medium</em> (up to 24 m) and <em>mid</em> (up to 100 m, half the blades):</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 640 260" role="img" aria-labelledby="glt">
+        <title id="glt">Grass levels of detail by distance</title>
+        <g font-size="13">
+          <rect class="box-rust" x="20" y="30" width="600" height="190" rx="10" fill-opacity="0.25"/>
+          <rect class="box-aside" x="20" y="60" width="230" height="130" rx="10" fill-opacity="0.45"/>
+          <rect class="box-gl" x="20" y="90" width="120" height="70" rx="10" fill-opacity="0.6"/>
+          <circle cx="40" cy="125" r="7" class="fill-accent"/>
+          <text x="54" y="114" font-weight="700">≤ 12 m</text>
+          <text x="54" y="132">4 segments</text>
+          <text x="54" y="148" class="muted">8 triangles</text>
+          <text x="152" y="80" font-weight="700">≤ 24 m</text>
+          <text x="152" y="98">2 segments</text>
+          <text x="152" y="114" class="muted">4 triangles</text>
+          <text x="152" y="130" class="muted">all blades</text>
+          <text x="300" y="58" font-weight="700">≤ 100 m: 1 segment, 2 triangles</text>
+          <text x="300" y="78" class="muted">half the blades, each 50% wider</text>
+          <text x="300" y="120" font-weight="700">Flower reeds: up to 64 m</text>
+          <text x="300" y="200" class="muted">Beyond 100 m, or outside the view: not drawn</text>
+        </g>
+        <text x="20" y="250" font-size="12" class="muted">The camera (red dot) sits at the left; rings are distances to each chunk, not to the screen.</text>
+      </svg>
+      <figcaption>Nearby blades are smooth curved ribbons. Further out they lose segments, and beyond 24 m half of
+      them are dropped and the rest widened to cover the gap.</figcaption>
+    </figure>
+
+    <p>The chosen draws are written into a buffer as <dfn>indirect draw commands</dfn>: small records holding the
+    same parameters as a draw call. The GPU reads its draw parameters from that buffer, and with the
+    "multi-draw" feature, one call can issue all of a LOD's chunk draws.</p>
+
+    <h3>Wind</h3>
+    <p>The blades move. Rather than updating 3.7 million positions on the CPU, the vertex shader bends each blade
+    every frame from a small, tiling noise texture (the <dfn>wind map</dfn>), scrolled over time: broad bright
+    patches become gusts sweeping across the field, with finer turbulence and a gentle constant sway layered
+    on top.</p>
+  </section>
+
+  <div class="dive-divider"><span>Deeper dive</span></div>
+
+  <section id="deep-dive">
+    <p>The grass code is a parent module, <code>grass.rs</code> (the renderer), with five submodule files:
+    <code>generation.rs</code>, <code>upload.rs</code>, <code>pipeline.rs</code>, <code>wind.rs</code> and
+    <code>tests.rs</code>, each declared with <code>mod</code> (<a href="01-why-vulkan.html#rust-modules">Chapter
+    1</a>) and pulling in the parent's items with <code>use super::*</code>. The tests live in their own file but
+    are still only compiled under <code>#[cfg(test)]</code> (<a href="04-swapchain.html#rust-tests">Chapter
+    4</a>).</p>
+
+    <h2>Per-vertex and per-instance data</h2>
+    <!--x src/graphics/grass.rs 68-87--><figure class="code"><pre><code class="language-rust">/// One vertex in the small, repeated grass-ribbon mesh.
+#[repr(C)]
+#[derive(Clone, Copy, Default, Pod, Zeroable)]
+struct GrassVertex {
+    local_position: [f32; 3],
+    local_normal: [f32; 3],
+    /// Zero for a green stalk/blade and one for a coloured reed flower head.
+    flower_head: f32,
+}
+
+/// Data that changes once per blade rather than once per vertex.
+#[repr(C)]
+#[derive(Clone, Copy, Default, Pod, Zeroable)]
+struct GrassInstance {
+    /// World X/Y/Z and height packed into known scene ranges as UNORM16 values.
+    position_height: [u16; 4],
+    /// Rotation, width, colour variation, and wind phase packed as UNORM16 values.
+    /// Vulkan expands these back to `0.0..=1.0` before the vertex shader sees them.
+    rotation_width_tint_phase: [u16; 4],
+}</code></pre><figcaption>src/graphics/grass.rs:68-87</figcaption></figure><!--/x-->
+    <p>A <code>GrassVertex</code> is a point on the shared blade: 28 bytes, ten of them. A
+    <code>GrassInstance</code> is eight 16-bit numbers. Each is a fraction of a known range stored as an integer
+    from 0 to 65 535 (a <dfn>UNORM16</dfn> value), which the GPU turns back into a float between 0 and 1
+    automatically. The packing is plain arithmetic:</p>
+    <!--x src/graphics/grass/generation.rs 61-72--><figure class="code"><pre><code class="language-rust">pub(super) fn pack_position_height(x: f32, y: f32, z: f32, height: f32) -&gt; [u16; 4] {
+    let pack_range = |value: f32, range: [f32; 2]| {
+        let normalised = (value - range[0]) / (range[1] - range[0]);
+        (normalised.clamp(0.0, 1.0) * u16::MAX as f32).round() as u16
+    };
+    [
+        pack_range(x, INSTANCE_X_RANGE),
+        pack_range(y, INSTANCE_Y_RANGE),
+        pack_range(z, INSTANCE_Z_RANGE),
+        pack_range(height, INSTANCE_HEIGHT_RANGE),
+    ]
+}</code></pre><figcaption>src/graphics/grass/generation.rs:61-72</figcaption></figure><!--/x-->
+    <p>Across a 161 m field, 16 bits gives a position step of about 2.5 mm, which is plenty. Packing halves the
+    instance buffer compared with 32-bit floats: about 59 MB instead of 117.</p>
+    <p>The pipeline describes two bindings, one stepped per vertex and one per instance, and tells Vulkan the
+    instance attributes are <code>R16G16B16A16_UNORM</code>:</p>
+    <!--x src/graphics/grass/pipeline.rs 55-66,86-97--><figure class="code"><pre><code class="language-rust">let bindings = [
+    vk::VertexInputBindingDescription {
+        binding: 0,
+        stride: std::mem::size_of::&lt;GrassVertex&gt;() as u32,
+        input_rate: vk::VertexInputRate::VERTEX,
+    },
+    vk::VertexInputBindingDescription {
+        binding: 1,
+        stride: std::mem::size_of::&lt;GrassInstance&gt;() as u32,
+        input_rate: vk::VertexInputRate::INSTANCE,
+    },
+];
+// ...
+    vk::VertexInputAttributeDescription {
+        binding: 1,
+        location: 3,
+        format: vk::Format::R16G16B16A16_UNORM,
+        offset: offset_of!(GrassInstance, position_height) as u32,
+    },
+    vk::VertexInputAttributeDescription {
+        binding: 1,
+        location: 4,
+        format: vk::Format::R16G16B16A16_UNORM,
+        offset: offset_of!(GrassInstance, rotation_width_tint_phase) as u32,
+    },</code></pre><figcaption>src/graphics/grass/pipeline.rs:55-97</figcaption></figure><!--/x-->
+
+    <h2>Generating the field</h2>
+    <p>The field is a 1792 × 1792 grid with two candidate roots per cell, nudged by a hash so the rows don't show.
+    Each candidate survives with a probability equal to the grass density there, and the code skips clearings
+    around the hut, cubes and sphere:</p>
+    <!--x src/graphics/grass/generation.rs 263-283--><figure class="code"><pre><code class="language-rust">let jitter_x = (hash01(id, 0) - 0.5) * spacing * 0.45;
+let jitter_z = (hash01(id, 1) - 0.5) * spacing * 0.45;
+let x = -half_size + (column as f32 + cell_offset_x) * spacing + jitter_x;
+let z =
+    -2.0 - half_size + (row as f32 + cell_offset_z) * spacing + jitter_z;
+
+// The broad biome noise and distant-field thinning are deterministic,
+// so clearings keep the same shape without per-frame instance changes.
+let grass_density = field_edge_density_at(x, z) * density_map.sample(x, z);
+if hash01(id, 31) &gt; grass_density {
+    continue;
+}
+
+if is_clearing(x, z) {
+    continue;
+}
+
+let ground_y = terrain.height_at(x, z) + 0.003;
+let blade_height = 0.14 + hash01(id, 2) * 0.18 + grass_density * 0.08;
+min_y = min_y.min(ground_y);
+max_y = max_y.max(ground_y + blade_height);</code></pre><figcaption>src/graphics/grass/generation.rs:263-283</figcaption></figure><!--/x-->
+    <p>That density is the terrain's own <code>grass_density_at</code> (<a href="13-procedural-world.html">Chapter
+    13</a>), pre-sampled into a coarse 129 × 129 map for speed, times a fall-off that thins the field to 30%
+    towards its edges. <code>hash01</code> is a hash like the terrain's, with a "stream" number so that each
+    property of a blade gets an independent random value. The ground height comes from the same height function
+    as everything else, plus 3 mm.</p>
+    <p>One trick lets every LOD share a single instance buffer:</p>
+    <!--x src/graphics/grass/generation.rs 299-316--><figure class="code"><pre><code class="language-rust">            // The mid LOD uses a stable random half, avoiding visible rows. Half
+            // density preserves the field's colour while its two-triangle ribbon
+            // remains much cheaper than the near blade's eight triangles.
+            if hash01(id, 30) &lt; 0.50 {
+                mid_subset.push(instance);
+            } else {
+                remaining.push(instance);
+            }
+        }
+    }
+}
+
+// Put the thinned subset first. Its range is also the beginning of the full
+// range, allowing all grass LODs to share one GPU instance buffer.
+let mid_count = mid_subset.len() as u32;
+let near_count = (mid_subset.len() + remaining.len()) as u32;
+instances.extend(mid_subset);
+instances.extend(remaining);</code></pre><figcaption>src/graphics/grass/generation.rs:299-316</figcaption></figure><!--/x-->
+    <p>Within each chunk, a stable random half of the blades is stored first. The "mid" LOD draws just that first
+    half of the chunk's range; the near LODs draw the whole range. Neither needs its own copy of the data.</p>
+
+    <h2>In the vertex shader</h2>
+    <p><code>grass.vert</code> first decodes the instance, using the same field bounds the Rust packing used:</p>
+    <!--x assets/shaders/grass.vert 47-66--><figure class="code"><pre><code class="language-glsl">void main() {
+    float height_fraction = inLocalPosition.y;
+    // Both instance attributes arrive as normalised 16-bit values. Decode the root
+    // position from the same fixed field bounds used by Rust when packing it.
+    vec4 position_height = vec4(
+        mix(-80.5, 80.5, inPositionHeight.x),
+        mix(0.0, 6.0, inPositionHeight.y),
+        mix(-82.5, 78.5, inPositionHeight.z),
+        mix(0.0, 1.0, inPositionHeight.w)
+    );
+    float rotation = inRotationWidthTintPhase.x * 6.28318530718;
+    float blade_width = inRotationWidthTintPhase.y * 0.1;
+    // Fewer mid-distance instances expose more dark soil. A modest width increase
+    // preserves the field's average coverage without restoring near-LOD geometry cost.
+    blade_width *= mix(1.0, 1.50, pc.grassParams.z);
+    float wind_phase = inRotationWidthTintPhase.w;
+
+    mat2 blade_rotation = rotate2d(rotation);
+    vec2 local_xz = blade_rotation * inLocalPosition.xz * blade_width;
+    vec2 normal_xz = blade_rotation * inLocalNormal.xz;</code></pre><figcaption>assets/shaders/grass.vert:47-66</figcaption></figure><!--/x-->
+    <p>The bounds are written in both languages (<code>INSTANCE_X_RANGE</code> and friends in Rust, the literal
+    <code>mix(-80.5, 80.5, …)</code> here), so changing one without the other would misplace the whole field.
+    <code>grassParams.z</code> is the LOD value from the push constants, 0, 0.5 or 1 for near, medium and mid; it
+    widens blades by up to 50% and calms their fine sway as detail drops. Then the wind:</p>
+    <!--x assets/shaders/grass.vert 70-74,82-99--><figure class="code"><pre><code class="language-glsl">const vec2 global_wind = vec2(0.8, 0.6);
+vec2 broad_uv = position_height.xz * 0.035 - global_wind * pc.grassParams.x * 0.11;
+vec2 detail_uv = position_height.xz * 0.14 - global_wind * pc.grassParams.x * 0.36;
+float broad = textureLod(windMap, broad_uv, 0.0).r;
+float detail = textureLod(windMap, detail_uv, 0.0).g * 2.0 - 1.0;
+// ...
+float gust_envelope = smoothstep(0.58, 0.82, broad);
+float sway_phase = dot(position_height.xz, vec2(0.19, 0.27))
+    + pc.grassParams.x * 0.62 + wind_phase;
+float calm_sway = 0.24 * (
+    smooth_triangle(sway_phase)
+    + 0.32 * smooth_triangle(sway_phase * 1.71 + 0.37)
+);
+float gust_lean = gust_envelope * (1.05 + detail * 0.16);
+// Mid-distance blades retain the large readable motion but skip some fine sway.
+calm_sway *= mix(1.0, 0.72, pc.grassParams.z);
+float bend = (calm_sway * (1.0 + gust_envelope * 0.45) + gust_lean)
+    * pc.grassParams.y * height_fraction * height_fraction;
+
+vec3 world_position = vec3(
+    position_height.x + local_xz.x + local_wind.x * bend,
+    position_height.y + height_fraction * position_height.w - abs(bend) * 0.12,
+    position_height.z + local_xz.y + local_wind.y * bend
+);</code></pre><figcaption>assets/shaders/grass.vert:70-99</figcaption></figure><!--/x-->
+    <p>Two samples of the wind map, scrolling at different speeds and scales, give a gust strength
+    (<code>broad</code>) and turbulence (<code>detail</code>). A continuous sway built from smoothed triangle
+    waves runs underneath. The total bend grows with the <em>square</em> of height up the blade, so roots stay
+    put and tips move most, and the tip drops by 12% of the bend to avoid stretching the blade. The wind map itself
+    is a 128 × 128 noise image with two channels in use, generated on the CPU and uploaded once.</p>
+    <aside class="callout aside"><p class="callout-title">Lighting a ribbon</p>
+      <p>A blade is a flat, zero-thickness ribbon, drawn with no back-face culling so it's visible from both
+      sides. Its true normal would make a whole blade go dark at once when it turned edge-on to the sun, so the
+      vertex shader bends the lighting normal 62% towards straight up, a common vegetation cheat. Grass receives
+      shadows (its fragment shader has its own copy of the cascade lookup) but doesn't cast any.</p>
+    </aside>
+
+    <h2>Choosing what to draw each frame</h2>
+    <!--x src/graphics/grass.rs 547-564--><figure class="code"><pre><code class="language-rust">    let dz = chunk.centre[1] - camera_position.z;
+    let distance = ((dx * dx + dz * dz).sqrt() - chunk.radius).max(0.0);
+    // A conservative corner test can reject a box intersected by the near plane.
+    // Always retain the chunk under the player, then frustum-test the rest.
+    let camera_is_over_chunk =
+        dx.abs() &lt;= GRASS_CHUNK_SIZE * 0.5 &amp;&amp; dz.abs() &lt;= GRASS_CHUNK_SIZE * 0.5;
+    if distance &lt;= MID_GRASS_DISTANCE
+        &amp;&amp; (camera_is_over_chunk || chunk_intersects_frustum(view_projection, chunk))
+    {
+        self.visible_chunks.push(VisibleChunk { index, distance });
+    }
+}
+self.visible_chunks
+    .sort_unstable_by(|a, b| a.distance.total_cmp(&amp;b.distance));
+
+for visible in &amp;self.visible_chunks {
+    let chunk = &amp;self.chunks[visible.index];
+    match grass_lod(visible.distance) {</code></pre><figcaption>src/graphics/grass.rs:547-564</figcaption></figure><!--/x-->
+    <p>Every chunk is tested each frame. <code>chunk_intersects_frustum</code> transforms the eight corners of the
+    chunk's box (including the real height range of its ground and blades) to clip space, and rejects it only if
+    all eight lie outside the same clip plane, a conservative test with no plane maths. The chunk the camera is
+    standing in is always kept, because a box that straddles the near plane can fail that corner test. The
+    survivors are sorted nearest first, so the depth test discards hidden blades early. Then each chunk becomes
+    one draw command for its LOD, plus one in a separate list if it has reeds within 64 m:</p>
+    <!--x src/graphics/grass/generation.rs 469-480--><figure class="code"><pre><code class="language-rust">pub(super) fn draw_command(
+    index_count: u32,
+    range: InstanceRange,
+) -&gt; vk::DrawIndexedIndirectCommand {
+    vk::DrawIndexedIndirectCommand {
+        index_count,
+        instance_count: range.count,
+        first_index: 0,
+        vertex_offset: 0,
+        first_instance: range.first,
+    }
+}</code></pre><figcaption>src/graphics/grass/generation.rs:469-480</figcaption></figure><!--/x-->
+    <p><code>first_instance</code> is where the chunk's blades start in the shared instance buffer, so no data
+    moves; only this 20-byte command is written each frame, into a mapped buffer belonging to the current
+    swapchain image (<a href="09-frame-loop.html#frames-in-flight">Chapter 9</a>).</p>
+
+    <h2>Submitting the commands</h2>
+    <!--x src/graphics/grass.rs 652-698--><figure class="code"><pre><code class="language-rust">    let stride = size_of::&lt;vk::DrawIndexedIndirectCommand&gt;() as u32;
+    if commands.is_empty() {
+        return;
+    }
+    if !vb.supports_draw_indirect_first_instance {
+        // Indirect commands need `drawIndirectFirstInstance` to use `first_instance`, which
+        // selects each chunk's instances; draw directly from the CPU-side list instead.
+        for command in commands {
+            unsafe {
+                device.cmd_draw_indexed(
+                    cmd,
+                    command.index_count,
+                    command.instance_count,
+                    command.first_index,
+                    command.vertex_offset,
+                    command.first_instance,
+                )
+            };
+        }
+    } else if vb.supports_multi_draw_indirect {
+        let batch_size = vb.max_draw_indirect_count.max(1) as usize;
+        for first in (0..commands.len()).step_by(batch_size) {
+            let count = (commands.len() - first).min(batch_size) as u32;
+            unsafe {
+                device.cmd_draw_indexed_indirect(
+                    cmd,
+                    buffer,
+                    offset + first as u64 * stride as u64,
+                    count,
+                    stride,
+                )
+            };
+        }
+    } else {
+        for index in 0..commands.len() {
+            unsafe {
+                device.cmd_draw_indexed_indirect(
+                    cmd,
+                    buffer,
+                    offset + (index as u64 * stride as u64),
+                    1,
+                    stride,
+                )
+            };
+        }
+    }
+}</code></pre><figcaption>src/graphics/grass.rs:652-698</figcaption></figure><!--/x-->
+    <p>The preferred path issues each LOD's commands with one <code>cmd_draw_indexed_indirect</code>, in batches
+    no larger than the device's limit. Without multi-draw, it issues them one at a time.</p>
+    <p>The first branch is a fallback for GPUs that lack the <code>drawIndirectFirstInstance</code> feature,
+    which indirect commands need in order to start at a chunk's first instance. There, the same draws are
+    recorded directly with <code>cmd_draw_indexed</code> from the CPU-side list.</p>
+    <p>The draw itself binds the near pipeline, set 0 plus the wind map's set, the push constants (camera matrices,
+    time, wind strength and LOD), and two vertex buffers. The blade mesh is binding 0, and the shared instance
+    buffer is binding 1:</p>
+    <!--x src/graphics/grass.rs 433-450--><figure class="code"><pre><code class="language-rust">// The first bound buffer is shared blade geometry; the second advances once per
+// instance.  Each chunk draw selects its range through `first_instance` below.
+device.cmd_bind_vertex_buffers(cmd, 0, &amp;near_buffers, &amp;offsets);
+device.cmd_bind_index_buffer(
+    cmd,
+    self.near_blade_indices.buffer,
+    0,
+    vk::IndexType::UINT32,
+);
+self.submit_commands(
+    device,
+    cmd,
+    indirect.buffer,
+    near_offset,
+    &amp;self.near_commands,
+    vb,
+);
+</code></pre><figcaption>src/graphics/grass.rs:433-450</figcaption></figure><!--/x-->
+    <p>The same pattern repeats for the medium LOD (a different blade mesh), the mid LOD (its own pipeline, using the cheaper <code>grass_mid.frag</code>), and the reeds, which use a six-sided stalk with a capsule-shaped flower head and
+    their own instance buffer. The whole vegetation block is bracketed by GPU timestamps, which feed the profiler's
+    vegetation figure (<a href="09-frame-loop.html">Chapter 9</a>).</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · raw pointers in a struct</p>
+      <p><code>IndirectBuffer</code> keeps the mapped memory as <code>mapped: *mut
+      vk::DrawIndexedIndirectCommand</code>, a raw pointer. Unlike a reference, Rust doesn't track its lifetime,
+      so writing through it (<code>copy_nonoverlapping</code>) is <code>unsafe</code>, and the type is not
+      automatically shareable across threads. That suits a value owned and used by one renderer on one
+      thread.</p>
+    </aside>
+  </section>
+
+  <section id="recap" class="recap">
+    <h2>Recap</h2>
+    <ul>
+      <li>Instancing draws one shared blade mesh millions of times. Each blade is 16 bytes of UNORM16-packed
+      data, expanded in the vertex shader.</li>
+      <li>The field is generated once, deterministically, from the terrain's density and height functions, and
+      stored chunk by chunk with a "mid" subset first so all LODs share one buffer.</li>
+      <li>Each frame the CPU culls 1,024 chunks, picks a LOD by distance, and writes indirect commands that
+      select each chunk's range with <code>first_instance</code>.</li>
+      <li>Wind is two scrolling samples of a small noise texture plus a triangle-wave sway, bending blades more
+      towards the tip.</li>
+    </ul>
+  </section>
+
+  <nav class="pager"><a class="prev" href="13-procedural-world.html">← 13 · A procedural world</a><a class="next" href="15-imgui.html">15 · The ImGui overlay →</a></nav>
+</main>
+<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>
+<script src="guide.js"></script>
+</body>
+</html>

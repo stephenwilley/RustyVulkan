@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>09 · The frame loop · RustyVulkan Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
+<main class="chapter">
+  <header class="chapter-head">
+    <p class="kicker">Part 4 · Chapter 09 · <span class="readtime">~8 min read</span></p>
+    <h1>The frame loop</h1>
+    <p class="lede">Command buffers, fences and semaphores: how the renderer keeps the CPU and GPU both busy
+    without either one using something the other hasn't finished with.</p>
+  </header>
+
+  <section id="big-picture">
+    <h2><span class="tag">Overview</span> The big picture</h2>
+
+    <h3>Two processors, working at the same time</h3>
+    <p>The CPU and GPU are separate processors. When the renderer <em>submits</em> work to the GPU's queue, the
+    call returns almost immediately; the GPU picks it up later and works through it on its own. That's
+    what makes high frame rates possible: while the GPU draws frame <em>N</em>, the CPU can already be
+    preparing frame <em>N</em>+1. But it creates three hazards:</p>
+    <ol>
+      <li>The CPU must not overwrite data the GPU is still reading, such as this frame's lighting values or
+      the list of commands itself.</li>
+      <li>The GPU must not draw into a swapchain image that's still being shown.</li>
+      <li>An image must not be shown before the GPU has finished drawing it.</li>
+    </ol>
+    <p>OpenGL handled all of this invisibly, stalling or copying when it had to. Vulkan gives you two kinds of
+    signal and expects you to use them:</p>
+    <ul>
+      <li>A <dfn>fence</dfn> is a signal from the GPU to the <em>CPU</em>: "the work you submitted with this
+      fence has finished". The CPU can wait on it.</li>
+      <li>A <dfn>semaphore</dfn> is a signal from the GPU to the <em>GPU</em>: one piece of queued work waits
+      for another to finish, without involving the CPU at all.</li>
+    </ul>
+    <p>Each frame therefore runs: <strong>wait</strong> for a fence, <strong>acquire</strong> a swapchain image,
+    <strong>record</strong> commands, <strong>submit</strong> them, <strong>present</strong> the image. That's
+    the loop from <a href="01-why-vulkan.html">Chapter 1</a>, now with the signals that make it safe.</p>
+
+    <h3>Command buffers</h3>
+    <p>Every drawing operation goes into a <dfn>command buffer</dfn>, a recorded list that's submitted in one
+    go. Recording is just the CPU writing a list; nothing runs until submission. This renderer has one command
+    buffer per swapchain image, and re-records it from scratch each frame.</p>
+
+    <h3 id="frames-in-flight">Frames in flight</h3>
+    <p>RustyVulkan lets the CPU get at most two frames ahead of the GPU. Each of those two <dfn>frame
+    slots</dfn> has its own fence and its own "image available" semaphore. At the start of a frame, the CPU waits
+    on that slot's fence, which only blocks if the GPU is still busy with the frame from two frames ago.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 640 250" role="img" aria-labelledby="flt">
+        <title id="flt">CPU and GPU timelines with two frames in flight</title>
+        <defs><marker id="fla" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" class="fill-muted"/></marker></defs>
+        <text x="20" y="62" font-size="14" font-weight="700">CPU</text>
+        <text x="20" y="152" font-size="14" font-weight="700">GPU</text>
+        <g font-size="13">
+          <rect class="box-accent" x="70" y="40" width="110" height="36" rx="6"/><text x="125" y="63" text-anchor="middle">record 1 (A)</text>
+          <rect class="box-gl" x="190" y="40" width="110" height="36" rx="6"/><text x="245" y="63" text-anchor="middle">record 2 (B)</text>
+          <rect class="box-aside" x="310" y="40" width="58" height="36" rx="6"/><text x="339" y="63" text-anchor="middle">wait A</text>
+          <rect class="box-accent" x="373" y="40" width="110" height="36" rx="6"/><text x="428" y="63" text-anchor="middle">record 3 (A)</text>
+          <rect class="box-aside" x="490" y="40" width="58" height="36" rx="6"/><text x="519" y="63" text-anchor="middle">wait B</text>
+          <rect class="box-gl" x="553" y="40" width="70" height="36" rx="6"/><text x="588" y="63" text-anchor="middle">rec 4</text>
+          <rect class="box-accent" x="185" y="130" width="180" height="36" rx="6"/><text x="275" y="153" text-anchor="middle">draw frame 1</text>
+          <rect class="box-gl" x="370" y="130" width="178" height="36" rx="6"/><text x="459" y="153" text-anchor="middle">draw frame 2</text>
+          <rect class="box-accent" x="553" y="130" width="70" height="36" rx="6"/><text x="588" y="153" text-anchor="middle">3…</text>
+        </g>
+        <path class="wire" marker-end="url(#fla)" d="M180 76 L190 127"/>
+        <path class="wire" marker-end="url(#fla)" d="M300 76 L375 127"/>
+        <path class="wire" marker-end="url(#fla)" d="M483 76 L558 127"/>
+        <path class="wire-accent" marker-end="url(#fla)" d="M365 130 L366 79"/>
+        <path class="wire-accent" marker-end="url(#fla)" d="M548 130 L547 79"/>
+        <text x="20" y="205" font-size="12" class="muted">A and B are the two frame slots. Frame 3 reuses slot A, so the CPU first waits on A's fence until</text>
+        <text x="20" y="222" font-size="12" class="muted">the GPU finishes frame 1 (red arrows); frame 4 likewise waits for frame 2. Frame 2 needed no wait.</text>
+      </svg>
+      <figcaption>Submit returns at once (grey arrows), so the CPU runs ahead. The slot fence stops it getting
+      more than two frames ahead.</figcaption>
+    </figure>
+
+    <p>A subtlety: there are typically three swapchain images but only two slots, and the swapchain doesn't promise to
+    hand images out in a fixed rotation. So resources that belong to a specific <em>image</em> (its command
+    buffer, its uniform buffer and descriptor set, its "render finished" semaphore) are tracked separately
+    from resources that belong to a <em>slot</em>. The renderer also remembers which slot's fence last used
+    each image, and waits on that too if needed.</p>
+  </section>
+
+  <div class="dive-divider"><span>Deeper dive</span></div>
+
+  <section id="deep-dive">
+    <h2>Where a frame starts</h2>
+    <p>winit sends a <code>RedrawRequested</code> event whenever the app asks for one, which it does
+    continuously (<a href="16-app-shell.html">Chapter 16</a>). The handler skips drawing for a minimised
+    window, moves the camera, then runs the render graph:</p>
+    <!--x src/app/input.rs 165-170,220-227--><figure class="code"><pre><code class="language-rust">WindowEvent::RedrawRequested =&gt; {
+    let size = win.inner_size();
+    if size.width == 0 || size.height == 0 {
+        app.last_movement_update = Instant::now();
+        return;
+    }
+// ...
+    let mut graph = std::mem::take(&amp;mut app.render_graph);
+    if let Err(e) = graph.execute(app) {
+        app.fatal_error = Some(e);
+        // A failure after acquisition may leave a reset fence
+        // unsignalled. Retrying could hang the next frame.
+        event_loop.exit();
+    }
+    app.render_graph = graph;</code></pre><figcaption>src/app/input.rs:165-227</figcaption></figure><!--/x-->
+    <aside class="callout rust"><p class="callout-title">Rust note · std::mem::take to satisfy the borrow checker</p>
+      <p><code>graph.execute(app)</code> needs <code>&amp;mut app</code> (exclusive access to the whole
+      application) while the graph is itself a field of <code>app</code>. Rust won't allow two exclusive
+      routes to the same data at once (<a href="02-rust-meets-c.html#rust-borrowing">Chapter 2</a>). So the
+      graph is moved out with <code>std::mem::take</code>, which swaps in an empty default value, then the
+      graph is used and put back afterwards.</p>
+    </aside>
+    <p>Note what happens on error: the app exits. <code>DEVELOPMENT.md</code> explains that a render failure
+    is fatal on purpose. A frame interrupted after its fence was reset can leave synchronisation objects in a
+    state where the next frame would wait forever.</p>
+
+    <h2>The synchronisation objects</h2>
+    <p>Created in <code>VulkanBase::new</code>:</p>
+    <!--x src/vulkan/base/setup.rs 576-598--><figure class="code"><pre><code class="language-rust">let mut image_available_semaphores = Vec::with_capacity(INFLIGHT_FRAMES);
+let mut in_flight_fences = Vec::with_capacity(INFLIGHT_FRAMES);
+let semaphore_info = vk::SemaphoreCreateInfo::default();
+let fence_info = vk::FenceCreateInfo {
+    flags: vk::FenceCreateFlags::SIGNALED,
+    ..Default::default()
+};
+for _ in 0..INFLIGHT_FRAMES {
+    unsafe {
+        image_available_semaphores.push(device.create_semaphore(&amp;semaphore_info, None)?);
+        in_flight_fences.push(device.create_fence(&amp;fence_info, None)?);
+    }
+}
+
+let mut render_finished_semaphores = Vec::with_capacity(image_count);
+for _ in 0..image_count {
+    unsafe {
+        render_finished_semaphores.push(device.create_semaphore(&amp;semaphore_info, None)?);
+    }
+}
+
+// Per-swapchain-image tracker: which fence currently owns each image (or null)
+let image_owner_fence = vec![vk::Fence::null(); image_count];</code></pre><figcaption>src/vulkan/base/setup.rs:576-598</figcaption></figure><!--/x-->
+    <p>Two of each per-slot object (<code>INFLIGHT_FRAMES</code> is 2), but one "render finished" semaphore per
+    swapchain image, and an owner-fence entry per image, initially empty. The fences start
+    <code>SIGNALED</code>: the first frame on each slot waits on its fence, and with nothing yet submitted,
+    an unsignalled fence would never fire.</p>
+
+    <h2><code>begin_frame</code></h2>
+    <!--x src/vulkan/base.rs 227-233,258-291--><figure class="code"><pre><code class="language-rust">pub fn begin_frame(&amp;mut self) -&gt; Result&lt;Option&lt;FrameCtx&gt;, Box&lt;dyn Error&gt;&gt; {
+    unsafe {
+        let slot = self.frame_slot;
+
+        // Wait for the previous work submitted on this CPU slot.
+        self.device
+            .wait_for_fences(&amp;[self.in_flight_fences[slot]], true, u64::MAX)?;
+// ...
+        // Acquire an image; signal when it's ready via the per-slot image-available semaphore.
+        let (image_index, is_suboptimal) = match self.swapchain_loader.acquire_next_image(
+            self.swapchain.handle,
+            u64::MAX,
+            self.image_available_semaphores[slot],
+            vk::Fence::null(),
+        ) {
+            Ok(result) =&gt; result,
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) =&gt; {
+                self.swapchain_recreation_needed = true;
+                return Ok(None);
+            }
+            Err(e) =&gt; return Err(e.into()),
+        };
+        self.swapchain_recreation_needed |= is_suboptimal;
+
+        let idx = image_index as usize;
+        self.current_image_index = idx;
+
+        // If this image is still tied to an older in-flight slot, wait for that slot to finish first.
+        if self.image_owner_fence[idx] != vk::Fence::null() {
+            self.device
+                .wait_for_fences(&amp;[self.image_owner_fence[idx]], true, u64::MAX)?;
+        }
+
+        // Reuse this slot's fence for the new submit and associate it with this image.
+        self.device.reset_fences(&amp;[self.in_flight_fences[slot]])?;
+        self.image_owner_fence[idx] = self.in_flight_fences[slot];
+
+        // Begin recording; passes are responsible for starting rendering.
+        let cmd_buf = self.command_buffers[idx];
+
+        let begin_info = vk::CommandBufferBeginInfo::default();
+        self.device.begin_command_buffer(cmd_buf, &amp;begin_info)?;</code></pre><figcaption>src/vulkan/base.rs:227-291</figcaption></figure><!--/x-->
+    <p>In order:</p>
+    <ol>
+      <li><strong>Wait for this slot's fence.</strong> <code>u64::MAX</code> means no timeout. If the GPU has
+      already finished this slot's last frame, this returns immediately. (Elided here: with the fence passed,
+      that frame's GPU timings can now be read back; see below.)</li>
+      <li><strong>Acquire an image.</strong> <code>acquire_next_image</code> returns an image index right away,
+      but the image may still be on screen. So it also takes a semaphore to signal once the image is truly
+      free, and the GPU will wait on that before writing to it. "Out of date" means the window changed:
+      return <code>None</code> and let the caller rebuild (<a href="04-swapchain.html">Chapter 4</a>).</li>
+      <li><strong>Wait for the image's previous owner.</strong> Because images don't come back in strict
+      rotation, the image just acquired might have been last used by the <em>other</em> slot, whose work may
+      still be running. Its command buffer and uniform buffer are about to be overwritten, so wait for that
+      slot's fence too.</li>
+      <li><strong>Claim the fence and the image.</strong> Reset this slot's fence to unsignalled, ready for the
+      coming submit, and record it as the image's new owner. This happens only after acquisition succeeded, so
+      an early "out of date" return never leaves a reset fence that nothing will signal.</li>
+      <li><strong>Begin recording</strong> into the image's command buffer. Beginning implicitly resets it,
+      which the command pool permits because it was created with <code>RESET_COMMAND_BUFFER</code>.</li>
+    </ol>
+    <p>Everything indexed by <code>image_index</code> from here on (command buffer, uniform buffer, set 0,
+    timestamp queries) is now safe for the CPU to touch. That's the guarantee
+    <a href="08-descriptors-materials.html#descriptor-sets">Chapter 8</a> relied on when updating
+    descriptors.</p>
+
+    <h2>Recording the frame</h2>
+    <p>Between <code>begin_frame</code> and <code>end_frame</code>, <code>RenderGraph::execute</code> does the
+    frame's real work, in this order:</p>
+    <ol>
+      <li>write a start timestamp;</li>
+      <li>compute the lighting and shadow-cascade data and copy it into this image's uniform buffer;</li>
+      <li>gather the images each pass needs, and point set 0 at the shadow map;</li>
+      <li>for each pass (shadow, main, UI), insert any needed image barriers, then let the pass record its
+      commands;</li>
+      <li>transition the swapchain image to its presentation layout, and write an end timestamp.</li>
+    </ol>
+    <p>Steps 3–5 are the subject of <a href="10-render-graph.html">Chapter 10</a>.</p>
+
+    <h2><code>end_frame</code>: submit and present</h2>
+    <!--x src/vulkan/base.rs 362-382,395-407--><figure class="code"><pre><code class="language-rust">self.device.end_command_buffer(frame.cmd_buf)?;
+
+// Submit: wait for image-available (slot), signal render-finished (per-image)
+let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+let wait_sems = [self.image_available_semaphores[frame.frame_slot]];
+let signal_sems = [self.render_finished_semaphores[frame.image_index as usize]];
+let submit_info = vk::SubmitInfo {
+    wait_semaphore_count: 1,
+    p_wait_semaphores: wait_sems.as_ptr(),
+    p_wait_dst_stage_mask: wait_stages.as_ptr(),
+    command_buffer_count: 1,
+    p_command_buffers: &amp;frame.cmd_buf,
+    signal_semaphore_count: 1,
+    p_signal_semaphores: signal_sems.as_ptr(),
+    ..Default::default()
+};
+self.device.queue_submit(
+    self.graphics_queue,
+    &amp;[submit_info],
+    self.in_flight_fences[frame.frame_slot],
+)?;
+// ...
+match self
+    .swapchain_loader
+    .queue_present(self.graphics_queue, &amp;present_info)
+{
+    Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) =&gt; {
+        self.swapchain_recreation_needed = true;
+    }
+    Err(e) =&gt; return Err(e.into()),
+    _ =&gt; {}
+}
+
+// Advance to next CPU slot
+self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len();</code></pre><figcaption>src/vulkan/base.rs:362-407</figcaption></figure><!--/x-->
+    <p>The submit ties the three hazards together:</p>
+    <ul>
+      <li><strong>Wait</strong> on the slot's image-available semaphore, but only at the
+      <code>COLOR_ATTACHMENT_OUTPUT</code> stage. A <em>pipeline stage</em> is a point in the GPU's
+      processing; this is the point where fragment colours are written to an image. GPU work that doesn't write colour (the shadow pass, vertex
+      shading) can start before the image is free; only writing pixels into it has to wait.</li>
+      <li><strong>Signal</strong> the image's render-finished semaphore when all the commands complete.</li>
+      <li><strong>Signal the slot's fence</strong> at the same moment, so a later <code>begin_frame</code> knows
+      the slot is free.</li>
+    </ul>
+    <p>Presentation then waits on that render-finished semaphore, so the image is shown only after drawing
+    completes. All of this ordering happens on the GPU, without the CPU waiting. (One queue does both drawing
+    and presenting, which is why this simple pair of semaphores is enough.) Present reports
+    <code>Ok(true)</code> for "suboptimal" and an error for "out of date"; both only request a rebuild before
+    the next frame. Finally the slot advances, alternating between 0 and 1.</p>
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>A fence is OpenGL's <code>glFenceSync</code>/<code>glClientWaitSync</code> (OpenGL 3.2), except that in
+      Vulkan it's mandatory rather than an advanced optimisation. GPU-to-GPU waits existed
+      (<code>glWaitSync</code>) but were rarely needed; the driver ordered work for you. And <code>SwapBuffers</code> combined "submit", "present"
+      and sometimes "wait for vsync" in one opaque call that the driver could block on whenever it liked.</p>
+    </aside>
+    <aside class="callout aside"><p class="callout-title">Why one render-finished semaphore per image?</p>
+      <p>Presentation doesn't signal anything when it's done with a semaphore, so a semaphore handed to
+      <code>queue_present</code> can't safely be reused until its image has been acquired again. Giving each
+      swapchain image its own render-finished semaphore guarantees exactly that. Indexing it by frame slot
+      instead is a classic mistake that validation layers can report.</p>
+    </aside>
+
+    <h2>Measuring GPU time without stalling</h2>
+    <p>The "GPU: … ms" figure in the screenshot's menu bar comes from <dfn>timestamp queries</dfn>: commands
+    recorded into the command buffer that make the GPU write its clock into a query pool at that point. Five
+    are written per frame: start, end of shadows, start and end of vegetation, and end. Reading results
+    straight after submitting would mean waiting for the GPU, so instead they're read in a later
+    <code>begin_frame</code>, just after that slot's fence wait has guaranteed they're complete:</p>
+    <!--x src/vulkan/base.rs 237-253--><figure class="code"><pre><code class="language-rust">if let Some(prev_image_index) = self.last_image_per_slot[slot] {
+    let base = self.image_query_base(prev_image_index);
+    let mut data = [0_u64; TIMESTAMPS_PER_IMAGE as usize];
+    let res = self.device.get_query_pool_results(
+        self.timestamp_query_pool,
+        base,
+        &amp;mut data,
+        vk::QueryResultFlags::TYPE_64,
+    );
+    if res.is_ok() {
+        self.last_gpu_timings = GpuPassTimings {
+            total_ms: self.timestamp_delta_ms(data[0], data[4]),
+            shadow_ms: self.timestamp_delta_ms(data[0], data[1]),
+            scene_ms: self.timestamp_delta_ms(data[1], data[2]),
+            vegetation_ms: self.timestamp_delta_ms(data[2], data[3]),
+        };
+    }</code></pre><figcaption>src/vulkan/base.rs:237-253</figcaption></figure><!--/x-->
+    <p>Results are read without asking Vulkan to wait for them; that's safe only because the fence has already
+    been waited on. Raw ticks are converted to milliseconds using the device's <code>timestamp_period</code>
+    (nanoseconds per tick). The reported numbers therefore describe the frame from two frames ago, which is
+    perfectly good for a profiler and costs nothing.</p>
+
+    <h2>When the swapchain changes</h2>
+    <p>Recreation (<a href="04-swapchain.html">Chapter 4</a>) happens only at frame boundaries: before
+    <code>begin_frame</code>, after a failed acquire, or after <code>end_frame</code>. It's safe at any of those
+    points because <code>Swapchain::recreate</code> starts by waiting for the whole device to go idle. On top of the swapchain
+    itself, <code>VulkanBase::recreate_swapchain</code> rebuilds everything sized per image: command buffers,
+    render-finished semaphores, owner-fence tracking, uniform buffers and set 0, the per-image attachments
+    (<a href="10-render-graph.html">Chapter 10</a>) and the timestamp pool. The
+    per-slot fences and image-available semaphores are kept, because the number of slots doesn't change.</p>
+  </section>
+
+  <section id="recap" class="recap">
+    <h2>Recap</h2>
+    <ul>
+      <li>Submission is asynchronous. Fences let the CPU wait for the GPU; semaphores order GPU work against
+      other GPU work and presentation.</li>
+      <li>Two frame slots each have a fence and an image-available semaphore. Three swapchain images each have
+      a command buffer, uniform buffer, set 0 and render-finished semaphore.</li>
+      <li><code>begin_frame</code>: wait for the slot's fence, acquire an image, wait for the image's previous
+      owner, reset the fence, begin recording.</li>
+      <li><code>end_frame</code>: submit (wait image-available, signal render-finished and the fence), present
+      (wait render-finished), advance the slot.</li>
+      <li>GPU timings are read two frames later, after the fence, so they never stall. Render errors are fatal by
+      design.</li>
+    </ul>
+  </section>
+
+  <nav class="pager"><a class="prev" href="08-descriptors-materials.html">← 08 · Descriptors and materials</a><a class="next" href="10-render-graph.html">10 · The render graph →</a></nav>
+</main>
+<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>
+<script src="guide.js"></script>
+</body>
+</html>

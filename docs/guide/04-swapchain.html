@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>04 · Surfaces and the swapchain · RustyVulkan Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
+<main class="chapter">
+  <header class="chapter-head">
+    <p class="kicker">Part 2 · Chapter 04 · <span class="readtime">~9 min read</span></p>
+    <h1>Surfaces and the swapchain</h1>
+    <p class="lede">How finished images get from the GPU into the window, the choices that involves, and what
+    happens when the window changes size.</p>
+  </header>
+
+  <section id="big-picture">
+    <h2><span class="tag">Overview</span> The big picture</h2>
+
+    <p>Vulkan by itself knows nothing about windows. It can render into images in GPU memory, but showing one
+    on screen is the operating system's job. Two objects bridge the gap.</p>
+    <p>A <dfn>surface</dfn> is the window as Vulkan sees it: a target that the system's compositor (the part of
+    the OS that assembles all the windows into the final screen image) can display.
+    On a Mac it wraps the window's Metal drawing layer. The surface is also what you ask about
+    capabilities: which pixel formats it accepts, its current size, how images can be handed over.</p>
+    <p>A <dfn>swapchain</dfn> is a small set of images, owned by the system's presentation machinery, that take
+    turns being shown on that surface. You don't draw into the window directly. Each frame, you
+    <em>acquire</em> one of the swapchain's images, render into it, and <em>present</em> it, which hands it
+    back to be displayed. Meanwhile, the image you presented last is on screen, and at most one other may be
+    waiting its turn.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 640 300" role="img" aria-labelledby="sct">
+        <title id="sct">The swapchain as a ring of three images</title>
+        <defs><marker id="sca" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" class="fill-muted"/></marker></defs>
+        <g font-size="14">
+          <rect class="box-gl" x="230" y="12" width="180" height="76" rx="10"/>
+          <text x="320" y="40" text-anchor="middle" font-weight="700">Image 0</text>
+          <text x="320" y="62" text-anchor="middle" class="muted">on screen now</text>
+          <rect class="box-aside" x="430" y="176" width="190" height="76" rx="10"/>
+          <text x="525" y="204" text-anchor="middle" font-weight="700">Image 1</text>
+          <text x="525" y="226" text-anchor="middle" class="muted">presented, waiting</text>
+          <text x="525" y="242" text-anchor="middle" class="muted">for its turn</text>
+          <rect class="box-accent" x="20" y="176" width="190" height="76" rx="10"/>
+          <text x="115" y="204" text-anchor="middle" font-weight="700">Image 2</text>
+          <text x="115" y="226" text-anchor="middle" class="muted">acquired: the renderer</text>
+          <text x="115" y="242" text-anchor="middle" class="muted">is drawing into it</text>
+          <text x="320" y="214" text-anchor="middle" font-weight="700" class="muted">present →</text>
+          <text x="70" y="128" class="muted">← acquire</text>
+          <text x="450" y="128" class="muted">display →</text>
+        </g>
+        <path class="wire-accent" marker-end="url(#sca)" d="M210 214 H260"/>
+        <path class="wire-accent" marker-end="url(#sca)" d="M380 214 H427"/>
+        <path class="wire" marker-end="url(#sca)" d="M525 176 Q525 60 413 50"/>
+        <path class="wire" marker-end="url(#sca)" d="M228 50 Q115 60 115 173"/>
+        <text x="320" y="285" font-size="12" class="muted" text-anchor="middle">Images move anticlockwise; the renderer only ever touches the one it has acquired.</text>
+      </svg>
+      <figcaption>With three images, the renderer can draw a new frame while one is displayed and another is
+      queued.</figcaption>
+    </figure>
+
+    <h3>Choices made when building it</h3>
+    <ul>
+      <li><strong>How many images.</strong> This renderer asks for three, within whatever range the surface
+      allows.</li>
+      <li><strong>Pixel format.</strong> It prefers 8-bit blue-green-red-alpha, the common native format for
+      displays.</li>
+      <li><strong>Size.</strong> The window's size in actual pixels. On a Mac's high-density "Retina" display
+      that's twice the size macOS reports for layout.</li>
+      <li><strong>Present mode</strong>, meaning how presented images reach the screen. <dfn>FIFO</dfn> is a
+      queue drained once per display refresh: classic vsync, always available. <dfn>Mailbox</dfn> also waits
+      for the refresh but replaces a waiting image with a newer one. That cuts latency without
+      <em>tearing</em>, the visible seam you get when the screen switches images mid-refresh.
+      RustyVulkan uses mailbox when offered, otherwise FIFO.</li>
+    </ul>
+
+    <h3>When the window changes</h3>
+    <p>Swapchain images have a fixed size. When the window is resized, the swapchain no longer matches, and
+    Vulkan says so by reporting it "out of date". The renderer then builds a new swapchain and throws away the
+    old one, at a moment when nothing is mid-frame. Minimising the window is a special case: a zero-sized window
+    can't have a swapchain at all, so the redraw handler skips drawing entirely until it comes back.</p>
+    <p>This renderer also keeps a pair of window-sized <em>multisampled</em> images alongside the swapchain,
+    used when anti-aliasing is on: one for colour and one for depth. They store several samples per pixel for anti-aliasing, and the result is
+    averaged down into the swapchain image at the end of the main pass
+    (<a href="10-render-graph.html">Chapter 10</a>). Because they must match the window's size, they're
+    created, recreated and destroyed together with the swapchain.</p>
+  </section>
+
+  <div class="dive-divider"><span>Deeper dive</span></div>
+
+  <section id="deep-dive">
+    <h2>Making the surface</h2>
+    <p>As <a href="03-instance-devices.html">Chapter 3</a> showed, the surface is created before a GPU is
+    chosen. The <code>ash-window</code> crate does the platform-specific part:</p>
+    <!--x src/vulkan/base/setup.rs 254-262--><figure class="code"><pre><code class="language-rust">let surface = unsafe {
+    create_surface(
+        entry,
+        instance,
+        event_loop.display_handle().unwrap().as_raw(),
+        window.window_handle().unwrap().as_raw(),
+        None,
+    )?
+};</code></pre><figcaption>src/vulkan/base/setup.rs:254-262</figcaption></figure><!--/x-->
+    <p><code>display_handle()</code> and <code>window_handle()</code> come from the
+    <code>raw-window-handle</code> crate, a common vocabulary that windowing libraries (here winit) and
+    graphics libraries (here ash-window) both speak. On macOS, <code>ash-window</code> uses them to find the
+    window's <code>CAMetalLayer</code> and creates the surface with the <code>VK_EXT_metal_surface</code>
+    extension.</p>
+
+    <h2>Asking what the surface supports</h2>
+    <p>All the swapchain's choices start from three queries made through the surface extension's
+    loader:</p>
+    <!--x src/vulkan/swapchain.rs 504-514--><figure class="code"><pre><code class="language-rust">let capabilities = unsafe {
+    surface_loader.get_physical_device_surface_capabilities(physical_device, surface)?
+};
+
+let formats = unsafe {
+    surface_loader.get_physical_device_surface_formats(physical_device, surface)?
+};
+
+let present_modes = unsafe {
+    surface_loader.get_physical_device_surface_present_modes(physical_device, surface)?
+};</code></pre><figcaption>src/vulkan/swapchain.rs:504-514</figcaption></figure><!--/x-->
+    <p><em>Capabilities</em> cover image-count limits, size limits and the current size, and supported
+    transforms and alpha modes. <em>Formats</em> are the (pixel format, colour space) pairs the surface accepts,
+    and <em>present modes</em> are the presentation strategies. Then <code>new_with_old_swapchain</code> picks
+    from each:</p>
+    <!--x src/vulkan/swapchain.rs 96-112--><figure class="code"><pre><code class="language-rust">let swapchain_support =
+    SwapchainSupportDetails::query(physical_device, *surface, surface_loader)?;
+
+let surface_format = Self::choose_swap_surface_format(&amp;swapchain_support.formats)?;
+let present_mode = Self::choose_swap_present_mode(&amp;swapchain_support.present_modes);
+let extent = Self::choose_swap_extent(&amp;swapchain_support.capabilities, window);
+let depth_format = vk::Format::D32_SFLOAT;
+
+let mut image_count = 3;
+if image_count &lt; swapchain_support.capabilities.min_image_count {
+    image_count = swapchain_support.capabilities.min_image_count;
+}
+if swapchain_support.capabilities.max_image_count &gt; 0
+    &amp;&amp; image_count &gt; swapchain_support.capabilities.max_image_count
+{
+    image_count = swapchain_support.capabilities.max_image_count;
+}</code></pre><figcaption>src/vulkan/swapchain.rs:96-112</figcaption></figure><!--/x-->
+    <p>The depth format, <code>D32_SFLOAT</code> (a 32-bit float per pixel), isn't part of the swapchain at
+    all; it's recorded here for the depth images made alongside it. The image count is three, clamped into the
+    surface's allowed range. A <code>max_image_count</code> of 0 means "no upper limit", hence the extra
+    test.</p>
+
+    <h3>Format</h3>
+    <!--x src/vulkan/swapchain.rs 292-313--><figure class="code"><pre><code class="language-rust">fn choose_swap_surface_format(
+    available_formats: &amp;[vk::SurfaceFormatKHR],
+) -&gt; Result&lt;vk::SurfaceFormatKHR, vk::Result&gt; {
+    // Older implementations may report UNDEFINED to permit any format.
+    if let [format] = available_formats
+        &amp;&amp; format.format == vk::Format::UNDEFINED
+    {
+        return Ok(vk::SurfaceFormatKHR {
+            format: vk::Format::B8G8R8A8_UNORM,
+            color_space: format.color_space,
+        });
+    }
+    available_formats
+        .iter()
+        .copied()
+        .find(|f| {
+            f.format == vk::Format::B8G8R8A8_UNORM
+                &amp;&amp; f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+        })
+        .or_else(|| available_formats.first().copied())
+        .ok_or(vk::Result::ERROR_FORMAT_NOT_SUPPORTED)
+}</code></pre><figcaption>src/vulkan/swapchain.rs:292-313</figcaption></figure><!--/x-->
+    <p>The preferred format is <code>B8G8R8A8_UNORM</code> in the standard sRGB colour space. If the surface
+    doesn't offer it, the first supported format is used; if it offers none at all, that's an error. The very
+    first branch handles an old convention where a surface reported one <code>UNDEFINED</code> format, meaning
+    "anything you like".</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · slice patterns and let-chains</p>
+      <p><code>if let [format] = available_formats</code> matches only when the slice has exactly one element,
+      and names it <code>format</code>. The <code>&amp;&amp;</code> after it chains another condition onto the
+      same <code>if let</code>, which is new in Rust's 2024 edition. The rest is an iterator chain:
+      <code>copied()</code> turns references into values, <code>find</code> returns an <code>Option</code>,
+      <code>or_else</code> supplies a fallback <code>Option</code>, and <code>ok_or</code> turns
+      <code>None</code> into an error.</p>
+    </aside>
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>The <code>UNORM</code> part matters. An <code>_SRGB</code> swapchain format would make the GPU convert
+      linear colour to sRGB as it writes, as <code>GL_FRAMEBUFFER_SRGB</code> did. A <code>UNORM</code>
+      format stores shader output unchanged. RustyVulkan's textures are also loaded as <code>UNORM</code>
+      (<a href="05-gpu-memory.html">Chapter 5</a>), so colours pass from texture to screen without conversion,
+      and lighting is computed on gamma-encoded values. (The <code>SRGB_NONLINEAR</code> colour space only tells
+      the display how to interpret the stored numbers.) That's a common simplification, and it's how many
+      OpenGL renderers worked too.</p>
+    </aside>
+
+    <h3>Present mode and size</h3>
+    <!--x src/vulkan/swapchain.rs 335-343--><figure class="code"><pre><code class="language-rust">fn choose_swap_present_mode(
+    available_present_modes: &amp;[vk::PresentModeKHR],
+) -&gt; vk::PresentModeKHR {
+    if available_present_modes.contains(&amp;vk::PresentModeKHR::MAILBOX) {
+        vk::PresentModeKHR::MAILBOX
+    } else {
+        vk::PresentModeKHR::FIFO
+    }
+}</code></pre><figcaption>src/vulkan/swapchain.rs:335-343</figcaption></figure><!--/x-->
+    <!--x src/vulkan/swapchain.rs 352-371--><figure class="code"><pre><code class="language-rust">fn choose_swap_extent(
+    capabilities: &amp;vk::SurfaceCapabilitiesKHR,
+    window: &amp;Window,
+) -&gt; vk::Extent2D {
+    if capabilities.current_extent.width != u32::MAX {
+        capabilities.current_extent
+    } else {
+        let (width, height): (u32, u32) = window.inner_size().into();
+        vk::Extent2D {
+            width: width.clamp(
+                capabilities.min_image_extent.width,
+                capabilities.max_image_extent.width,
+            ),
+            height: height.clamp(
+                capabilities.min_image_extent.height,
+                capabilities.max_image_extent.height,
+            ),
+        }
+    }
+}</code></pre><figcaption>src/vulkan/swapchain.rs:352-371</figcaption></figure><!--/x-->
+    <p>Most platforms, macOS included, report the surface's <code>current_extent</code>, and the swapchain must
+    match it. On some platforms the special value <code>u32::MAX</code> means the application decides, in which case the window's
+    <code>inner_size()</code> (in physical pixels) is clamped into the allowed range.</p>
+
+    <h2>Creating the swapchain</h2>
+    <!--x src/vulkan/swapchain.rs 114-131--><figure class="code"><pre><code class="language-rust">let create_info = vk::SwapchainCreateInfoKHR {
+    surface: *surface,
+    min_image_count: image_count,
+    image_format: surface_format.format,
+    image_color_space: surface_format.color_space,
+    image_extent: extent,
+    image_array_layers: 1,
+    image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+    image_sharing_mode: vk::SharingMode::EXCLUSIVE,
+    pre_transform: swapchain_support.capabilities.current_transform,
+    composite_alpha: Self::choose_composite_alpha(
+        swapchain_support.capabilities.supported_composite_alpha,
+    )?,
+    present_mode,
+    clipped: vk::TRUE,
+    old_swapchain,
+    ..Default::default()
+};</code></pre><figcaption>src/vulkan/swapchain.rs:114-131</figcaption></figure><!--/x-->
+    <p>Fields worth knowing:</p>
+    <ul>
+      <li><code>image_usage: COLOR_ATTACHMENT</code>: these images will be rendered into. This renderer never
+      samples them as textures or copies to them.</li>
+      <li><code>image_sharing_mode: EXCLUSIVE</code>: only one queue family touches them, which is true here,
+      since one queue does everything (<a href="03-instance-devices.html">Chapter 3</a>).</li>
+      <li><code>pre_transform</code> and <code>composite_alpha</code>: keep the surface's current orientation,
+      and treat the window as opaque if that's allowed. <code>choose_composite_alpha</code> walks a preference
+      list and returns the first mode the surface supports.</li>
+      <li><code>clipped: TRUE</code>: the driver may skip pixels hidden behind other windows.</li>
+      <li><code>old_swapchain</code>: null the first time. On a resize it's the swapchain being replaced, which
+      lets the driver reuse or retire the old images without a gap on screen (see "If recreation fails"
+      below).</li>
+    </ul>
+
+    <h2>Recording ownership as it goes</h2>
+    <p>After the swapchain itself come the per-image views and the two multisampled images. Any of those steps
+    can fail, and a failure must not leak what came before. <code>DEVELOPMENT.md</code> names this constructor
+    as the example of the pattern from <a href="02-rust-meets-c.html#rust-drop">Chapter 2</a>:</p>
+    <!--x src/vulkan/swapchain.rs 136-160,185-192--><figure class="code"><pre><code class="language-rust">// Keep ownership recorded as each fallible step succeeds, so any later
+// failure can release exactly the resources that were created.
+let mut swapchain = Self {
+    handle,
+    images: Vec::new(),
+    swapchain_image_views: Vec::new(),
+    extent,
+    color_format: surface_format.format,
+    depth_format,
+    color_msaa_image: vk::Image::null(),
+    color_msaa_image_view: vk::ImageView::null(),
+    color_msaa_allocation: None,
+    depth_msaa_image: vk::Image::null(),
+    depth_msaa_image_view: vk::ImageView::null(),
+    depth_msaa_allocation: None,
+};
+let result = (|| -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
+    swapchain.images = unsafe { swapchain_loader.get_swapchain_images(handle)? };
+    let (image, allocation) = Self::create_msaa_image(
+        allocator,
+        extent,
+        surface_format.format,
+        msaa_samples,
+        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+    )?;
+// ...
+    swapchain.swapchain_image_views =
+        Self::create_image_views(device, &amp;swapchain.images, surface_format.format)?;
+    Ok(())
+})();
+if let Err(error) = result {
+    swapchain.cleanup(instance, device, allocator);
+    return Err(error);
+}</code></pre><figcaption>src/vulkan/swapchain.rs:136-192</figcaption></figure><!--/x-->
+    <p>The <code>Swapchain</code> struct is created first, with null handles and <code>None</code> allocations.
+    Each step then stores its result in the struct the moment it succeeds. If any step fails, the struct
+    accurately lists what exists, and <code>cleanup</code> destroys exactly that.</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · a closure as a "try block"</p>
+      <p><code>(|| -> Result&lt;(), Box&lt;dyn Error&gt;&gt; { … })()</code> defines a closure and calls it
+      immediately. Its only purpose is to give <code>?</code> somewhere to return to. A failing step exits the
+      closure, not the whole function, so the code after it gets the chance to clean up before passing the
+      error on.</p>
+    </aside>
+    <p>Two new terms appear here. An <dfn>image view</dfn> describes how to interpret an image: which format,
+    which parts (colour or depth), and which sub-images (the smaller mipmap levels, or layers of an image array). Vulkan always reads and writes images through
+    views. <code>create_image_views</code> makes one per swapchain image, and its error path destroys any
+    already made. The <code>TRANSIENT_ATTACHMENT</code> usage on the multisampled images tells the driver their
+    contents only matter during rendering and never need to be read back afterwards, which some GPUs can
+    exploit to save memory traffic.</p>
+
+    <h2>Tearing down, safely and repeatably</h2>
+    <!--x src/vulkan/swapchain.rs 258-268,278-284--><figure class="code"><pre><code class="language-rust">unsafe {
+    for view in self.swapchain_image_views.drain(..) {
+        device.destroy_image_view(view, None);
+    }
+    device.destroy_image_view(
+        std::mem::replace(&amp;mut self.color_msaa_image_view, vk::ImageView::null()),
+        None,
+    );
+    if let Some(mut allocation) = self.color_msaa_allocation.take() {
+        allocator.destroy_image(self.color_msaa_image, &amp;mut allocation);
+    }
+// ...
+    let swapchain_loader = swapchain::Device::new(instance, device);
+    swapchain_loader.destroy_swapchain(
+        std::mem::replace(&amp;mut self.handle, vk::SwapchainKHR::null()),
+        None,
+    );
+}
+self.images.clear();</code></pre><figcaption>src/vulkan/swapchain.rs:258-284</figcaption></figure><!--/x-->
+    <p><code>cleanup</code> is written so that running it twice is harmless.
+    <code>drain(..)</code> empties the vector of views as it goes. <code>Option::take</code> removes each
+    allocation (<a href="02-rust-meets-c.html#rust-drop">Chapter 2</a>). <code>std::mem::replace</code> swaps
+    each handle for null and hands back the old value to destroy, so a second run would only "destroy" null
+    handles, which Vulkan permits. Note that the swapchain's own images aren't destroyed: they belong to the
+    swapchain and go with it.</p>
+
+    <h2>Recreating on resize</h2>
+    <p>Resizes arrive as window events. Window systems often send a burst of them, so the input handler only
+    records the intent:</p>
+    <!--x src/app/input.rs 81-88--><figure class="code"><pre><code class="language-rust">if size.width == 0 || size.height == 0 {
+    return;
+}
+if let Some(vulkan_base) = &amp;mut app.vulkan_base {
+    // Window systems often emit several resize events together. Record
+    // intent here; the render loop performs one recreation at a safe point.
+    vulkan_base.request_swapchain_recreation();
+}</code></pre><figcaption>src/app/input.rs:81-88</figcaption></figure><!--/x-->
+    <p>At the start of the next frame, before anything is acquired, the render graph acts on it once:</p>
+    <!--x src/vulkan/render_graph.rs 214-220--><figure class="code"><pre><code class="language-rust">if vb.take_swapchain_recreation_request() {
+    let size = app.window.as_ref().unwrap().inner_size();
+    if size.width != 0 &amp;&amp; size.height != 0 {
+        vb.recreate_swapchain(app.window.as_ref().unwrap())?;
+        device_is_idle = true;
+    }
+}</code></pre><figcaption>src/vulkan/render_graph.rs:214-220</figcaption></figure><!--/x-->
+    <p>The same request is raised if acquiring or presenting reports <code>ERROR_OUT_OF_DATE_KHR</code> or
+    "suboptimal" (<a href="02-rust-meets-c.html#rust-result">Chapter 2</a> showed the acquire side). Inside the
+    swapchain, recreation is short:</p>
+    <!--x src/vulkan/swapchain.rs 227-241--><figure class="code"><pre><code class="language-rust">// Synchronize before destroying images or views referenced by the GPU.
+unsafe { device.device_wait_idle()? };
+let new_swapchain = Self::new_with_old_swapchain(
+    instance,
+    device,
+    physical_device,
+    surface,
+    surface_loader,
+    window,
+    allocator,
+    msaa_samples,
+    self.handle,
+)?;
+self.cleanup(instance, device, allocator);
+*self = new_swapchain;</code></pre><figcaption>src/vulkan/swapchain.rs:227-241</figcaption></figure><!--/x-->
+    <p>Wait for the GPU to stop using the old images, build the new swapchain with the old one as
+    <code>old_swapchain</code>, destroy the old resources, and overwrite <code>self</code> with the new value.
+    <code>VulkanBase::recreate_swapchain</code> then rebuilds everything sized per swapchain image, including
+    command buffers, semaphores, uniform buffers and their descriptor sets, and the timestamp pool (<a href="09-frame-loop.html">Chapter
+    9</a>). If the pixel format changed, it also marks every pipeline for rebuilding
+    (<a href="07-pipelines.html">Chapter 7</a>).</p>
+    <aside class="callout aside"><p class="callout-title">If recreation fails</p>
+      <p>Vulkan retires the old swapchain as soon as replacement is attempted. If creating the new one fails,
+      the old Rust value is kept only so it can still be cleaned up; it must not be rendered with. The error
+      propagates out and the application exits, a deliberate policy that <code>DEVELOPMENT.md</code> explains
+      (<a href="16-app-shell.html">Chapter 16</a>).</p>
+    </aside>
+
+    <h2>Testing the choices without a GPU</h2>
+    <p>The selection functions are plain functions of their inputs, so they can be unit-tested without a
+    window or GPU:</p>
+    <!--x src/vulkan/swapchain.rs 530-541--><figure class="code"><pre><code class="language-rust">#[cfg(test)]
+mod tests {
+    use super::Swapchain;
+    use ash::vk;
+
+    #[test]
+    fn empty_surface_formats_return_an_error() {
+        assert_eq!(
+            Swapchain::choose_swap_surface_format(&amp;[]),
+            Err(vk::Result::ERROR_FORMAT_NOT_SUPPORTED)
+        );
+    }</code></pre><figcaption>src/vulkan/swapchain.rs:530-541</figcaption></figure><!--/x-->
+    <aside class="callout rust" id="rust-tests"><p class="callout-title">Rust note · tests live next to the code</p>
+      <p><code>#[cfg(test)]</code> compiles the <code>tests</code> module only when running
+      <code>cargo test</code>. Each <code>#[test]</code> function is one test; <code>assert_eq!</code> fails it
+      if the two values differ. Because the module is a child of the file's module, it can call private
+      functions like <code>choose_swap_surface_format</code>.</p>
+    </aside>
+  </section>
+
+  <section id="recap" class="recap">
+    <h2>Recap</h2>
+    <ul>
+      <li>The surface is the window as Vulkan sees it, created through <code>ash-window</code> from the window's
+      raw handles. On macOS it wraps a Metal layer.</li>
+      <li>The swapchain is a ring of images you acquire, render into and present. Here there are three, in
+      <code>B8G8R8A8_UNORM</code>, using mailbox presentation if available and FIFO otherwise.</li>
+      <li>Multisampled colour and depth images live alongside it, because they share its size.</li>
+      <li>Construction records ownership step by step so a failure cleans up exactly what was made.
+      <code>cleanup</code> is safe to repeat.</li>
+      <li>Resizes, and out-of-date or suboptimal results, request recreation, which is applied once at the start
+      of a frame. Zero-sized windows are skipped.</li>
+    </ul>
+  </section>
+
+  <nav class="pager"><a class="prev" href="03-instance-devices.html">← 03 · Instance, devices and queues</a><a class="next" href="05-gpu-memory.html">05 · GPU memory →</a></nav>
+</main>
+<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>
+<script src="guide.js"></script>
+</body>
+</html>

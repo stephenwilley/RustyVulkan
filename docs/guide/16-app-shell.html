@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>16 · The app shell · RustyVulkan Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
+<main class="chapter">
+  <header class="chapter-head">
+    <p class="kicker">Part 6 · Chapter 16 · <span class="readtime">~7 min read</span></p>
+    <h1>The app shell</h1>
+    <p class="lede">The code that holds everything together: the window and its event loop, keyboard and mouse,
+    shutting down in the right order, and packaging the result as a Mac app.</p>
+  </header>
+
+  <section id="big-picture">
+    <h2><span class="tag">Overview</span> The big picture</h2>
+
+    <h3>An event loop drives everything</h3>
+    <p>A desktop program doesn't run in a straight line. It hands control to the operating system's
+    <dfn>event loop</dfn>, which calls back into the program whenever something happens: the app is ready to
+    start, a key is pressed, the mouse moves, the window is resized or closed, or it's time to draw. RustyVulkan
+    uses <code>winit</code> for this. <code>App</code> implements winit's <code>ApplicationHandler</code>
+    interface, a set of methods winit calls as those events arrive.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 640 330" role="img" aria-labelledby="evt">
+        <title id="evt">The application's life cycle</title>
+        <defs><marker id="eva" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" class="fill-muted"/></marker></defs>
+        <g font-size="13">
+          <rect class="box" x="10" y="14" width="150" height="50" rx="8"/>
+          <text x="85" y="36" text-anchor="middle" font-weight="700">main</text>
+          <text x="85" y="54" text-anchor="middle" class="muted">App::new().run()</text>
+          <rect class="box-accent" x="190" y="14" width="210" height="50" rx="8"/>
+          <text x="295" y="36" text-anchor="middle" font-weight="700">resumed</text>
+          <text x="295" y="54" text-anchor="middle" class="muted">window, Vulkan, scene, passes</text>
+          <rect class="box-gl" x="190" y="110" width="210" height="110" rx="8"/>
+          <text x="295" y="132" text-anchor="middle" font-weight="700">winit event loop</text>
+          <text x="295" y="154" text-anchor="middle" class="muted">window_event: keys, resize,</text>
+          <text x="295" y="172" text-anchor="middle" class="muted">focus, close, redraw</text>
+          <text x="295" y="190" text-anchor="middle" class="muted">device_event: mouse look</text>
+          <text x="295" y="208" text-anchor="middle" class="muted">about_to_wait: ask to redraw</text>
+          <rect class="box-accent" x="440" y="110" width="190" height="110" rx="8"/>
+          <text x="535" y="140" text-anchor="middle" font-weight="700">RedrawRequested</text>
+          <text x="535" y="162" text-anchor="middle" class="muted">move camera</text>
+          <text x="535" y="180" text-anchor="middle" class="muted">render graph:</text>
+          <text x="535" y="198" text-anchor="middle" class="muted">one frame (Ch. 9–10)</text>
+          <rect class="box" x="190" y="262" width="210" height="56" rx="8"/>
+          <text x="295" y="285" text-anchor="middle" font-weight="700">exit → App::drop</text>
+          <text x="295" y="304" text-anchor="middle" class="muted">ordered teardown, then exit status</text>
+        </g>
+        <path class="wire" marker-end="url(#eva)" d="M160 39 H187"/>
+        <path class="wire" marker-end="url(#eva)" d="M295 64 V107"/>
+        <path class="wire" marker-end="url(#eva)" d="M400 150 H437"/>
+        <path class="wire" marker-end="url(#eva)" d="M535 220 Q535 245 403 196"/>
+        <path class="wire" marker-end="url(#eva)" d="M295 220 V259"/>
+      </svg>
+      <figcaption>After start-up, the program lives inside the event loop, drawing a frame every time it's asked to,
+      until a close, Escape or the menu's Exit ends the loop.</figcaption>
+    </figure>
+
+    <h3>Controls</h3>
+    <p>It's a first-person view: <strong>W A S D</strong> walk over the terrain, the <strong>mouse</strong>
+    looks around (the pointer is hidden and locked to the window), <strong>U</strong> toggles between mouse-look and a free pointer for the ImGui menus, <strong>F</strong> switches fullscreen, and
+    <strong>Escape</strong> quits.</p>
+
+    <h3>Starting, failing and stopping</h3>
+    <p>Everything Vulkan is built only once winit says the app is "resumed" and a window can exist. If anything
+    goes wrong while building, or later while drawing, the error is stored, the loop is told to exit, and the
+    program ends with a failure exit code rather than crashing or carrying on half-broken. On the way out,
+    everything is destroyed in reverse dependency order, as <a href="02-rust-meets-c.html#rust-drop">Chapter 2</a>
+    described.</p>
+
+    <h3>A Mac app</h3>
+    <p>A packaging script turns the build into <code>RustyVulkan.app</code>, a self-contained application that
+    carries its assets, the Assimp library, the Vulkan loader and the KosmicKrisp driver inside it, so the
+    receiving Mac needs neither Rust nor the Vulkan SDK. It targets Apple Silicon Macs on macOS 26 or newer.</p>
+  </section>
+
+  <div class="dive-divider"><span>Deeper dive</span></div>
+
+  <section id="deep-dive">
+    <h2>Running the loop</h2>
+    <!--x src/app/app.rs 157-166--><figure class="code"><pre><code class="language-rust">/// Runs the winit event loop until exit.
+pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
+    let event_loop = EventLoop::new()?;
+    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.run_app(&amp;mut self)?;
+    match self.fatal_error.take() {
+        Some(error) =&gt; Err(error),
+        None =&gt; Ok(()),
+    }
+}</code></pre><figcaption>src/app/app.rs:157-166</figcaption></figure><!--/x-->
+    <p><code>ControlFlow::Poll</code> keeps the loop spinning instead of sleeping until the next input event,
+    which suits a renderer that wants to draw continuously. <code>run_app</code> blocks until the loop exits; any
+    fatal error stored along the way is then returned to <code>main</code>, which turns it into a failure exit
+    status (<a href="01-why-vulkan.html">Chapter 1</a>).</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · implementing a library's trait</p>
+      <p><code>impl ApplicationHandler for App { … }</code> provides winit's trait methods for our type, the way a
+      C program would fill in a table of callback function pointers, but checked by the compiler. Traits were
+      introduced in <a href="02-rust-meets-c.html#rust-builders">Chapter 2</a>, and trait objects with the render
+      passes in <a href="10-render-graph.html">Chapter 10</a>. Methods the trait gives
+      a default for, like <code>device_event</code>, needn't be written unless you want them.</p>
+    </aside>
+
+    <h2>Start-up in <code>resumed</code></h2>
+    <!--x src/app/app.rs 469-482,494-503,514-523--><figure class="code"><pre><code class="language-rust">fn resumed(&amp;mut self, event_loop: &amp;ActiveEventLoop) {
+    // Winit can emit Resumed more than once. Keep the existing ownership
+    // tree rather than replacing live GPU resources and the ImGui context.
+    if self.window.is_some() {
+        return;
+    }
+    match self.create_window(event_loop) {
+        Ok(window) =&gt; self.window = Some(window),
+        Err(error) =&gt; {
+            self.fatal_error = Some(Box::new(error));
+            event_loop.exit();
+            return;
+        }
+    }
+// ...
+    match VulkanBase::new(self.window.as_ref().unwrap(), event_loop) {
+        Ok(vulkan_base) =&gt; {
+            self.vulkan_base = Some(vulkan_base);
+        }
+        Err(e) =&gt; {
+            self.fatal_error = Some(e);
+            event_loop.exit();
+            return;
+        }
+    }
+// ...
+    if let Err(e) = self.set_up_scene() {
+        self.fatal_error = Some(e);
+        event_loop.exit();
+        return;
+    }
+
+    self.render_graph.add(RenderPassNode::Shadow);
+    self.render_graph.add(RenderPassNode::Main);
+    let show = self.vulkan_base.as_ref().unwrap().engine_settings.show_ui;
+    self.render_graph.set_pass_enabled(RenderPassNode::UI, show);</code></pre><figcaption>src/app/app.rs:469-523</figcaption></figure><!--/x-->
+    <p>The order is the order of the guide: window, ImGui context, the Vulkan backend
+    (<a href="03-instance-devices.html">Chapter 3</a>), the ImGui renderer, the scene
+    (<a href="12-main-pass-scene.html">Chapter 12</a>), and finally the passes. The guard at the top matters
+    because winit's contract allows <code>resumed</code> to be called more than once (on macOS it fires once, but on
+    mobile platforms it fires whenever the app returns to the foreground), and rebuilding would replace live GPU resources. <code>DEVELOPMENT.md</code>
+    notes that the full mobile suspend-and-resume cycle isn't handled. The window is created with the
+    pointer captured for first-person look:</p>
+    <!--x src/app/app.rs 43-56--><figure class="code"><pre><code class="language-rust">/// Enables the cursor mode used while playing in first-person view.
+pub fn capture_first_person_cursor(window: &amp;Window) {
+    // Locked works on most platforms; confined is a useful fallback for window systems
+    // without relative-pointer support.
+    if window
+        .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+        .is_err()
+    {
+        window
+            .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+            .ok();
+    }
+    window.set_cursor_visible(false);
+}</code></pre><figcaption>src/app/app.rs:43-56</figcaption></figure><!--/x-->
+
+    <h2>Events</h2>
+    <!--x src/app/app.rs 526-548--><figure class="code"><pre><code class="language-rust">fn device_event(
+    &amp;mut self,
+    _event_loop: &amp;ActiveEventLoop,
+    _device_id: winit::event::DeviceId,
+    event: DeviceEvent,
+) {
+    input::handle_device_event(self, event);
+}
+
+fn window_event(
+    &amp;mut self,
+    event_loop: &amp;ActiveEventLoop,
+    window_id: winit::window::WindowId,
+    event: WindowEvent,
+) {
+    input::handle_window_event(self, event_loop, window_id, event);
+}
+
+fn about_to_wait(&amp;mut self, _event_loop: &amp;ActiveEventLoop) {
+    if let Some(window) = &amp;self.window {
+        window.request_redraw();
+    }
+}</code></pre><figcaption>src/app/app.rs:526-548</figcaption></figure><!--/x-->
+    <p><code>about_to_wait</code> runs when the loop has handled all pending events. Requesting a redraw every
+    time is what keeps frames coming; each <code>RedrawRequested</code> then moves the camera and runs the render
+    graph (<a href="09-frame-loop.html">Chapter 9</a>). Mouse look uses <em>device</em> events, the raw relative
+    motion of the mouse, rather than the pointer position, so it keeps working while the hidden pointer is locked in place:</p>
+    <!--x src/app/input.rs 40-49--><figure class="code"><pre><code class="language-rust">/// Handles raw relative motion only while the cursor is captured for first-person look.
+pub fn handle_device_event(app: &amp;mut App, event: DeviceEvent) {
+    if !app.input.cursor_released
+        &amp;&amp; let DeviceEvent::MouseMotion { delta } = event
+    {
+        let (dx, dy) = (delta.0 as f32, delta.1 as f32);
+        let sensitivity = 0.1;
+        app.camera.rotate(dx * sensitivity, -dy * sensitivity);
+    }
+}</code></pre><figcaption>src/app/input.rs:40-49</figcaption></figure><!--/x-->
+    <p>Window events are first forwarded to ImGui, so it sees every click and key press, before the app
+    handles them itself:</p>
+    <!--x src/app/input.rs 58-68--><figure class="code"><pre><code class="language-rust">if let Some(win) = &amp;app.window {
+    if window_id != win.id() {
+        return;
+    }
+    if let (Some(platform), Some(imgui)) = (app.platform.as_mut(), app.imgui.as_mut()) {
+        let full_event: Event&lt;()&gt; = Event::WindowEvent {
+            window_id: win.id(),
+            event: event.clone(),
+        };
+        platform.handle_event(imgui.io_mut(), win, &amp;full_event);
+    }</code></pre><figcaption>src/app/input.rs:58-68</figcaption></figure><!--/x-->
+    <p>Two details in the window-event handler are worth noting. Losing focus clears all movement keys, because
+    the window may never receive their release events. And <strong>U</strong> uses a small latch so that holding
+    the key down, which sends repeated "pressed" events, toggles the pointer only once:</p>
+    <!--x src/app/input.rs 150-161--><figure class="code"><pre><code class="language-rust">(Code(KeyCode::KeyU), Pressed) if !app.input.cursor_toggle_locked =&gt; {
+    app.input.cursor_toggle_locked = true;
+    app.input.cursor_released = !app.input.cursor_released;
+    if app.input.cursor_released {
+        release_first_person_cursor(win);
+    } else {
+        capture_first_person_cursor(win);
+    }
+}
+(Code(KeyCode::KeyU), Released) =&gt; {
+    app.input.cursor_toggle_locked = false;
+}</code></pre><figcaption>src/app/input.rs:150-161</figcaption></figure><!--/x-->
+    <p>Resize handling was covered with the swapchain (<a href="04-swapchain.html">Chapter 4</a>): it records a
+    request, updates the camera's aspect ratio, and ignores zero-sized (minimised) windows.</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · an exit flag behind an Arc</p>
+      <p>The menu's <strong>Exit</strong> item sets <code>exit_flag</code>, an <code>Arc&lt;AtomicBool&gt;</code>
+      that the redraw handler checks before drawing. <code>AtomicBool</code> can be changed through a shared
+      reference, which is handy when the UI only has borrowed access to the app's state; <code>Arc</code> is a
+      reference-counted pointer that lets the UI context hold its own handle to the same flag. The render graph hands the UI pass its own clone each frame. It's more than a single-threaded app needs,
+      but it costs little and would stay correct if threads arrived.</p>
+    </aside>
+
+    <h2>Shutting down</h2>
+    <p><code>App::drop</code> (shown in full in <a href="02-rust-meets-c.html#rust-drop">Chapter 2</a>) waits
+    for the GPU, then releases the render passes, sky, grass, materials and textures, meshes and the ImGui
+    renderer, and only then lets <code>VulkanBase</code> go, which destroys the device's own objects, the
+    allocator, the device, the surface and the instance. Because the backend is moved out of its field and
+    dropped inside <code>drop</code>'s body, it's gone before Rust drops the remaining fields, including the
+    window: the Vulkan surface is destroyed before the window it belongs to.</p>
+
+    <h2>Packaging a Mac app</h2>
+    <p><code>scripts/package_macos.sh</code> builds a release binary and assembles the bundle. The core of
+    it:</p>
+    <!--x scripts/package_macos.sh 46-55,64-67,77-80--><figure class="code"><pre><code class="language-bash">mkdir -p "$MACOS_DIR" "$RESOURCES_DIR/vulkan/icd.d" "$FRAMEWORKS_DIR"
+
+cp target/release/RustyVulkan "$MACOS_DIR/RustyVulkan"
+ditto assets "$RESOURCES_DIR/assets"
+cp packaging/macos/Info.plist "$CONTENTS/Info.plist"
+cp packaging/macos/libkosmickrisp_icd.json \
+    "$RESOURCES_DIR/vulkan/icd.d/libkosmickrisp_icd.json"
+cp "$ASSIMP_SOURCE" "$FRAMEWORKS_DIR/libassimp.6.dylib"
+cp "$VULKAN_SOURCE" "$FRAMEWORKS_DIR/libvulkan.1.dylib"
+cp "$KOSMICKRISP_SOURCE" "$FRAMEWORKS_DIR/libvulkan_kosmickrisp.dylib"
+# ...
+install_name_tool -change "$ASSIMP_SOURCE" \
+    @executable_path/../Frameworks/libassimp.6.dylib "$MACOS_DIR/RustyVulkan"
+install_name_tool -change "$VULKAN_LINK_REFERENCE" \
+    @executable_path/../Frameworks/libvulkan.1.dylib "$MACOS_DIR/RustyVulkan"
+# ...
+codesign --force --sign - "$FRAMEWORKS_DIR/libassimp.6.dylib"
+codesign --force --sign - "$FRAMEWORKS_DIR/libvulkan.1.dylib"
+codesign --force --sign - "$FRAMEWORKS_DIR/libvulkan_kosmickrisp.dylib"
+codesign --force --deep --sign - "$APP_BUNDLE"</code></pre><figcaption>scripts/package_macos.sh:46-80</figcaption></figure><!--/x-->
+    <ul>
+      <li>The executable goes in <code>Contents/MacOS</code>, the assets and an installable client driver (ICD) manifest in
+      <code>Contents/Resources</code>, and the three libraries in <code>Contents/Frameworks</code>.</li>
+      <li><code>install_name_tool</code> rewrites the executable's references to those libraries, which point at
+      the build machine's Homebrew and SDK locations, to <code>@executable_path/../Frameworks/…</code>, so they're
+      found inside the bundle wherever it's installed.</li>
+      <li>Everything is <em>ad-hoc</em> signed (signed with no developer identity): Apple Silicon only runs signed
+      code, and rewriting the library references invalidated the original signature. It isn't <em>notarised</em>
+      (checked by Apple), so
+      a recipient may need to right-click and choose Open the first time (<code>PACKAGING.md</code>).</li>
+    </ul>
+    <p>The bundled manifest tells the Vulkan loader where the driver library is, relative to the manifest
+    itself:</p>
+    <!--x packaging/macos/libkosmickrisp_icd.json 1-7--><figure class="code"><pre><code class="language-json">{
+    "file_format_version": "1.0.0",
+    "ICD": {
+        "library_path": "../../../Frameworks/libvulkan_kosmickrisp.dylib",
+        "api_version": "1.4.0"
+    }
+}</code></pre><figcaption>packaging/macos/libkosmickrisp_icd.json:1-7</figcaption></figure><!--/x-->
+    <p>That's the file <code>main.rs</code> points <code>VK_DRIVER_FILES</code> at when it finds itself running
+    inside a bundle (<a href="01-why-vulkan.html">Chapter 1</a>), completing the loop from the very first
+    chapter. <code>Info.plist</code> supplies the bundle's name, identifier, minimum macOS version (26) and
+    high-resolution support.</p>
+
+    <h2>Where to go next</h2>
+    <p><code>DEVELOPMENT.md</code> lists the checks to run after any change (<code>cargo fmt</code>,
+    <code>cargo clippy</code>, <code>cargo test</code>, and running with validation while resizing, minimising,
+    toggling fullscreen and MSAA), and the known gaps: some start-up and upload paths that don't yet clean up
+    after a partial failure, helpers that panic on Vulkan errors, and generated shaders that should move to
+    Cargo's <code>OUT_DIR</code>. Two stricter validation modes are also worth knowing, because they catch
+    problems the default checks can't see:</p>
+    <figure class="code cmd"><pre><code class="language-bash">VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true cargo run   # synchronisation hazards
+VK_KHRONOS_VALIDATION_GPUAV_ENABLE=true cargo run   # GPU-side checks, e.g. indirect draws</code></pre>
+    <figcaption>Stricter validation modes</figcaption></figure>
+    <p>Run them now and then. Many Vulkan mistakes, such as a missing wait or an unenabled feature, look
+    perfectly fine on one GPU and break on another, and that's the lesson Vulkan keeps teaching: "it looks
+    right" is not the same as "it's correct".</p>
+  </section>
+
+  <section id="recap" class="recap">
+    <h2>Recap</h2>
+    <ul>
+      <li><code>App</code> implements winit's <code>ApplicationHandler</code>. Start-up happens once in
+      <code>resumed</code>; <code>about_to_wait</code> requests a redraw every iteration, and each redraw runs
+      one frame.</li>
+      <li>Mouse look uses raw device motion; window events go to ImGui first; focus loss clears movement; U
+      toggles the pointer for the UI.</li>
+      <li>Errors are stored, end the loop, and become a failure exit code. Teardown runs in reverse dependency
+      order, with the surface destroyed before the window.</li>
+      <li>The packaging script builds a self-contained, ad-hoc-signed <code>.app</code> carrying assets, Assimp,
+      the Vulkan loader, KosmicKrisp and the ICD manifest that <code>main.rs</code> selects.</li>
+    </ul>
+  </section>
+
+  <nav class="pager"><a class="prev" href="15-imgui.html">← 15 · The ImGui overlay</a><a class="next" href="index.html#contents">Back to contents →</a></nav>
+</main>
+<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+<script src="guide.js"></script>
+</body>
+</html>

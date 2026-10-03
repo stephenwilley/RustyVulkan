@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>11 · Shadows · RustyVulkan Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
+<main class="chapter">
+  <header class="chapter-head">
+    <p class="kicker">Part 5 · Chapter 11 · <span class="readtime">~8 min read</span></p>
+    <h1>Shadows</h1>
+    <p class="lede">Cascaded shadow maps: drawing the scene from the sun four times, and using the result to
+    decide which pixels the sun can't reach.</p>
+  </header>
+
+  <section id="big-picture">
+    <h2><span class="tag">Overview</span> The big picture</h2>
+
+    <h3>Shadow mapping in two steps</h3>
+    <p>A point is in shadow if something sits between it and the sun. Shadow mapping answers that with two
+    renders:</p>
+    <ol>
+      <li><strong>From the sun.</strong> Render the scene's depth from the sun's point of view, keeping only
+      distances, no colour. The result, the <dfn>shadow map</dfn>, records how far the sunlight travels before
+      it hits something, for every direction it can come from.</li>
+      <li><strong>From the camera.</strong> While shading each pixel, work out where that point would land in
+      the shadow map and how far it is from the sun. If the map holds a <em>nearer</em> distance, something
+      blocked the light first, so the point is in shadow.</li>
+    </ol>
+    <p>The sun is so far away that its rays are effectively parallel, so step 1 uses an
+    <dfn>orthographic</dfn> projection, a box rather than a pyramid.</p>
+
+    <h3>Why four of them</h3>
+    <p>A shadow map is an image, so its detail is limited by its <dfn>texels</dfn> (texture pixels). One map
+    covering 75 metres of meadow would spread its 2048 × 2048 texels thinly, and near the camera, where a
+    texel covers a large patch of the screen, shadows would look blocky. <dfn>Cascaded</dfn> shadow maps fix that. The camera's view (its <dfn>frustum</dfn>, the truncated pyramid of space
+    it can see) is sliced by distance into
+    four ranges, and each gets its own shadow map, fitted tightly around just that slice. The nearest slice is
+    small, so its map is detailed; the farthest is large and coarse, which doesn't matter at that distance.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 640 300" role="img" aria-labelledby="sht">
+        <title id="sht">The camera frustum split into four cascades, seen from above</title>
+        <g font-size="13">
+          <circle cx="30" cy="150" r="7" class="fill-accent"/>
+          <text x="22" y="180" class="muted" font-size="12">camera</text>
+          <path class="wire" d="M30 150 L620 20 M30 150 L620 280"/>
+          <path class="wire" stroke-dasharray="4 4" d="M95 136 V164 M190 115 V185 M340 82 V218 M620 20 V280"/>
+          <rect class="box-accent" x="48" y="133" width="34" height="34" rx="3" fill-opacity="0.6"/>
+          <rect class="box-gl" x="90" y="98" width="104" height="104" rx="3" fill-opacity="0.35"/>
+          <rect class="box-aside" x="180" y="65" width="170" height="170" rx="3" fill-opacity="0.3"/>
+          <rect class="box-rust" x="335" y="8" width="284" height="284" rx="3" fill-opacity="0.18"/>
+          <text x="75" y="129" text-anchor="middle" font-weight="700">1</text>
+          <text x="150" y="95" text-anchor="middle" font-weight="700">2</text>
+          <text x="270" y="58" text-anchor="middle" font-weight="700">3</text>
+          <text x="480" y="30" text-anchor="middle" font-weight="700">4</text>
+        </g>
+      </svg>
+      <figcaption>Each cascade's square is one shadow map's coverage. The squares grow with distance, but each
+      has the same number of texels, so detail is concentrated near the camera.</figcaption>
+    </figure>
+
+    <p>The screenshot on the <a href="index.html">cover</a> shows them in its "Shadow Cascades" panel: four
+    depth images, darker meaning nearer the sun. Cascade 1 covers only the ground right in front of the camera;
+    by cascade 4 the hut is a small shape in a wide view of the valley.</p>
+
+    <h3>Softening the edges</h3>
+    <p>A single shadow-map lookup gives a hard, jagged edge. The shader instead takes six lookups in a small
+    pattern around the point and averages the answers, a technique called <dfn>percentage-closer
+    filtering</dfn> (PCF), which turns the jaggies into a slightly soft edge.</p>
+  </section>
+
+  <div class="dive-divider"><span>Deeper dive</span></div>
+
+  <section id="deep-dive">
+    <h2>Where to split</h2>
+    <!--x src/graphics/shadow_math.rs 18-30--><figure class="code"><pre><code class="language-rust">/// Split the shadow range between linear and logarithmic spacing. The logarithmic
+/// part concentrates detail near the camera without starving the distant view.
+fn cascade_splits(camera: &amp;Camera, shadow_distance: f32) -&gt; [f32; SHADOW_CASCADE_COUNT] {
+    let near = camera.get_near().max(0.001);
+    let far = (near + shadow_distance.max(0.001)).min(camera.get_far());
+    let lambda = 0.65;
+    std::array::from_fn(|index| {
+        let fraction = (index + 1) as f32 / SHADOW_CASCADE_COUNT as f32;
+        let logarithmic = near * (far / near).powf(fraction);
+        let linear = near + (far - near) * fraction;
+        lambda * logarithmic + (1.0 - lambda) * linear
+    })
+}</code></pre><figcaption>src/graphics/shadow_math.rs:18-30</figcaption></figure><!--/x-->
+    <p>Evenly spaced splits waste the near cascades on too much distance; purely logarithmic ones (each slice a
+    fixed multiple of the last) squeeze the first slice to almost nothing. This blends the two, 65% logarithmic,
+    over the range from the camera's near plane to the shadow distance (75 m by default, set in
+    <code>EngineSettings</code>). With the default 0.5 m near plane, the slices end at about 7.9, 17.3, 33.8
+    and 75.5 m; a purely logarithmic split would end the first at 1.75 m. Beyond the last slice, nothing is
+    shadowed.</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · building arrays from a closure</p>
+      <p><code>std::array::from_fn(|index| …)</code> builds a fixed-size array by calling the closure once per
+      index, with the array's length taken from the return type, here
+      <code>[f32; SHADOW_CASCADE_COUNT]</code>. In <code>compute_shadow_cascades</code> below the same function
+      is used with a closure that <em>modifies</em> a captured variable, <code>slice_near</code>, so each
+      cascade starts where the previous one ended. Rust allows that because <code>from_fn</code> accepts a
+      closure that may mutate what it captures (an <code>FnMut</code>), and it calls it in index order.</p>
+    </aside>
+    <!--x src/graphics/shadow_math.rs 33-47--><figure class="code"><pre><code class="language-rust">pub fn compute_shadow_cascades(
+    camera: &amp;Camera,
+    sun_dir: [f32; 3],
+    shadow_res: u32,
+    shadow_distance: f32,
+) -&gt; [ShadowCascade; SHADOW_CASCADE_COUNT] {
+    let splits = cascade_splits(camera, shadow_distance);
+    let mut slice_near = camera.get_near();
+    std::array::from_fn(|index| {
+        let slice_far = splits[index];
+        let cascade = fit_frustum_slice(camera, sun_dir, shadow_res, slice_near, slice_far);
+        slice_near = slice_far;
+        cascade
+    })
+}</code></pre><figcaption>src/graphics/shadow_math.rs:33-47</figcaption></figure><!--/x-->
+
+    <h2>Fitting a light box around one slice</h2>
+    <p><code>fit_frustum_slice</code> starts by finding the eight corners of the slice in world space, using the
+    camera's position and axes read from the inverse of the view matrix. It then wraps them in a sphere:</p>
+    <!--x src/graphics/shadow_math.rs 75-94--><figure class="code"><pre><code class="language-rust">let mut center = Vector3::new(0.0, 0.0, 0.0);
+for corner in &amp;corners_world {
+    center += corner.to_vec();
+}
+let center = Point3::from_vec(center / corners_world.len() as f32);
+let radius = corners_world
+    .iter()
+    .map(|corner| (corner - center).magnitude())
+    .fold(0.0_f32, f32::max);
+
+let mut direction = Vector3::new(sun_dir[0], sun_dir[1], sun_dir[2]);
+direction /= direction.magnitude().max(1e-6);
+let light_up = if direction.y.abs() &gt; 0.99 {
+    Vector3::unit_z()
+} else {
+    Vector3::unit_y()
+};
+// Orientation only: a light view that followed the slice would move the texel grid
+// with the camera, defeating the snapping below.
+let light_view = Matrix4::look_at_rh(Point3::origin(), Point3::from_vec(direction), light_up);</code></pre><figcaption>src/graphics/shadow_math.rs:75-94</figcaption></figure><!--/x-->
+    <p>The sphere's radius sets how far the box reaches towards the sun, below. The light view itself
+    deliberately depends only on the sun's direction: it sits at the world origin looking along the sunlight,
+    and never moves with the camera.</p>
+    <!--x src/graphics/shadow_math.rs 108-113--><figure class="code"><pre><code class="language-rust">// A square projection changes less as the camera rotates than a tight rectangle.
+let half_extent =
+    ((max_light.x - min_light.x).max(max_light.y - min_light.y) * 0.51).max(0.001);
+let units_per_texel = (half_extent * 2.0 / shadow_res.max(1) as f32).max(1e-6);
+let center_x = ((min_light.x + max_light.x) * 0.5 / units_per_texel).floor() * units_per_texel;
+let center_y = ((min_light.y + max_light.y) * 0.5 / units_per_texel).floor() * units_per_texel;</code></pre><figcaption>src/graphics/shadow_math.rs:108-113</figcaption></figure><!--/x-->
+    <p>In that fixed light space, the slice's corners give a rectangle; the box is made square, sized to the
+    larger span, and its centre is <em>snapped</em> to a whole number of texels. Because the light space never
+    moves, the snapped grid is fixed in the world: as the camera walks, the box jumps by exactly one texel at a
+    time, so a shadow edge stays on the same texels instead of crawling. (Rotating the camera still changes the
+    box's size slightly, so turning can still shimmer a little.)</p>
+    <!--x src/graphics/shadow_math.rs 115-136--><figure class="code"><pre><code class="language-rust">// Casters up to r + 1 sunward of the slice's nearest corner still land in the map;
+// the small margin beyond the far side keeps receivers at the slice's edge inside it.
+let near = -max_light.z - (radius + 1.0);
+let far = -min_light.z + radius * 0.25 + 0.5;
+let projection_gl = cgmath::ortho(
+    center_x - half_extent,
+    center_x + half_extent,
+    center_y - half_extent,
+    center_y + half_extent,
+    near,
+    far,
+);
+const OPENGL_TO_VULKAN: Matrix4&lt;f32&gt; = Matrix4::new(
+    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
+);
+let world_to_light_clip = OPENGL_TO_VULKAN * projection_gl * light_view;
+
+ShadowCascade {
+    world_to_light_clip,
+    view_to_light_clip: world_to_light_clip * inv_view,
+    far_distance: slice_far,
+}</code></pre><figcaption>src/graphics/shadow_math.rs:115-136</figcaption></figure><!--/x-->
+    <p>The depth range reaches well beyond the slice towards the sun (by the sphere's radius plus a metre), so a
+    tall object outside the slice can still cast a shadow into it. cgmath builds OpenGL-style matrices, so the same fixed matrix the
+    camera uses (<a href="12-main-pass-scene.html">Chapter 12</a>) remaps depth from OpenGL's −1..1 to Vulkan's
+    0..1. Each cascade keeps two matrices: one from world space, for drawing the shadow map, and one from the
+    camera's <em>view</em> space, for the shader that reads it, which works in view space throughout.</p>
+
+    <h2>The shadow pass</h2>
+    <p><code>ShadowPass</code> builds its own pipeline rather than using <code>Pipeline</code>, because almost
+    everything about it is different. It has no fragment shader and no colour attachment, and reads only vertex
+    positions:</p>
+    <!--x src/vulkan/shadow_pass.rs 76-81--><figure class="code"><pre><code class="language-rust">let attribute_descs = [vk::VertexInputAttributeDescription {
+    location: 0,
+    binding: 0,
+    format: vk::Format::R32G32B32_SFLOAT,
+    offset: 0,
+}];</code></pre><figcaption>src/vulkan/shadow_pass.rs:76-81</figcaption></figure><!--/x-->
+    <p>It still steps through the full 68-byte <code>Vertex</code> (the binding stride), but reads only the
+    position at offset 0. The vertex shader is the shortest in the project:</p>
+    <!--x assets/shaders/shadow_depth.vert 1-11--><figure class="code"><pre><code class="language-glsl">#version 450
+
+layout(location = 0) in vec3 inPosition;
+
+layout(push_constant) uniform PushConstants {
+    mat4 mvp;
+} push_constants;
+
+void main() {
+    gl_Position = push_constants.mvp * vec4(inPosition, 1.0);
+}</code></pre><figcaption>assets/shaders/shadow_depth.vert:1-11</figcaption></figure><!--/x-->
+    <p>With no fragment shader, the hardware writes depth and nothing else, which is as cheap as rendering gets.
+    The rasterizer state carries the two shadow-specific settings:</p>
+    <!--x src/vulkan/shadow_pass.rs 119-136--><figure class="code"><pre><code class="language-rust">// The light projection has no Y flip (the camera's does), so winding is reversed
+// relative to the main pass: cull FRONT here drops the faces pointing away from the
+// light, leaving light-facing surfaces in the map.  Acne on those faces is handled by
+// the slope-scaled bias below plus the receiver bias in main.frag.
+let rasterizer = vk::PipelineRasterizationStateCreateInfo {
+    depth_clamp_enable: vk::FALSE,
+    rasterizer_discard_enable: vk::FALSE,
+    polygon_mode: vk::PolygonMode::FILL,
+    cull_mode: vk::CullModeFlags::FRONT,
+    front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+    // Enable a small depth bias to reduce acne
+    depth_bias_enable: vk::TRUE,
+    depth_bias_constant_factor: 0.0,
+    depth_bias_slope_factor: 1.0,
+    depth_bias_clamp: 0.0,
+    line_width: 1.0,
+    ..Default::default()
+};</code></pre><figcaption>src/vulkan/shadow_pass.rs:119-136</figcaption></figure><!--/x-->
+    <p><dfn>Depth bias</dfn> pushes the stored depths slightly further from the light, more so on surfaces
+    seen at a glancing angle (the slope factor). Without it, a lit surface compares against its own depth, loses
+    to limited precision on a patchy, angle-dependent basis, and is covered in stripes known as <em>shadow
+    acne</em>.</p>
+    <p>The culling may look backwards. The comment explains it: unlike the camera's, this projection isn't
+    flipped in Y, which reverses which way round triangles appear, so <code>FRONT</code> here removes the faces
+    pointing away from the light.</p>
+    <p>Recording draws every visible scene object four times, once per cascade, each into one layer of the
+    shadow array through that layer's own view (<a href="10-render-graph.html">Chapter 10</a>):</p>
+    <!--x src/vulkan/shadow_pass.rs 262-293--><figure class="code"><pre><code class="language-rust">for (cascade_index, cascade) in cascades.iter().enumerate() {
+    let depth_attachment = vk::RenderingAttachmentInfo::default()
+        .image_view(shadow_att.layer_views[cascade_index])
+        .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .clear_value(clear_depth);
+    let rendering_info = vk::RenderingInfo::default()
+        .render_area(scissor)
+        .layer_count(1)
+        .depth_attachment(&amp;depth_attachment);
+    device.cmd_begin_rendering(cmd, &amp;rendering_info);
+
+    for object in &amp;ctx.scene.objects {
+        if !object.visible {
+            continue;
+        }
+        let object_model = object.transform.model_matrix();
+        for part in &amp;object.parts {
+            let model = object_model * part.transform.model_matrix();
+            let push = Self::flatten_mat4(cascade.world_to_light_clip * model);
+            device.cmd_push_constants(
+                cmd,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                &amp;push,
+            );
+            ctx.mesh_manager.meshes[part.mesh_id].record(device, cmd);
+        }
+    }
+    device.cmd_end_rendering(cmd);</code></pre><figcaption>src/vulkan/shadow_pass.rs:262-293</figcaption></figure><!--/x-->
+    <p>The push constant is just one matrix, light-space projection × model, for each object part. Note that the
+    grass isn't drawn here: dense vegetation doesn't cast shadows into the map in this renderer.</p>
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>The OpenGL version is the same idea: an FBO with a depth texture attached and
+      <code>glDrawBuffer(GL_NONE)</code>, rendered once per cascade, perhaps into the layers of a
+      <code>GL_TEXTURE_2D_ARRAY</code>. <code>glPolygonOffset</code> is the depth bias.</p>
+    </aside>
+
+    <h2>Reading the shadow map</h2>
+    <p>The main pass's fragment shader (<a href="06-shaders.html">Chapter 6</a>) calls
+    <code>shadow_factor</code> with the fragment's view-space position. (The terrain, rock, vertex-colour and
+    grass shaders each carry their own copy of this function, with slightly different constants.) First it picks a cascade by distance,
+    using the split distances from the uniform buffer, and projects the point into that cascade's light
+    space:</p>
+    <!--x assets/shaders/main.frag 51-57,63-66--><figure class="code"><pre><code class="language-glsl">float shadow_factor(vec3 fragPosView) {
+    float viewDepth = -fragPosView.z;
+    if (viewDepth &gt; ubo.cascade_splits.w) return 1.0;
+    int cascade = viewDepth &gt; ubo.cascade_splits.z ? 3
+                : viewDepth &gt; ubo.cascade_splits.y ? 2
+                : viewDepth &gt; ubo.cascade_splits.x ? 1 : 0;
+    vec4 lightPos = ubo.light_vp[cascade] * vec4(fragPosView, 1.0);
+// ...
+    vec3 ndc = lightPos.xyz / lightPos.w;
+    // Convert to [0,1]
+    vec2 uv = ndc.xy * 0.5 + 0.5;
+    float depth = ndc.z; // [0,1] inside light frustum after Vulkan correction</code></pre><figcaption>assets/shaders/main.frag:51-66</figcaption></figure><!--/x-->
+    <p>Then come the PCF taps:</p>
+    <!--x assets/shaders/main.frag 81-102--><figure class="code"><pre><code class="language-glsl">    // Manual PCF with a few jittered taps (compat path for platforms without compare samplers).
+    // Poisson-ish offsets (in texels):
+    const vec2 OFFS[6] = vec2[](
+        vec2( 0.0,  0.0),
+        vec2( 0.35, 0.12),
+        vec2(-0.28,-0.34),
+        vec2(-0.57, 0.49),
+        vec2( 0.62,-0.41),
+        vec2( 0.15, 0.68)
+    );
+    ivec3 ts = textureSize(shadowMap, 0);
+    vec2 texel = 1.0 / vec2(ts.xy);
+    float radius = 1.5; // in texels; tweak per taste
+
+    float sum = 0.0;
+    for (int i = 0; i &lt; 6; ++i) {
+        vec2 uvOff = uv + OFFS[i] * texel * radius;
+        float sm = texture(shadowMap, vec3(uvOff, float(cascade))).r;
+        sum += (depth - bias &lt;= sm) ? 1.0 : 0.4;
+    }
+    return sum / 6.0;
+}</code></pre><figcaption>assets/shaders/main.frag:81-102</figcaption></figure><!--/x-->
+    <p>Each tap samples the cascade's layer of the array at a small offset, measured in texels, and compares the
+    stored depth with the fragment's own (minus a tiny extra bias). Lit taps count 1, shadowed ones 0.4, so a
+    point in full shadow keeps 40% of the sun's light: a simple stand-in for light bounced in from the sky. Points outside every cascade, or outside
+    the chosen cascade's map, count as lit.</p>
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>OpenGL renderers usually let the hardware do the comparison, with a <code>sampler2DShadow</code> and
+      <code>GL_COMPARE_REF_TO_TEXTURE</code>, often getting a free 2×2 filter too. Vulkan has the same feature
+      (a sampler with <code>compare_enable</code>), but this code compares by hand. The comments say it's a
+      "compat path for platforms without compare samplers", presumably a precaution for the portability drivers of
+      <a href="03-instance-devices.html">Chapter 3</a>.</p>
+    </aside>
+
+    <h2>Keeping the math honest</h2>
+    <p>Shadow fitting is pure arithmetic on the CPU, so it can be tested without a GPU
+    (<a href="04-swapchain.html#rust-tests">tests are explained in Chapter 4</a>). This one checks the snapping: it moves the camera without turning it and
+    checks that every cascade shifted by a whole number of texels:</p>
+    <!--x src/graphics/shadow_math.rs 188-210--><figure class="code"><pre><code class="language-rust">#[test]
+fn moving_the_camera_shifts_cascades_by_whole_texels() {
+    let res = 2048;
+    let mut camera = Camera::new();
+    camera.set_view_yxz(Point3::new(1.0, 2.0, 3.0), 30.0, -10.0, 0.0);
+    let before = compute_shadow_cascades(&amp;camera, [0.3, -1.0, 0.2], res, 75.0);
+    camera.set_view_yxz(Point3::new(1.37, 2.0, 3.21), 30.0, -10.0, 0.0);
+    let after = compute_shadow_cascades(&amp;camera, [0.3, -1.0, 0.2], res, 75.0);
+
+    // Orthographic: clip.x = row0 · p + w.x, so a change in w.x is a shift of
+    // (res / 2) texels.
+    for (a, b) in before.iter().zip(&amp;after) {
+        for row in 0..2 {
+            let shift_texels = (b.world_to_light_clip.w[row] - a.world_to_light_clip.w[row])
+                * res as f32
+                / 2.0;
+            assert!(
+                (shift_texels - shift_texels.round()).abs() &lt; 0.05,
+                "cascade shifted by {shift_texels} texels"
+            );
+        }
+    }
+}</code></pre><figcaption>src/graphics/shadow_math.rs:188-210</figcaption></figure><!--/x-->
+    <p>The others check that the splits increase and end at the shadow distance plus the near plane, that every
+    cascade still contains all eight corners of its slice, and that no matrix element is infinite or NaN.</p>
+  </section>
+
+  <section id="recap" class="recap">
+    <h2>Recap</h2>
+    <ul>
+      <li>Shadow mapping renders depth from the sun, then compares each shaded point's light-space depth against
+      it.</li>
+      <li>Four cascades split the view by distance (blending linear and logarithmic spacing), each with a
+      square orthographic box around its slice, snapped to texels in a light space fixed to the world.</li>
+      <li>The shadow pass is depth-only: one vertex attribute, no fragment shader, depth bias, drawn once per
+      array layer.</li>
+      <li>The main shader picks a cascade, projects into it, and averages six manual comparisons (PCF);
+      shadowed areas keep 40% of the sunlight.</li>
+    </ul>
+  </section>
+
+  <nav class="pager"><a class="prev" href="10-render-graph.html">← 10 · The render graph</a><a class="next" href="12-main-pass-scene.html">12 · The main pass and the scene →</a></nav>
+</main>
+<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>
+<script src="guide.js"></script>
+</body>
+</html>

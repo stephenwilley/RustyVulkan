@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>01 · Why Vulkan, and a map of this repo · RustyVulkan Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
+<main class="chapter">
+  <header class="chapter-head">
+    <p class="kicker">Part 1 · Chapter 01 · <span class="readtime">~10 min read</span></p>
+    <h1>Why Vulkan, and a map of this repo</h1>
+    <p class="lede">What changed when graphics programming moved from OpenGL to Vulkan, what one frame of this
+    renderer looks like, and how the program gets itself running on a Mac.</p>
+  </header>
+
+  <section id="big-picture">
+    <h2><span class="tag">Overview</span> The big picture</h2>
+
+    <h3>OpenGL did a lot behind your back</h3>
+    <p>OpenGL was designed in the early 1990s around a simple idea: the programmer sets some state ("this texture
+    is bound, blending is on, use this shader") and then says "draw". The driver, the GPU vendor's software that
+    sits between your program and the hardware, did everything else. It decided where in memory your textures
+    lived. It checked every call for mistakes. It compiled your shaders. It worked out when it was safe to
+    overwrite a buffer the GPU might still be reading. And it quietly waited, or copied, whenever it wasn't sure.</p>
+    <p>That made OpenGL approachable, but the driver had to guess what you'd do next, so a harmless-looking
+    state change could cause a hidden stall or a shader recompile, and every vendor guessed differently. And
+    because all that state lived in one global "context", using several CPU threads was awkward at best.</p>
+
+    <h3>Vulkan makes you say it out loud</h3>
+    <p>Vulkan, released by the Khronos Group in 2016 as OpenGL's successor, turns the deal around. The driver
+    stops guessing. Instead, <em>you</em> tell it, explicitly and up front:</p>
+    <ul>
+      <li>which GPU you want and what features you'll use;</li>
+      <li>exactly how memory is allocated and what each piece is for;</li>
+      <li>all the drawing state for a given kind of draw, baked into one object ahead of time;</li>
+      <li>the commands to run, recorded into lists that you hand to the GPU yourself;</li>
+      <li>when one piece of work must wait for another.</li>
+    </ul>
+    <p>The result is famously verbose (a first triangle takes hundreds of lines), but the driver becomes thin
+    and predictable: nothing expensive happens unless you asked for it. Much of this codebase is that explicit
+    setup, and this guide is about reading it.</p>
+
+    <h3>A few words you'll meet everywhere</h3>
+    <p>Each of these gets its own chapter. For now, a one-line feel for them is enough:</p>
+    <ul>
+      <li><dfn>Instance</dfn>: your program's connection to the Vulkan system.</li>
+      <li><dfn>Device</dfn>: one GPU, opened for use. You create almost everything from it.</li>
+      <li><dfn>Queue</dfn>: the inbox where you post work for the GPU.</li>
+      <li><dfn>Command buffer</dfn>: a recorded list of GPU commands ("draw this, then copy that").</li>
+      <li><dfn>Pipeline</dfn>: one object holding all the drawing state for a kind of draw, shaders included.</li>
+      <li><dfn>Swapchain</dfn>: the small set of images that take turns being shown in the window.</li>
+      <li><dfn>Fence</dfn> and <dfn>semaphore</dfn>: signals that make the CPU, or the GPU, wait until some
+      earlier GPU work has finished.</li>
+      <li><dfn>Pass</dfn>: one stage of drawing a frame that renders into a particular set of images. This
+      renderer has three: shadows, the main scene, and the UI on top.</li>
+    </ul>
+    <p>Because Vulkan trusts you, mistakes aren't caught for you by default. During development you switch on
+    <dfn>validation layers</dfn>: an optional checking layer that reports misuse as it happens. This project
+    turns them on automatically in debug builds.</p>
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <table>
+        <thead><tr><th>In OpenGL you…</th><th>In Vulkan you…</th></tr></thead>
+        <tbody>
+          <tr><td>create a context and it holds all state</td><td>create an instance and a device; state lives in objects you own</td></tr>
+          <tr><td>call <code>glEnable</code>, <code>glBlendFunc</code>, <code>glUseProgram</code>… then draw</td><td>build a pipeline once with all of that inside, then bind it</td></tr>
+          <tr><td>call <code>glDraw*</code> and it (eventually) runs</td><td>record draws into a command buffer and submit it to a queue</td></tr>
+          <tr><td>call <code>glBufferData</code> and the driver picks memory</td><td>choose memory types and allocate yourself (with a helper library)</td></tr>
+          <tr><td>call <code>SwapBuffers</code></td><td>acquire a swapchain image, render into it, present it</td></tr>
+          <tr><td>trust the driver to synchronise</td><td>wait on fences and semaphores you created</td></tr>
+        </tbody>
+      </table>
+    </aside>
+
+    <h3>How this project is layered</h3>
+    <p>RustyVulkan is written in Rust. Vulkan is a C API, so the project reaches it through
+    <code>ash</code>, a thin Rust wrapper whose functions map almost one-to-one onto Vulkan's C functions. Below
+    that, the stack depends on the operating system. Apple doesn't ship Vulkan; macOS's native GPU API is Metal.
+    So on a Mac this project uses <dfn>KosmicKrisp</dfn>, a Vulkan driver that is implemented on top of Metal
+    and ships with LunarG's macOS Vulkan SDK. The project targets Vulkan 1.3 and, per its README, needs an Apple
+    Silicon Mac on macOS 26 or newer (KosmicKrisp requires Metal 4), the Vulkan SDK, and the Assimp model library
+    from Homebrew.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 640 430" role="img" aria-labelledby="d1t">
+        <title id="d1t">The layers between RustyVulkan's code and the GPU</title>
+        <rect class="box-accent" x="20" y="10" width="600" height="58" rx="8"/>
+        <text x="40" y="36" font-size="17" font-weight="700">main.rs → app/</text>
+        <text x="40" y="57" font-size="14" class="muted">window, input, scene setup, the event loop</text>
+        <rect class="box-accent" x="20" y="78" width="295" height="68" rx="8"/>
+        <text x="38" y="104" font-size="17" font-weight="700">graphics/</text>
+        <text x="38" y="125" font-size="13" class="muted">meshes, textures, materials,</text>
+        <text x="38" y="141" font-size="13" class="muted">shaders, pipelines, terrain, grass</text>
+        <rect class="box-accent" x="325" y="78" width="295" height="68" rx="8"/>
+        <text x="343" y="104" font-size="17" font-weight="700">vulkan/</text>
+        <text x="343" y="125" font-size="13" class="muted">device, swapchain, frame loop,</text>
+        <text x="343" y="141" font-size="13" class="muted">render graph, the passes, ImGui</text>
+        <rect class="box-rust" x="20" y="166" width="600" height="50" rx="8"/>
+        <text x="40" y="196" font-size="16" font-weight="700">ash</text>
+        <text x="90" y="196" font-size="14" class="muted">Rust bindings, nearly 1:1 with the Vulkan C API</text>
+        <rect class="box" x="20" y="226" width="600" height="50" rx="8"/>
+        <text x="40" y="256" font-size="16" font-weight="700">Vulkan loader</text>
+        <text x="170" y="256" font-size="14" class="muted">finds the installed driver via a small JSON manifest</text>
+        <rect class="box" x="20" y="286" width="600" height="50" rx="8"/>
+        <text x="40" y="316" font-size="16" font-weight="700">KosmicKrisp</text>
+        <text x="160" y="316" font-size="14" class="muted">a Vulkan driver implemented on Metal</text>
+        <rect class="box" x="20" y="346" width="600" height="50" rx="8"/>
+        <text x="40" y="376" font-size="16" font-weight="700">Metal → Apple GPU</text>
+        <path class="wire" d="M320 146 V166 M320 216 V226 M320 276 V286 M320 336 V346"/>
+        <text x="320" y="420" font-size="12" class="muted" text-anchor="middle">Elsewhere this would be the GPU vendor's own driver, but the project is set up for macOS.</text>
+      </svg>
+      <figcaption>Each layer only talks to the one directly below it.</figcaption>
+    </figure>
+
+    <h3>One frame, end to end</h3>
+    <p>Everything in later chapters exists to make this loop happen about 60 or more times a second. The
+    renderer keeps two frames <em>in flight</em>: while the GPU draws one, the CPU prepares the next, each using
+    its own "slot" of synchronisation objects. Each frame, the renderer:</p>
+    <figure class="diagram">
+      <svg viewBox="0 0 640 300" role="img" aria-labelledby="d2t">
+        <title id="d2t">The six steps of one frame</title>
+        <defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" class="fill-muted"/></marker></defs>
+        <g font-size="14">
+          <rect class="box" x="10" y="20" width="190" height="96" rx="10"/>
+          <text x="105" y="46" text-anchor="middle" font-weight="700" font-size="15">1 · Wait</text>
+          <text x="105" y="70" text-anchor="middle" class="muted">for the GPU to finish</text>
+          <text x="105" y="88" text-anchor="middle" class="muted">the frame that used</text>
+          <text x="105" y="106" text-anchor="middle" class="muted">this slot last time</text>
+          <rect class="box" x="225" y="20" width="190" height="96" rx="10"/>
+          <text x="320" y="46" text-anchor="middle" font-weight="700" font-size="15">2 · Acquire</text>
+          <text x="320" y="70" text-anchor="middle" class="muted">borrow the next</text>
+          <text x="320" y="88" text-anchor="middle" class="muted">swapchain image to</text>
+          <text x="320" y="106" text-anchor="middle" class="muted">draw into</text>
+          <rect class="box-accent" x="440" y="20" width="190" height="96" rx="10"/>
+          <text x="535" y="46" text-anchor="middle" font-weight="700" font-size="15">3 · Record</text>
+          <text x="535" y="70" text-anchor="middle" class="muted">shadow pass →</text>
+          <text x="535" y="88" text-anchor="middle" class="muted">main pass →</text>
+          <text x="535" y="106" text-anchor="middle" class="muted">UI pass</text>
+          <rect class="box" x="440" y="180" width="190" height="96" rx="10"/>
+          <text x="535" y="206" text-anchor="middle" font-weight="700" font-size="15">4 · Submit</text>
+          <text x="535" y="230" text-anchor="middle" class="muted">hand the command</text>
+          <text x="535" y="248" text-anchor="middle" class="muted">buffer to the queue</text>
+          <rect class="box" x="225" y="180" width="190" height="96" rx="10"/>
+          <text x="320" y="206" text-anchor="middle" font-weight="700" font-size="15">5 · Present</text>
+          <text x="320" y="230" text-anchor="middle" class="muted">give the image back</text>
+          <text x="320" y="248" text-anchor="middle" class="muted">to be shown</text>
+          <rect class="box" x="10" y="180" width="190" height="96" rx="10"/>
+          <text x="105" y="206" text-anchor="middle" font-weight="700" font-size="15">6 · Advance</text>
+          <text x="105" y="230" text-anchor="middle" class="muted">move on to the</text>
+          <text x="105" y="248" text-anchor="middle" class="muted">next frame slot</text>
+        </g>
+        <path class="wire" marker-end="url(#a1)" d="M200 68 H222"/>
+        <path class="wire" marker-end="url(#a1)" d="M415 68 H437"/>
+        <path class="wire" marker-end="url(#a1)" d="M535 116 V177"/>
+        <path class="wire" marker-end="url(#a1)" d="M440 228 H418"/>
+        <path class="wire" marker-end="url(#a1)" d="M225 228 H203"/>
+        <path class="wire" marker-end="url(#a1)" d="M105 180 V119"/>
+      </svg>
+      <figcaption>The CPU races ahead and prepares the next frame while the GPU is still drawing the previous one.
+      Steps 1 and 2 are where it waits, if it has to.</figcaption>
+    </figure>
+    <p>Compared with OpenGL, nothing here is implicit. There's no "swap buffers" call that quietly decides when
+    work runs and when to wait. The renderer records the whole frame into a command buffer, submits it in one go,
+    and every wait is one it asked for, using fences and semaphores (<a href="09-frame-loop.html">Chapter 9</a>).</p>
+  </section>
+
+  <div class="dive-divider"><span>Deeper dive</span></div>
+  <p class="dive-intro">From here on we read the code itself. Excerpts are trimmed with <code>// ...</code>;
+  the caption under each one gives the file and line range.</p>
+
+  <section id="deep-dive">
+    <h2>The repository at a glance</h2>
+    <table>
+      <thead><tr><th>Path</th><th>What lives there</th><th>Chapters</th></tr></thead>
+      <tbody>
+        <tr><td><code>src/main.rs</code></td><td>Process start-up: asset paths, driver selection, then hand off to <code>App</code>.</td><td>1</td></tr>
+        <tr><td><code>src/app/</code></td><td>The application: window, event loop, input, building the scene.</td><td>12, 16</td></tr>
+        <tr><td><code>src/vulkan/</code></td><td>The Vulkan backend: device setup, swapchain, per-frame sync, the <em>render graph</em> (which runs the three passes in order), and the renderer for the ImGui debug UI.</td><td>3, 4, 9–12, 15</td></tr>
+        <tr><td><code>src/graphics/</code></td><td>GPU resources and content: meshes, textures, materials, shaders, pipelines, camera, terrain, sky, rocks, grass.</td><td>5–8, 11–14</td></tr>
+        <tr><td><code>assets/shaders/</code></td><td>Shader source in GLSL (the same language OpenGL used), compiled to SPIR-V, Vulkan's binary shader format, by <code>build.rs</code> when you build.</td><td>6, and wherever used</td></tr>
+        <tr><td><code>assets/meshes</code>, <code>assets/textures</code></td><td>Models (glTF/GLB: the hut, rocks, and test meshes such as the Sponza atrium and a duck) and texture images.</td><td>5, 12</td></tr>
+        <tr><td><code>scripts/</code>, <code>packaging/</code></td><td>Turning the build into a stand-alone macOS <code>.app</code>.</td><td>16</td></tr>
+      </tbody>
+    </table>
+
+    <p>The libraries it depends on, from <code>Cargo.toml</code>, are worth knowing by name because you'll see
+    them in <code>use</code> lines throughout:</p>
+    <ul>
+      <li><code>ash</code>: the Vulkan bindings. The <code>linked</code> feature links the Vulkan loader at build time rather than finding it at run time.</li>
+      <li><code>ash-window</code> and <code>raw-window-handle</code>: glue that turns a window into a Vulkan surface (<a href="04-swapchain.html">Chapter 4</a>).</li>
+      <li><code>vk-mem</code>: Rust bindings for AMD's Vulkan Memory Allocator, VMA (<a href="05-gpu-memory.html">Chapter 5</a>).</li>
+      <li><code>winit</code>: cross-platform windows and input events.</li>
+      <li><code>imgui</code> and <code>imgui-winit-support</code>: Dear ImGui, the immediate-mode debug UI in the screenshot (<a href="15-imgui.html">Chapter 15</a>).</li>
+      <li><code>cgmath</code>: vectors and matrices. <code>bytemuck</code>: safely viewing structs as raw bytes for upload.</li>
+      <li><code>image</code>: PNG and JPEG decoding. <code>russimp-ng</code>: bindings to the Assimp model loader.</li>
+      <li><code>shaderc</code> (build-time only): Google's GLSL-to-SPIR-V compiler, used by <code>build.rs</code>.</li>
+    </ul>
+
+    <h2>Declaring the modules</h2>
+    <p>The top of <code>main.rs</code> tells the compiler which source folders make up the program:</p>
+    <!--x src/main.rs 11-18--><figure class="code"><pre><code class="language-rust">mod app;
+mod graphics;
+mod vulkan;
+
+use app::app::App;
+use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::path::PathBuf;</code></pre><figcaption>src/main.rs:11-18</figcaption></figure><!--/x-->
+    <aside class="callout rust" id="rust-modules"><p class="callout-title">Rust note · modules</p>
+      <p>C has no module system; a program is just a pile of <code>.c</code> files that the linker stitches
+      together, with headers to share declarations. In Rust, <code>mod app;</code> says "there is a module
+      called <code>app</code>; find it in <code>app.rs</code> or <code>app/mod.rs</code>". Each folder's
+      <code>mod.rs</code> then lists its own children (<code>src/app/mod.rs</code>, <code>src/vulkan/mod.rs</code>,
+      <code>src/graphics/mod.rs</code>). The result is a tree, and there are no headers.</p>
+      <p>So <code>mod</code> is what makes a file part of the build. <code>use app::app::App;</code> only
+      shortens a name: the path reads "module <code>app</code>, its child module <code>app</code>, the type
+      <code>App</code>", and afterwards you can just write <code>App</code>. Items are private to their module
+      unless marked <code>pub</code>. You'll also see <code>pub(super)</code>, which means "visible to the parent
+      module and everything inside it".</p>
+    </aside>
+    <aside class="callout rust" id="rust-cfg"><p class="callout-title">Rust note · conditional compilation</p>
+      <p><code>#[cfg(target_os = "macos")]</code> is an <em>attribute</em>. It plays the role of
+      <code>#ifdef __APPLE__</code>, but it attaches to a single item (a function, a <code>use</code> line, a
+      struct field, a statement) rather than to an arbitrary span of text. Above, <code>PathBuf</code> is only
+      imported on macOS because only the macOS code uses it. The codebase uses
+      <code>#[cfg(debug_assertions)]</code> the same way to switch on Vulkan's validation layers in debug builds
+      only (<a href="03-instance-devices.html">Chapter 3</a>).</p>
+    </aside>
+
+    <h2><code>main</code>: configure, then run</h2>
+    <!--x src/main.rs 84-94--><figure class="code"><pre><code class="language-rust">fn main() -&gt; std::process::ExitCode {
+    if let Err(error) = configure_runtime() {
+        eprintln!("Could not configure application runtime: {error}");
+        return std::process::ExitCode::FAILURE;
+    }
+    if let Err(e) = App::new().run() {
+        eprintln!("Application error: {}", e);
+        return std::process::ExitCode::FAILURE;
+    }
+    std::process::ExitCode::SUCCESS
+}</code></pre><figcaption>src/main.rs:84-94</figcaption></figure><!--/x-->
+    <p><code>configure_runtime</code> fixes up the process environment, then <code>App::new().run()</code> runs
+    the application until the window closes. If either fails, the error is printed and the process exits with a
+    failure status.</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · errors are values</p>
+      <p>Rust has no exceptions. A function that can fail returns <code>Result&lt;T, E&gt;</code>: either
+      <code>Ok(value)</code> or <code>Err(error)</code>. <code>if let Err(e) = …</code> is a pattern match that
+      runs its block only when the result is an error. The <code>?</code> operator you'll see on almost every
+      Vulkan call means "if this is an error, return it to my caller right now". The full story is in
+      <a href="02-rust-meets-c.html#rust-result">Chapter 2</a>.</p>
+    </aside>
+
+    <h2>Finding the assets when launched from Finder</h2>
+    <p>The renderer loads shaders, models and textures by relative paths like <code>assets/shaders/…</code>.
+    That works under <code>cargo run</code>, which starts the program in the repository folder. When the app is
+    double-clicked in Finder, though, the working directory is meaningless. So <code>configure_runtime</code>
+    checks whether the executable lives inside a macOS app bundle (<code>Something.app/Contents/MacOS/</code>)
+    and, if so, moves the working directory to the bundle's <code>Contents/Resources</code>, where the packaging
+    script copies the assets (<a href="16-app-shell.html">Chapter 16</a>).</p>
+    <!--x src/main.rs 23-37--><figure class="code"><pre><code class="language-rust">fn configure_runtime() -&gt; std::io::Result&lt;()&gt; {
+    let executable = std::env::current_exe()?;
+    let bundle_resources = executable
+        .parent()
+        .and_then(|macos| macos.parent())
+        .filter(|path| path.file_name().is_some_and(|name| name == "Contents"))
+        .map(|contents| contents.join("Resources"));
+
+    if let Some(resources) = &amp;bundle_resources {
+        std::env::set_current_dir(resources)?;
+    }
+
+    configure_kosmickrisp(bundle_resources.as_deref())?;
+    Ok(())
+}</code></pre><figcaption>src/main.rs:23-37</figcaption></figure><!--/x-->
+    <aside class="callout rust" id="rust-option"><p class="callout-title">Rust note · Option, and chaining on it</p>
+      <p>Rust has no null pointers. A value that might be absent has type <code>Option&lt;T&gt;</code>, which is
+      either <code>Some(value)</code> or <code>None</code>, and the compiler won't let you use the value without
+      handling the <code>None</code> case.</p>
+      <p>The <code>let bundle_resources = …</code> statement is a chain of small steps on an <code>Option</code>. Read them as a pipeline that stops
+      at the first <code>None</code>: take the executable's folder (<code>parent()</code>); then that folder's
+      parent (<code>and_then</code>); keep it only if it's named <code>Contents</code> (<code>filter</code>); then
+      turn it into <code>…/Contents/Resources</code> (<code>map</code>). The <code>|x| …</code> syntax is a
+      <em>closure</em>, an inline anonymous function. In C this would be four nested <code>if</code>s with null
+      checks.</p>
+      <p><code>if let Some(resources) = &amp;bundle_resources</code> then runs only when the chain produced a
+      value. The <code>&amp;</code> borrows it rather than consuming it, because it's used again on the next line
+      (<a href="02-rust-meets-c.html#rust-borrowing">borrowing</a> is covered in Chapter 2). On the last line,
+      <code>as_deref()</code> turns that borrowed <code>Option&lt;PathBuf&gt;</code> (an owned path) into an
+      <code>Option&lt;&amp;Path&gt;</code> (a borrowed view of one), which is what the next function asks for.</p>
+    </aside>
+
+    <h2>Choosing the Vulkan driver on macOS</h2>
+    <p>A machine can have several Vulkan drivers installed. The <dfn>Vulkan loader</dfn>, the library that
+    <code>ash</code> links to, discovers them through small JSON <dfn>ICD manifests</dfn> (ICD stands for
+    "installable client driver"), each pointing at a driver library. The environment variable
+    <code>VK_DRIVER_FILES</code> overrides discovery and names the manifest to use. RustyVulkan sets it to
+    KosmicKrisp's manifest, unless you've already set it yourself for testing.</p>
+    <!--x src/main.rs 39-55,57-77--><figure class="code"><pre><code class="language-rust">#[cfg(target_os = "macos")]
+fn configure_kosmickrisp(bundle_resources: Option&lt;&amp;Path&gt;) -&gt; std::io::Result&lt;()&gt; {
+    if std::env::var_os("VK_DRIVER_FILES").is_some() {
+        return Ok(());
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(resources) = bundle_resources {
+        candidates.push(resources.join("vulkan/icd.d/libkosmickrisp_icd.json"));
+    } else {
+        if let Some(sdk) = std::env::var_os("VULKAN_SDK") {
+            candidates.push(PathBuf::from(sdk).join("share/vulkan/icd.d/libkosmickrisp_icd.json"));
+        }
+        candidates.push(PathBuf::from(
+            "/usr/local/share/vulkan/icd.d/libkosmickrisp_icd.json",
+        ));
+    }
+// ...
+    let driver_manifest = candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "KosmicKrisp ICD not found. Install the macOS Vulkan SDK with System Global Installation enabled, or set VK_DRIVER_FILES explicitly.",
+            )
+        })?;
+
+    // This runs before winit or Vulkan starts any threads, so no other code can
+    // concurrently read the process environment while it is changed.
+    unsafe {
+        std::env::set_var("VK_DRIVER_FILES", &amp;driver_manifest);
+    }
+    println!(
+        "🌌 Using KosmicKrisp Vulkan driver: {}",
+        driver_manifest.display()
+    );
+    Ok(())
+}</code></pre><figcaption>src/main.rs:39-77</figcaption></figure><!--/x-->
+    <p>The search order is: the app bundle; otherwise the SDK named by <code>$VULKAN_SDK</code>; otherwise the
+    SDK's system-wide install under <code>/usr/local</code>. If none exists, it fails early with
+    instructions rather than letting Vulkan fail mysteriously later.</p>
+    <p><code>.find(…)</code> returns the first candidate that is a real file, as an <code>Option</code>;
+    <code>.ok_or_else(…)</code> turns a <code>None</code> into an error so <code>?</code> can return it.</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · why is <code>set_var</code> unsafe?</p>
+      <p>Changing environment variables isn't thread-safe at the C library level: if another thread reads the
+      environment at the same moment, the program can crash. Since the 2024 edition of Rust (which this project
+      uses), <code>std::env::set_var</code> is therefore marked <code>unsafe</code>. Calling it requires an
+      <code>unsafe { … }</code> block, which is the programmer's signed promise that the rules the compiler
+      can't check are being followed. The comment above it gives the justification: this runs before any other
+      threads exist. You'll see this habit throughout the codebase: an <code>unsafe</code> block, with a comment
+      saying why it's sound; <a href="02-rust-meets-c.html#rust-unsafe">Chapter 2</a> explains why
+      nearly every Vulkan call is <code>unsafe</code>.</p>
+    </aside>
+    <p>On other operating systems the second, empty version of the function is compiled instead, and the
+    loader finds the GPU vendor's driver as usual:</p>
+    <!--x src/main.rs 79-82--><figure class="code"><pre><code class="language-rust">#[cfg(not(target_os = "macos"))]
+fn configure_kosmickrisp(_bundle_resources: Option&lt;&amp;Path&gt;) -&gt; std::io::Result&lt;()&gt; {
+    Ok(())
+}</code></pre><figcaption>src/main.rs:79-82</figcaption></figure><!--/x-->
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>In OpenGL you never chose a driver; the windowing system handed you a context. Vulkan's loader-and-ICD
+      design makes the choice explicit and lets several drivers coexist, which is how a Vulkan-on-Metal driver
+      can be dropped onto a Mac at all. (Apple deprecated OpenGL in 2018; its version stops at 4.1.)</p>
+    </aside>
+
+    <h2>What happens next</h2>
+    <p><code>App::new().run()</code> creates a winit event loop. When the operating system says the app is
+    ready, it opens the window, builds the whole Vulkan backend (<code>VulkanBase::new</code>), loads the
+    scene, and registers the shadow and main passes, plus a UI pass that can be toggled on and off. Then it
+    draws a frame whenever winit asks.
+    The rest of this guide follows that path roughly in order.</p>
+  </section>
+
+  <section id="recap" class="recap">
+    <h2>Recap</h2>
+    <ul>
+      <li>OpenGL's driver hid memory, validation, compilation and synchronisation. Vulkan hands all of that to
+      you in exchange for predictable performance and room for multithreading.</li>
+      <li>RustyVulkan reaches Vulkan through <code>ash</code>. On macOS, Vulkan itself is provided by
+      KosmicKrisp, a driver built on Metal, selected through the loader's <code>VK_DRIVER_FILES</code>
+      variable.</li>
+      <li>Each frame: wait, acquire an image, record shadow, main and UI passes, submit, present, advance.</li>
+      <li><code>main.rs</code> fixes the working directory for app bundles and picks the driver before any
+      threads start, then hands everything to <code>App</code>.</li>
+    </ul>
+  </section>
+
+  <nav class="pager"><a class="prev" href="index.html#contents">← Contents</a><a class="next" href="02-rust-meets-c.html">02 · Rust meets a C API →</a></nav>
+</main>
+<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>
+<script src="guide.js"></script>
+</body>
+</html>

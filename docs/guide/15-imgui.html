@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15 · The ImGui overlay · RustyVulkan Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
+<main class="chapter">
+  <header class="chapter-head">
+    <p class="kicker">Part 5 · Chapter 15 · <span class="readtime">~8 min read</span></p>
+    <h1>The ImGui overlay</h1>
+    <p class="lede">How the menus, sliders and debug windows in the screenshot are described each frame by Dear
+    ImGui, and how the renderer turns that description into Vulkan draws on top of the scene.</p>
+  </header>
+
+  <section id="big-picture">
+    <h2><span class="tag">Overview</span> The big picture</h2>
+
+    <h3>Immediate-mode UI</h3>
+    <p>The panels in the screenshot (the menu bar with its CPU and GPU timings, the "Sun Light" sliders, the
+    "Shadow Cascades" window) come from <dfn>Dear ImGui</dfn>, a popular C++ UI library used here through the
+    <code>imgui</code> Rust crate. It's an <dfn>immediate-mode</dfn> UI: there are no button or window objects
+    kept around. Every frame, the code simply runs through the interface again, "a window called Sun Light,
+    containing a slider for X direction…", and ImGui works out layout, input and state as it goes.</p>
+    <p>ImGui never draws anything itself. At the end of the frame it hands back <dfn>draw data</dfn>: lists of
+    plain 2-D triangles (positions, texture coordinates and colours), grouped into commands that each say which
+    texture to use and which rectangle to clip to. Turning that into pixels is the application's job, and that's
+    what <code>ImGuiRenderer</code> does.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 640 230" role="img" aria-labelledby="igt">
+        <title id="igt">From UI code to pixels</title>
+        <defs><marker id="iga" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" class="fill-muted"/></marker></defs>
+        <g font-size="13">
+          <rect class="box" x="10" y="20" width="185" height="80" rx="8"/>
+          <text x="102" y="46" text-anchor="middle" font-weight="700">UI pass code</text>
+          <text x="102" y="66" text-anchor="middle" class="muted">ui.window(…)</text>
+          <text x="102" y="84" text-anchor="middle" class="muted">ui.slider(…)</text>
+          <rect class="box-rust" x="225" y="20" width="185" height="80" rx="8"/>
+          <text x="317" y="46" text-anchor="middle" font-weight="700">Dear ImGui</text>
+          <text x="317" y="66" text-anchor="middle" class="muted">layout, input,</text>
+          <text x="317" y="84" text-anchor="middle" class="muted">widget state</text>
+          <rect class="box" x="440" y="20" width="190" height="80" rx="8"/>
+          <text x="535" y="46" text-anchor="middle" font-weight="700">Draw data</text>
+          <text x="535" y="66" text-anchor="middle" class="muted">triangles + commands</text>
+          <text x="535" y="84" text-anchor="middle" class="muted">(texture, clip rect)</text>
+          <rect class="box-accent" x="225" y="140" width="405" height="70" rx="8"/>
+          <text x="427" y="166" text-anchor="middle" font-weight="700">ImGuiRenderer</text>
+          <text x="427" y="188" text-anchor="middle" class="muted">copy into buffers → per command: texture, scissor, draw</text>
+        </g>
+        <path class="wire" marker-end="url(#iga)" d="M195 60 H222"/>
+        <path class="wire" marker-end="url(#iga)" d="M410 60 H437"/>
+        <path class="wire" marker-end="url(#iga)" d="M535 100 V137"/>
+      </svg>
+      <figcaption>The application describes the UI; ImGui turns that into triangles; the renderer draws them in
+      the UI pass, after the scene.</figcaption>
+    </figure>
+
+    <h3>Drawing it with Vulkan</h3>
+    <p>The UI is drawn last, in its own pass, recorded into the same command buffer straight onto the finished
+    scene in the swapchain image (<a href="10-render-graph.html">Chapter 10</a>). The renderer needs a handful of things:</p>
+    <ul>
+      <li>a texture holding every letter of the font, built by ImGui once and uploaded at start-up;</li>
+      <li>vertex and index buffers that are refilled every frame, because the UI's triangles change every frame;</li>
+      <li>a simple pipeline: 2-D, no depth test, standard alpha blending;</li>
+      <li>a <dfn>scissor</dfn> rectangle per command, so text in a window can't spill outside it.</li>
+    </ul>
+    <p>The same machinery can show any GPU image in a window. That's how the four shadow-map cascades
+    (<a href="11-shadows.html">Chapter 11</a>) appear as greyscale pictures in the "Shadow Cascades"
+    panel.</p>
+  </section>
+
+  <div class="dive-divider"><span>Deeper dive</span></div>
+
+  <section id="deep-dive">
+    <h2>Describing the UI</h2>
+    <p><code>UiPass::execute</code> starts an ImGui frame (the winit support crate passes in mouse, keyboard and
+    window size) and builds the interface:</p>
+    <!--x src/vulkan/ui_pass.rs 48-75--><figure class="code"><pre><code class="language-rust">ui_ctx
+    .platform
+    .prepare_frame(ui_ctx.imgui.io_mut(), ui_ctx.window)
+    .expect("Failed to prepare imgui frame");
+
+let ui = ui_ctx.imgui.frame();
+if ui_ctx.show_ui
+    &amp;&amp; let Some(_menu_bar) = ui.begin_main_menu_bar()
+{
+    if let Some(_main_menu) = ui.begin_menu("Main") {
+        if ui.menu_item("Exit") {
+            ui_ctx.exit_flag.store(true, Ordering::Relaxed);
+        }
+        _main_menu.end();
+    }
+
+    if let Some(_world_menu) = ui.begin_menu("World Controls") {
+        if ui.menu_item("Point Lights") {
+            self.show_point_lights_window = true;
+        }
+        if ui.menu_item("Sun Light") {
+            self.show_sun_window = true;
+        }
+        if ui.menu_item("Ground Surface") {
+            self.show_ground_window = true;
+        }
+        _world_menu.end();
+    }</code></pre><figcaption>src/vulkan/ui_pass.rs:48-75</figcaption></figure><!--/x-->
+    <p><code>menu_item</code> returns <code>true</code> on the frame it's clicked, so the UI code reacts in the
+    same place it's declared. The values handed to sliders are fields of the app's world controls, which the
+    render graph copies into the uniform buffer each frame (<a href="09-frame-loop.html">Chapter 9</a>), so
+    dragging the "Sun Light" sliders moves the sun on the very next frame.</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · guards that end things</p>
+      <p><code>begin_menu</code> returns an <code>Option</code> holding a <em>token</em>. While the token exists,
+      the menu is open; <code>_main_menu.end()</code> closes it, and if you forget, the token's <code>Drop</code>
+      closes it anyway when it goes out of scope. That's the RAII idea from
+      <a href="02-rust-meets-c.html#rust-drop">Chapter 2</a> applied to a UI's begin/end pairs, which in C++ ImGui
+      are easy to mismatch.</p>
+    </aside>
+
+    <h2>The pipeline</h2>
+    <p>ImGui's vertex is 20 bytes: a 2-D position, a texture coordinate, and a colour packed as four bytes. The
+    colour uses <code>R8G8B8A8_UNORM</code>, so the GPU unpacks it to four floats for the shader, as the grass
+    did with 16-bit values (<a href="14-grass.html">Chapter 14</a>):</p>
+    <!--x src/vulkan/imgui_renderer/pipeline.rs 64-88--><figure class="code"><pre><code class="language-rust">let binding_desc = vk::VertexInputBindingDescription {
+    binding: 0,
+    stride: std::mem::size_of::&lt;DrawVert&gt;() as u32,
+    input_rate: vk::VertexInputRate::VERTEX,
+};
+let attribute_descs = [
+    vk::VertexInputAttributeDescription {
+        location: 0,
+        binding: 0,
+        format: vk::Format::R32G32_SFLOAT,
+        offset: offset_of!(DrawVert, pos) as u32,
+    },
+    vk::VertexInputAttributeDescription {
+        location: 1,
+        binding: 0,
+        format: vk::Format::R32G32_SFLOAT,
+        offset: offset_of!(DrawVert, uv) as u32,
+    },
+    vk::VertexInputAttributeDescription {
+        location: 2,
+        binding: 0,
+        format: vk::Format::R8G8B8A8_UNORM,
+        offset: offset_of!(DrawVert, col) as u32,
+    },
+];</code></pre><figcaption>src/vulkan/imgui_renderer/pipeline.rs:64-88</figcaption></figure><!--/x-->
+    <p>The rest is the simplest pipeline in the project: no culling, no depth test, a single sample (the UI draws
+    after the anti-aliasing resolve), no depth attachment format at all, and "over" blending:</p>
+    <!--x src/vulkan/imgui_renderer/pipeline.rs 156-168--><figure class="code"><pre><code class="language-rust">let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
+    blend_enable: vk::TRUE,
+    src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
+    dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+    color_blend_op: vk::BlendOp::ADD,
+    src_alpha_blend_factor: vk::BlendFactor::ONE,
+    dst_alpha_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+    alpha_blend_op: vk::BlendOp::ADD,
+    color_write_mask: vk::ColorComponentFlags::R
+        | vk::ColorComponentFlags::G
+        | vk::ColorComponentFlags::B
+        | vk::ColorComponentFlags::A,
+};</code></pre><figcaption>src/vulkan/imgui_renderer/pipeline.rs:156-168</figcaption></figure><!--/x-->
+    <p>The only per-draw data is a projection matrix, sent as a 64-byte push constant to the vertex shader. ImGui
+    works in window coordinates (pixels from the top-left corner), and this matrix maps them to Vulkan's −1..1
+    clip space. Because Vulkan's Y already points down, like screen pixels, no flip is needed:</p>
+    <!--x src/vulkan/imgui_renderer.rs 309-330--><figure class="code"><pre><code class="language-rust">// Compute orthographic projection matrix for ImGui (matching Vulkan NDC and winit coords)
+let (l, t) = (draw_data.display_pos[0], draw_data.display_pos[1]);
+let (w, h) = (draw_data.display_size[0], draw_data.display_size[1]);
+let r = l + w;
+let b = t + h;
+// clang-format off
+let proj = [
+    [2.0 / (r - l), 0.0, 0.0, 0.0],
+    [0.0, 2.0 / (b - t), 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [(r + l) / (l - r), (t + b) / (t - b), 0.0, 1.0],
+];
+// clang-format on
+unsafe {
+    device.cmd_push_constants(
+        cmd_buf,
+        self.pipeline_layout,
+        vk::ShaderStageFlags::VERTEX,
+        0,
+        bytemuck::cast_slice(&amp;proj),
+    );
+}</code></pre><figcaption>src/vulkan/imgui_renderer.rs:309-330</figcaption></figure><!--/x-->
+    <p><code>bytemuck::cast_slice</code> views the 4 × 4 array of floats as bytes without copying, the safe
+    reinterpretation that <code>Pod</code> types allow (<a href="05-gpu-memory.html#rust-repr-c">Chapter 5</a>).
+    The shaders are tiny: the vertex shader, <code>imgui.vert</code>, applies the matrix, and the fragment shader multiplies the vertex
+    colour by the texture.</p>
+    <!--x assets/shaders/imgui.frag 14-19--><figure class="code"><pre><code class="language-glsl">void main() {
+    vec4 tex = texture(Texture, frag_uv);
+    // Replicate red channel to RGB so single-channel textures (e.g., depth) show as grayscale
+    vec4 gray = vec4(tex.rrr, tex.a);
+    out_color = frag_color * gray;
+}</code></pre><figcaption>assets/shaders/imgui.frag:14-19</figcaption></figure><!--/x-->
+    <p>Copying the red channel into all three colour channels shows a one-channel image, like a depth map, as
+    grey. That's harmless for the font, whose texture is white with the shapes in its alpha channel.</p>
+
+    <h2>Uploading the font</h2>
+    <p><code>ImGuiRenderer::new</code>, in <code>imgui_renderer/resources.rs</code>, asks ImGui for its font atlas as RGBA pixels and uploads it exactly as
+    textures were uploaded in <a href="05-gpu-memory.html#staging">Chapter 5</a>: staging buffer, device-local
+    image, a barrier-copy-barrier sequence, an image view and a sampler. The font gets descriptor set 0, which
+    ImGui refers to as texture id 0.</p>
+    <aside class="callout aside"><p class="callout-title">Not finished yet</p>
+      <p>This is one of the paths <code>DEVELOPMENT.md</code> lists as lacking full failure handling: several
+      helpers here call <code>unwrap</code> or <code>expect</code> and would panic on a Vulkan error rather than
+      returning it.</p>
+    </aside>
+
+    <h2>Per-frame geometry</h2>
+    <p>Each frame, all of ImGui's vertex and index lists are copied into a host-visible buffer pair that is
+    <em>persistently mapped</em> (mapped once and never unmapped). There's one pair per swapchain image:</p>
+    <!--x src/vulkan/imgui_renderer.rs 34-42,55-57--><figure class="code"><pre><code class="language-rust">#[derive(Default)]
+struct UiFrameBuffers {
+    vertex_buffer: vk::Buffer,
+    vertex_allocation: Option&lt;Allocation&gt;,
+    vertex_buffer_size: vk::DeviceSize,
+    index_buffer: vk::Buffer,
+    index_allocation: Option&lt;Allocation&gt;,
+    index_buffer_size: vk::DeviceSize,
+}
+// ...
+    /// One buffer pair per swapchain image: rewriting a single pair each frame would race
+    /// with the previous frame, which may still be drawing from it.
+    frame_buffers: Vec&lt;UiFrameBuffers&gt;,</code></pre><figcaption>src/vulkan/imgui_renderer.rs:34-57</figcaption></figure><!--/x-->
+    <!--x src/vulkan/imgui_renderer.rs 84-94--><figure class="code"><pre><code class="language-rust">let index_size =
+    (draw_data.total_idx_count as usize * std::mem::size_of::&lt;DrawIdx&gt;()) as vk::DeviceSize;
+if self.frame_buffers.len() &lt;= image_index {
+    self.frame_buffers
+        .resize_with(image_index + 1, UiFrameBuffers::default);
+}
+// `begin_frame` has already waited on this image's previous submit, so its buffers
+// are idle and may be replaced or rewritten. Capacity grows geometrically to avoid
+// reallocating for small UI changes.
+let buffers = &amp;mut self.frame_buffers[image_index];
+let grow_vertex_buffer = vertex_size &gt; buffers.vertex_buffer_size;</code></pre><figcaption>src/vulkan/imgui_renderer.rs:84-94</figcaption></figure><!--/x-->
+    <p>Why one pair per image? With two frames in flight (<a href="09-frame-loop.html#frames-in-flight">Chapter
+    9</a>), the GPU may still be drawing the previous frame's UI while the CPU prepares this one. A single shared
+    buffer would be overwritten while it's being read. This is a classic mistake when coming from OpenGL, and
+    no validation layer reports it, because the write happens on the CPU. <code>begin_frame</code> has already
+    waited for this image's previous use, so its own pair is free to rewrite, or even to replace with a larger
+    one. The grass's indirect buffers follow the same rule.</p>
+
+    <h2>Recording the draws</h2>
+    <p>With the buffers filled, <code>render</code> binds them, sets the viewport and pushes the matrix, then
+    walks ImGui's command lists:</p>
+    <!--x src/vulkan/imgui_renderer.rs 345-396--><figure class="code"><pre><code class="language-rust">for draw_list in draw_data.draw_lists() {
+    for cmd in draw_list.commands() {
+        if let imgui::DrawCmd::Elements { count, cmd_params } = cmd {
+            // Switch texture if needed
+            let tex_id = cmd_params.texture_id.id();
+            let desired_set = if tex_id == 0 {
+                self.descriptor_set
+            } else {
+                self.textures
+                    .get(tex_id - 1)
+                    .copied()
+                    .unwrap_or(self.descriptor_set)
+            };
+            if desired_set != bound_set {
+                device.cmd_bind_descriptor_sets(
+                    cmd_buf,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.pipeline_layout,
+                    0,
+                    &amp;[desired_set],
+                    &amp;[],
+                );
+                bound_set = desired_set;
+            }
+            // Set scissor rectangle from ImGui clip rect
+            let clip = cmd_params.clip_rect;
+            // Convert logical clip rect to physical pixels
+            let scissor = vk::Rect2D {
+                offset: vk::Offset2D {
+                    x: (clip[0] * fb_scale[0]).max(0.0) as i32,
+                    y: (clip[1] * fb_scale[1]).max(0.0) as i32,
+                },
+                extent: vk::Extent2D {
+                    width: ((clip[2] - clip[0]) * fb_scale[0]).max(0.0) as u32,
+                    height: ((clip[3] - clip[1]) * fb_scale[1]).max(0.0) as u32,
+                },
+            };
+            device.cmd_set_scissor(cmd_buf, 0, &amp;[scissor]);
+            // Draw indexed
+            device.cmd_draw_indexed(
+                cmd_buf,
+                count as u32,
+                1,
+                index_offset + cmd_params.idx_offset as u32,
+                vertex_offset + cmd_params.vtx_offset as i32,
+                0,
+            );
+        }
+    }
+    index_offset += draw_list.idx_buffer().len() as u32;
+    vertex_offset += draw_list.vtx_buffer().len() as i32;
+}</code></pre><figcaption>src/vulkan/imgui_renderer.rs:345-396</figcaption></figure><!--/x-->
+    <p>Three things happen per command:</p>
+    <ul>
+      <li><strong>Texture.</strong> Id 0 is the font; ids 1 and up are extra images registered with the renderer.
+      The descriptor set is rebound only when the id changes.</li>
+      <li><strong>Scissor.</strong> ImGui's clip rectangle is in logical points, so it's scaled by the
+      framebuffer scale (2 on a Retina display) into pixels.</li>
+      <li><strong>Draw.</strong> All lists share one vertex and one index buffer, so each draw adds the list's
+      starting offsets to the command's own. ImGui uses 16-bit indices, hence <code>UINT16</code> when the index
+      buffer is bound.</li>
+    </ul>
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>This is the same loop as Dear ImGui's classic OpenGL backend (bind texture, <code>glScissor</code>,
+      <code>glDrawElementsBaseVertex</code>) with one difference: when OpenGL code refilled a buffer the GPU was still
+      reading, the driver quietly "orphaned" or renamed it behind the scenes. Here, that reuse is safe only because of the per-image buffers
+      above.</p>
+    </aside>
+
+    <h2>Showing the shadow cascades</h2>
+    <p>To show a GPU image in a window, it needs a descriptor set like the font's, registered under a texture id.
+    The cascade panel does this for each layer of the shadow map:</p>
+    <!--x src/vulkan/ui_pass.rs 214-239--><figure class="code"><pre><code class="language-rust">let shadow_tex_ids: Option&lt;[imgui::TextureId; SHADOW_CASCADE_COUNT]&gt; =
+    ctx.attachments.get(&amp;AttachmentKind::Shadow).map(|handle| {
+        std::array::from_fn(|cascade| {
+            ui_ctx.renderer.shadow_texture_id(
+                ctx.vulkan_base,
+                ctx.frame.image_index as usize,
+                cascade,
+                ctx.vulkan_base.shadow_sampler,
+                handle.layer_views[cascade],
+            )
+        })
+    });
+
+let mut open = true;
+ui.window("Shadow Cascades")
+    .opened(&amp;mut open)
+    .always_auto_resize(true)
+    .build(|| {
+        if let Some(texture_ids) = &amp;shadow_tex_ids {
+            for (cascade, &amp;texture_id) in texture_ids.iter().enumerate() {
+                ui.group(|| {
+                    ui.text(format!("Cascade {}", cascade + 1));
+                    imgui::Image::new(texture_id, [224.0, 224.0])
+                        .uv0([0.0, 1.0])
+                        .uv1([1.0, 0.0])
+                        .build(ui);</code></pre><figcaption>src/vulkan/ui_pass.rs:214-239</figcaption></figure><!--/x-->
+    <p>Each cascade uses its own single-layer view of the shadow array (<a href="10-render-graph.html">Chapter
+    10</a>), sampled with the shadow sampler. The shadow map is a per-swapchain-image attachment, so
+    <code>shadow_texture_id</code> keeps a separate descriptor set for every image and cascade pair, again so
+    that no set is rewritten while another frame in flight might be reading it. By the UI pass the shadow map is
+    already in its shader-readable layout from the main pass, so no extra barrier is needed. The flipped UVs
+    (<code>uv0</code> at the bottom) turn the light's-eye view the right way up: the shadow projection has no Y
+    flip (<a href="11-shadows.html">Chapter 11</a>), so the light's "up" is stored at the bottom of the
+    image.</p>
+  </section>
+
+  <section id="recap" class="recap">
+    <h2>Recap</h2>
+    <ul>
+      <li>Dear ImGui is immediate-mode: the UI is re-declared every frame, and ImGui returns plain 2-D triangle
+      lists with per-command texture and clip rectangle.</li>
+      <li>The renderer draws them in the UI pass with a minimal pipeline: 20-byte vertices, a projection push
+      constant, alpha blending, no depth.</li>
+      <li>Geometry goes into persistently mapped buffers, one pair per swapchain image, so the CPU never
+      overwrites triangles a frame in flight is still drawing.</li>
+      <li>Any GPU image can be shown by registering a descriptor set; the shadow cascades are displayed this way,
+      one set per image and cascade.</li>
+    </ul>
+  </section>
+
+  <nav class="pager"><a class="prev" href="14-grass.html">← 14 · Grass</a><a class="next" href="16-app-shell.html">16 · The app shell →</a></nav>
+</main>
+<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>
+<script src="guide.js"></script>
+</body>
+</html>

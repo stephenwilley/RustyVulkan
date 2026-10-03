@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>12 · The main pass and the scene · RustyVulkan Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
+<main class="chapter">
+  <header class="chapter-head">
+    <p class="kicker">Part 5 · Chapter 12 · <span class="readtime">~8 min read</span></p>
+    <h1>The main pass and the scene</h1>
+    <p class="lede">What the scene is made of, how models get into it, how the camera turns it into a picture,
+    and the loop that draws it all each frame.</p>
+  </header>
+
+  <section id="big-picture">
+    <h2><span class="tag">Overview</span> The big picture</h2>
+
+    <h3>A scene is a list of lightweight references</h3>
+    <p>Everything drawn by the main pass's ordinary draw loop is a <dfn>scene object</dfn>: a position,
+    rotation and size in the world, plus one or more <dfn>parts</dfn>. Each part names a mesh and a material
+    by number, with its own small offset. The actual GPU resources (vertex buffers, textures, pipelines) live
+    in two managers, which hand out those numbers and make sure nothing is loaded twice
+    (<a href="08-descriptors-materials.html">Chapter 8</a>). So the forty-eight rocks, drawn from five rock
+    models, cost five sets of buffers, not forty-eight.</p>
+    <p>The scene in the screenshot is built once at start-up:</p>
+    <ul>
+      <li>a generated <strong>terrain</strong> mesh for the valley (<a href="13-procedural-world.html">Chapter 13</a>);</li>
+      <li>the <strong>hut</strong> (a <code>.glb</code> model) and the marble <strong>sphere</strong> (a
+      <code>.gltf</code> model), loaded with Assimp, a widely used model-loading library;</li>
+      <li>two textured test <strong>cubes</strong>;</li>
+      <li>clusters of <strong>rocks</strong>, made from five imported rock models;</li>
+      <li>a large, flat <strong>debug grid</strong>, shown (without grass) only when the terrain is switched off in the UI.</li>
+    </ul>
+    <p>The sky and the grass are drawn by their own specialised renderers inside the same pass
+    (<a href="13-procedural-world.html">Chapters 13</a> and <a href="14-grass.html">14</a>).</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 640 300" role="img" aria-labelledby="sct12">
+        <title id="sct12">From model file to draw call</title>
+        <defs><marker id="a12" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" class="fill-muted"/></marker></defs>
+        <g font-size="13">
+          <rect class="box" x="10" y="20" width="140" height="56" rx="8"/>
+          <text x="80" y="44" text-anchor="middle" font-weight="700">hut.glb</text>
+          <text x="80" y="63" text-anchor="middle" class="muted">model file</text>
+          <rect class="box-rust" x="190" y="20" width="150" height="56" rx="8"/>
+          <text x="265" y="44" text-anchor="middle" font-weight="700">Assimp loader</text>
+          <text x="265" y="63" text-anchor="middle" class="muted">meshes, materials, nodes</text>
+          <rect class="box-gl" x="390" y="10" width="240" height="40" rx="8"/>
+          <text x="510" y="35" text-anchor="middle">MeshManager: vertex/index buffers</text>
+          <rect class="box-gl" x="390" y="58" width="240" height="40" rx="8"/>
+          <text x="510" y="83" text-anchor="middle">MaterialManager: pipeline + textures</text>
+          <rect class="box-accent" x="190" y="130" width="260" height="70" rx="8"/>
+          <text x="320" y="154" text-anchor="middle" font-weight="700">SceneObject</text>
+          <text x="320" y="174" text-anchor="middle" class="muted">transform + parts</text>
+          <text x="320" y="192" text-anchor="middle" class="muted mono" font-size="12">(mesh_id, material_id, local transform)</text>
+          <rect class="box" x="190" y="232" width="260" height="56" rx="8"/>
+          <text x="320" y="256" text-anchor="middle" font-weight="700">Main pass</text>
+          <text x="320" y="275" text-anchor="middle" class="muted">bind material, push matrices, draw mesh</text>
+        </g>
+        <path class="wire" marker-end="url(#a12)" d="M150 48 H187"/>
+        <path class="wire" marker-end="url(#a12)" d="M340 40 H387"/>
+        <path class="wire" marker-end="url(#a12)" d="M340 60 L387 76"/>
+        <path class="wire" marker-end="url(#a12)" d="M265 76 V127"/>
+        <path class="wire" stroke-dasharray="4 4" marker-end="url(#a12)" d="M510 98 L452 160"/>
+        <path class="wire" marker-end="url(#a12)" d="M320 200 V229"/>
+      </svg>
+      <figcaption>Loading fills the managers and produces a scene object that refers to their contents by
+      index (dashed). The main pass follows those indices back to the GPU resources.</figcaption>
+    </figure>
+
+    <h3>The camera</h3>
+    <p>The camera is two matrices. The <dfn>view</dfn> matrix says where the eye is and which way it looks,
+    re-expressing the world relative to the eye. The <dfn>projection</dfn> matrix is the lens: a 45° field of
+    view, with nothing drawn nearer than 0.5 m or further than 220 m (the terrain is 200 m across). It's a
+    first-person camera: WASD walks over the ground, the mouse looks around, and the eye stays 1.8 m above the
+    terrain.</p>
+    <p>Vulkan disagrees with OpenGL on two conventions, so the projection is corrected for both. In Vulkan's
+    clip space, Y points <em>down</em>, and depth runs from 0 to 1 rather than −1 to 1.</p>
+
+    <h3>One frame of the main pass</h3>
+    <p>After clearing, the pass draws the sky first. It doesn't touch the depth buffer, so everything else paints
+    over it. Then it walks the scene: for each visible object and each part, it switches pipeline and textures if
+    the material changed, sends that part's matrices as push constants (a small block of per-draw data recorded
+    straight into the command buffer), and draws its mesh. Finally the grass is
+    drawn, and rendering ends with the anti-aliasing resolve (<a href="10-render-graph.html">Chapter 10</a>).</p>
+  </section>
+
+  <div class="dive-divider"><span>Deeper dive</span></div>
+
+  <section id="deep-dive">
+    <h2>Transforms, parts and objects</h2>
+    <!--x src/app/scene.rs 13-20,61-67--><figure class="code"><pre><code class="language-rust">/// A simple 3D transform: position, rotation (as a quaternion), uniform scale.
+/// Shaders rely on the scale being uniform: they transform normals with `mat3(mv)`.
+#[derive(Clone, Copy)]
+pub struct Transform {
+    pub translation: Vector3&lt;f32&gt;,
+    pub rotation: Quaternion&lt;f32&gt;,
+    pub scale: f32,
+}
+// ...
+    /// Builds a 4x4 model matrix (Translation * Rotation * Scale).
+    pub fn model_matrix(&amp;self) -&gt; Matrix4&lt;f32&gt; {
+        let t = Matrix4::from_translation(self.translation);
+        let r = Matrix4::from(self.rotation);
+        let s = Matrix4::from_scale(self.scale);
+        t * r * s
+    }</code></pre><figcaption>src/app/scene.rs:13-67</figcaption></figure><!--/x-->
+    <p>A transform is translate × rotate × scale, with a quaternion for rotation and a single uniform scale.
+    The uniform scale is a deliberate restriction: the shaders transform normals with the plain model-view
+    matrix, which is only correct without stretching (<a href="06-shaders.html">Chapter 6</a>).</p>
+    <!--x src/app/scene.rs 80-97--><figure class="code"><pre><code class="language-rust">#[derive(Clone, Copy)]
+pub struct ScenePart {
+    /// Transform in the object's local/model space
+    pub transform: Transform,
+    pub material_id: usize,
+    pub mesh_id: usize,
+}
+
+/// One thing in your world that you can draw. Holds a world-space transform and N parts.
+#[derive(Clone)]
+pub struct SceneObject {
+    /// World/scene-space transform for the object root
+    pub transform: Transform,
+    /// Collection of draw parts (mesh+material) with optional local transforms
+    pub parts: Vec&lt;ScenePart&gt;,
+    /// Whether this object should be drawn
+    pub visible: bool,
+}</code></pre><figcaption>src/app/scene.rs:80-97</figcaption></figure><!--/x-->
+    <p>Both types derive <code>Clone</code>, and <code>ScenePart</code> is even <code>Copy</code>, because
+    all it holds is two indices and a transform. Cloning a rock's parts to place another copy of it costs a few
+    bytes.</p>
+
+    <h2>The camera's matrices</h2>
+    <!--x src/graphics/camera.rs 73-82--><figure class="code"><pre><code class="language-rust">fn rebuild_projection(&amp;mut self) {
+    let mut proj = perspective(Deg(self.fov_deg), self.aspect, self.near, self.far);
+    // Flip Y to match Vulkan framebuffer coordinate conventions used here
+    proj.y.y *= -1.0;
+    // Map GL clip-space Z [-1,1] to Vulkan's [0,1]
+    pub const OPENGL_TO_VULKAN_MATRIX: Matrix4&lt;f32&gt; = Matrix4::new(
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
+    );
+    self.projection = OPENGL_TO_VULKAN_MATRIX * proj;
+}</code></pre><figcaption>src/graphics/camera.rs:73-82</figcaption></figure><!--/x-->
+    <p>cgmath's <code>perspective</code> builds an OpenGL-style matrix. Negating <code>proj.y.y</code> flips Y
+    so the image comes out upright under Vulkan's Y-down convention. Without it, the mirror image would also
+    reverse triangle winding; with it, OpenGL's counter-clockwise front faces stay counter-clockwise (<a href="07-pipelines.html">Chapter 7</a>). The fixed
+    matrix then halves Z and adds half, mapping depth from −1..1 to 0..1. The shadow cascades reuse that depth
+    fix-up but not the flip (<a href="11-shadows.html">Chapter 11</a>). The view matrix is a standard
+    right-handed look-at, built from yaw and pitch angles in <code>set_view_yxz</code>.</p>
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>OpenGL code can't simply be pointed at Vulkan: unchanged, everything renders upside down, and anything in
+      the nearer half of OpenGL's depth range is clipped away. The alternative to flipping the projection is a
+      negative-height viewport (allowed since Vulkan 1.1), which has the same effect on the image and on
+      winding.</p>
+    </aside>
+    <aside class="callout rust"><p class="callout-title">Rust note · items inside functions</p>
+      <p><code>OPENGL_TO_VULKAN_MATRIX</code> is declared as a <code>const</code> inside the function body.
+      Rust lets you place constants, functions and even structs inside a function to keep them local; they
+      behave exactly like their top-level versions. The loader below does the same with a
+      <code>fn decompose</code>.</p>
+    </aside>
+
+    <h2>Pushing per-object matrices</h2>
+    <p>For each part, the main pass computes model-view and model-view-projection matrices and packs them,
+    with the material's UV tiling, into the 144-byte push-constant block of
+    <a href="07-pipelines.html#pipeline-layout">Chapter 7</a>:</p>
+    <!--x src/vulkan/main_pass.rs 270-306--><figure class="code"><pre><code class="language-rust">pub fn compute_push_constant_per_obj(
+    camera: &amp;Camera,
+    model_matrix: &amp;Matrix4&lt;f32&gt;,
+    uv_tiling: [f32; 2],
+) -&gt; [u8; 144] {
+    let proj: Matrix4&lt;f32&gt; = *camera.get_projection();
+    let view: Matrix4&lt;f32&gt; = *camera.get_view();
+
+    let mv = view * model_matrix;
+    let mvp = proj * mv;
+
+    // Two mat4s plus a padded vec4: fixed storage avoids a per-object heap allocation.
+    let mut bytes = [0_u8; 144];
+    let mut offset = 0;
+    let flatten_mat4 = |m: Matrix4&lt;f32&gt;, buf: &amp;mut [u8; 144], offset: &amp;mut usize| {
+        let cols = m.transpose();
+        for row in 0..4 {
+            for col in 0..4 {
+                buf[*offset..*offset + 4].copy_from_slice(&amp;cols[col][row].to_ne_bytes());
+                *offset += 4;
+            }
+        }
+    };
+
+    flatten_mat4(mvp, &amp;mut bytes, &amp;mut offset);
+    flatten_mat4(mv, &amp;mut bytes, &amp;mut offset);
+
+    // Append uv_tiling as a vec4 (xy used, zw padding) for alignment
+    for value in [uv_tiling[0], uv_tiling[1], 0.0, 0.0] {
+        bytes[offset..offset + 4].copy_from_slice(&amp;value.to_ne_bytes());
+        offset += 4;
+    }
+
+    debug_assert_eq!(offset, bytes.len());
+
+    bytes
+}</code></pre><figcaption>src/vulkan/main_pass.rs:270-306</figcaption></figure><!--/x-->
+    <p>GLSL expects matrices column by column. Transposing and then reading <code>[col][row]</code> with
+    <code>row</code> as the outer loop emits each original column in turn, which is that column-major layout
+    (a roundabout route to it, given cgmath already stores columns). The block is a fixed <code>[u8; 144]</code> on the stack, so the
+    inner loop allocates nothing. The <code>debug_assert_eq!</code> checks the packing filled it exactly, in
+    debug builds only.</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · bytes and slices</p>
+      <p><code>to_ne_bytes()</code> gives an <code>f32</code>'s four bytes in the machine's native byte order,
+      and <code>buf[a..b].copy_from_slice(…)</code> copies them into a sub-range of the array; the range is
+      bounds-checked, so an off-by-one panics instead of corrupting memory.</p>
+    </aside>
+
+    <h2>The draw loop</h2>
+    <!--x src/vulkan/main_pass.rs 144-159,189-202--><figure class="code"><pre><code class="language-rust">let mut current_pipeline_id = usize::MAX;
+for obj in &amp;ctx.scene.objects {
+    if !obj.visible {
+        continue;
+    }
+    let obj_model = obj.transform.model_matrix();
+    for part in &amp;obj.parts {
+        let model_matrix = obj_model * part.transform.model_matrix();
+        let material = &amp;ctx.material_manager.materials[part.material_id];
+        let push_bytes = compute_push_constant_per_obj(
+            ctx.camera,
+            &amp;model_matrix,
+            material.uv_tiling,
+        );
+
+        if current_pipeline_id != part.material_id {
+// ...
+            current_pipeline_id = part.material_id;
+        }
+
+        device.cmd_push_constants(
+            cmd,
+            material.pipeline.vk_layout,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            0,
+            &amp;push_bytes,
+        );
+
+        ctx.mesh_manager.meshes[part.mesh_id].record(device, cmd);
+    }
+}</code></pre><figcaption>src/vulkan/main_pass.rs:144-202</figcaption></figure><!--/x-->
+    <p>Objects are drawn in scene order, not sorted, and the pipeline and descriptor sets are rebound only when a
+    part's material differs from the previous part's (the binding itself was shown in
+    <a href="08-descriptors-materials.html">Chapter 8</a>). Consecutive parts sharing a material therefore cost
+    one push and one draw each; the rocks alternate between two materials, so they rebind more often. <code>record</code> binds the mesh's vertex and index
+    buffers and issues <code>cmd_draw_indexed</code>.</p>
+
+    <h2>Loading models with Assimp</h2>
+    <p><code>import.rs</code> is a one-line front door to <code>assimp_loader.rs</code>, which uses the
+    <code>russimp-ng</code> bindings to the Assimp C++ library:</p>
+    <!--x src/graphics/assimp_loader.rs 76-85--><figure class="code"><pre><code class="language-rust">// 1) Load the scene with typical preprocessing flags
+use russimp_ng::scene::{PostProcess, Scene};
+let scene = Scene::from_file(
+    path,
+    vec![
+        PostProcess::Triangulate,
+        PostProcess::CalculateTangentSpace,
+        PostProcess::ImproveCacheLocality,
+    ],
+)?;</code></pre><figcaption>src/graphics/assimp_loader.rs:76-85</figcaption></figure><!--/x-->
+    <p>Assimp turns every polygon into triangles, computes the tangent and bitangent vectors that normal mapping
+    needs, and reorders vertices for the GPU's cache. The loader then works through the file in three steps.</p>
+    <p><strong>Materials.</strong> For each material it looks for a colour texture and a normal map, resolving
+    file names relative to the model's folder, and chooses shaders accordingly:</p>
+    <!--x src/graphics/assimp_loader.rs 133-153--><figure class="code"><pre><code class="language-rust">// Choose shader based on texture availability
+// A normal-map-only material is still textured: `Material::new`
+// supplies a neutral diffuse texture for its required albedo binding.
+let use_textured = diffuse_tex.is_some() || normal_tex.is_some();
+let (vs_path, fs_path) = if use_textured {
+    shared_material.map_or_else(
+        || {
+            (
+                "assets/shaders/spv/main.vert.spv".into(),
+                "assets/shaders/spv/main.frag.spv".into(),
+            )
+        },
+        |(_, paths)| (paths[0].into(), paths[1].into()),
+    )
+} else {
+    // The colour-only path still receives the global shadow map.
+    (
+        "assets/shaders/spv/vertex_color.vert.spv".into(),
+        "assets/shaders/spv/vertex_color.frag.spv".into(),
+    )
+};</code></pre><figcaption>src/graphics/assimp_loader.rs:133-153</figcaption></figure><!--/x-->
+    <p>Textured materials use <code>main.vert</code>/<code>main.frag</code>. Untextured ones use the
+    <code>vertex_color</code> pair, which lights a colour carried in each vertex. The loader copies the
+    material's base colour into every vertex for exactly that reason.</p>
+    <p><strong>Meshes.</strong> Each Assimp mesh becomes a CPU <code>Mesh</code>, with safe defaults for
+    missing normals, UVs or tangents, and is uploaded through the mesh manager, which reuses it if the name has
+    been seen before:</p>
+    <!--x src/graphics/meshmanager.rs 69-87--><figure class="code"><pre><code class="language-rust">pub fn request_mesh_from_cpu(
+    &amp;mut self,
+    name: String,
+    vb: &amp;VulkanBase,
+    mesh: Mesh,
+) -&gt; Result&lt;usize, Box&lt;dyn Error&gt;&gt; {
+    // If we already have one by this name, return it.
+    if let Some(idx) = self.meshes.iter().position(|m| m.name == name) {
+        return Ok(idx);
+    }
+    // Otherwise upload to GPU...
+    let loaded = crate::graphics::mesh::LoadedMesh::load(
+        name.clone(),
+        vb.allocator.as_ref().unwrap(),
+        &amp;mesh,
+    )?;
+    self.meshes.push(loaded);
+    Ok(self.meshes.len() - 1)
+}</code></pre><figcaption>src/graphics/meshmanager.rs:69-87</figcaption></figure><!--/x-->
+    <p><strong>Nodes.</strong> A model file is a tree of nodes, each with a transform and some meshes. The
+    loader walks the tree with an explicit stack, combining transforms on the way down, and emits one part per
+    mesh with its transform relative to the root. Assimp gives each node a general 4×4 matrix; the renderer's
+    <code>Transform</code> only allows uniform scale, so <code>decompose</code> averages the three axis scales:</p>
+    <!--x src/graphics/assimp_loader.rs 268-279--><figure class="code"><pre><code class="language-rust">fn decompose(transform: &amp;russimp_ng::Matrix4x4) -&gt; SceneTransform {
+    // Interpret as row-major with last column = translation (a4,b4,c4)
+    let t = CVec3::new(transform.a4, transform.b4, transform.c4);
+    // Upper-left 3x3 contains rotation*scale. Treat its columns as basis vectors.
+    let c0 = CVec3::new(transform.a1, transform.b1, transform.c1);
+    let c1 = CVec3::new(transform.a2, transform.b2, transform.c2);
+    let c2 = CVec3::new(transform.a3, transform.b3, transform.c3);
+    let s0 = c0.magnitude();
+    let s1 = c1.magnitude();
+    let s2 = c2.magnitude();
+    // Uniform scale approximation to match SceneTransform design
+    let scale = ((s0 + s1 + s2) / 3.0).max(1e-6);</code></pre><figcaption>src/graphics/assimp_loader.rs:268-279</figcaption></figure><!--/x-->
+    <p>That's an approximation: a model built with stretched nodes would come out slightly wrong, a trade-off
+    the comment owns.</p>
+
+    <h2>Building the scene</h2>
+    <p><code>App::set_up_scene</code> requests materials and meshes, loads models, places everything on the
+    terrain, and adds it all to the scene. Each object is stood on the ground using the terrain's height
+    function and the lowest point of its mesh's bounding box, which the mesh manager keeps after the CPU
+    vertices are discarded. The rocks show the reuse at work: each of the five models is imported once as a
+    template, then placed many times by cloning its parts:</p>
+    <!--x src/app/app.rs 401-410--><figure class="code"><pre><code class="language-rust">// A shallow burial hides perfectly sharp model bottoms and makes each rock
+// feel embedded in the heightfield rather than balanced on top of it.
+transform.translation.y -= member.size * 0.07;
+rock_clusters.push(SceneObject {
+    transform,
+    // Cloning parts copies indices into manager-owned resources; it does not
+    // duplicate the Vulkan buffers or atlas image.
+    parts: template.parts.clone(),
+    visible: true,
+});</code></pre><figcaption>src/app/app.rs:401-410</figcaption></figure><!--/x-->
+    <p>The last steps flush every queued texture upload in one GPU submission
+    (<a href="05-gpu-memory.html#staging">Chapter 5</a>) and put the camera at eye height:</p>
+    <!--x src/app/app.rs 453-462--><figure class="code"><pre><code class="language-rust">// All scene materials have now recorded their texture uploads.  Submit
+// them together once, before the first frame can sample the images.
+self.material_manager.finish_loading(vulkan_base)?;
+
+self.camera = Camera::new();
+let camera_position = self.camera.position();
+self.camera.set_height_above_ground(
+    terrain_settings.height_at(camera_position.x, camera_position.z),
+    FIRST_PERSON_EYE_HEIGHT,
+);</code></pre><figcaption>src/app/app.rs:453-462</figcaption></figure><!--/x-->
+    <aside class="callout aside"><p class="callout-title">The debug grid</p>
+      <p>The infinite grid's vertex shader (<code>infinite_plane.vert</code>) takes a 2 × 2 unit plane and stretches it to two kilometres, centred
+      under the camera (though the 220 m far plane clips it). Its fragment shader (<code>infinite_plane.frag</code>) draws grid lines from <code>fwidth</code>, the screen-space rate of
+      change, so they stay one pixel wide at any distance, and fades them with distance. It's drawn late, with
+      blending on and depth writes off, and the render graph swaps it with the terrain each frame according to the UI's ground toggle.</p>
+    </aside>
+  </section>
+
+  <section id="recap" class="recap">
+    <h2>Recap</h2>
+    <ul>
+      <li>A scene object is a transform plus parts. Parts refer to manager-owned meshes and materials by
+      index, so reuse is nearly free.</li>
+      <li>The camera's projection flips Y and remaps depth to 0..1 for Vulkan. The view is a first-person
+      look-at, kept 1.8 m above the terrain.</li>
+      <li>The main pass draws the sky, then each part (rebinding only when the material changes, pushing 144
+      bytes of matrices), then the grass.</li>
+      <li>Assimp loads glTF/GLB, triangulating and generating tangents. Materials get textured or vertex-colour
+      shaders, and node transforms are flattened to uniform-scale parts.</li>
+    </ul>
+  </section>
+
+  <nav class="pager"><a class="prev" href="11-shadows.html">← 11 · Shadows</a><a class="next" href="13-procedural-world.html">13 · A procedural world →</a></nav>
+</main>
+<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>
+<script src="guide.js"></script>
+</body>
+</html>

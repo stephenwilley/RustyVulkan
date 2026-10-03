@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>05 · GPU memory · RustyVulkan Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,400;0,700;1,400&family=Poppins:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" media="(prefers-color-scheme: light)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<link rel="stylesheet" media="(prefers-color-scheme: dark)" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+</head>
+<body>
+<header class="site"><a class="brand" href="index.html">RustyVulkan <span>Guide</span></a><a class="toc-link" href="index.html#contents">Contents</a></header>
+<main class="chapter">
+  <header class="chapter-head">
+    <p class="kicker">Part 2 · Chapter 05 · <span class="readtime">~9 min read</span></p>
+    <h1>GPU memory</h1>
+    <p class="lede">Buffers and images, the different kinds of memory behind them, and the two ways this
+    renderer gets data from the CPU onto the GPU.</p>
+  </header>
+
+  <section id="big-picture">
+    <h2><span class="tag">Overview</span> The big picture</h2>
+
+    <h3>Two kinds of resource</h3>
+    <p>Everything the GPU reads or writes lives in one of two kinds of object:</p>
+    <ul>
+      <li>A <dfn>buffer</dfn> is a plain run of bytes: vertex data, triangle indices, a block of per-frame
+      settings such as light directions.</li>
+      <li>An <dfn>image</dfn> is structured pixel data: a texture, a depth map, a render target. Images have a
+      size, a pixel format and a sample count, and are usually stored in a GPU-specific <em>tiled</em>
+      arrangement that makes nearby pixels fast to fetch together. The CPU can't easily write that arrangement
+      directly.</li>
+    </ul>
+    <p>Creating either one gives you only a description. It has no memory yet. In Vulkan, you allocate memory
+    separately and attach it, and that's where the choices come in.</p>
+
+    <h3>Memory types</h3>
+    <p>A GPU offers several <dfn>memory types</dfn> with different trade-offs. The two properties that matter
+    most are:</p>
+    <ul>
+      <li><strong>Device-local</strong>: fastest for the GPU. On a PC graphics card this is the card's own
+      memory, which the CPU often can't see at all.</li>
+      <li><strong>Host-visible</strong>: the CPU can <em>map</em> it, getting an ordinary pointer to write
+      through. On a discrete card it lives across the bus, so it's slower for the GPU to read.</li>
+    </ul>
+    <p>On Apple Silicon the CPU and GPU share the same physical memory (<em>unified memory</em>), so the
+    distinction is far smaller.
+    Vulkan code is still written to handle both, which is why the code states a preference for each
+    allocation rather than assuming.</p>
+    <p>Allocating Vulkan memory directly is laborious. You must search the memory types yourself, and drivers
+    limit how many separate allocations you may make (to about four thousand on many drivers), so real programs carve
+    many resources out of a few big blocks. RustyVulkan uses <dfn id="vma">VMA</dfn>, AMD's widely used
+    Vulkan Memory Allocator, which does both jobs. You say "a buffer this big, used like this, preferably
+    CPU-writable", and VMA picks the memory type and sub-allocates it.</p>
+
+    <h3 id="staging">Two ways to upload</h3>
+    <p>This renderer gets data onto the GPU in one of two ways, depending on what the data is.</p>
+    <p><strong>Write it in place.</strong> Vertex and index buffers, and the per-frame settings, are put in
+    host-visible memory. The CPU maps it, copies the bytes in, and the GPU reads from there. That's simple,
+    and on unified memory it costs little.</p>
+    <p><strong>Stage it.</strong> Textures (and the grass's large instance buffers,
+    <a href="14-grass.html">Chapter 14</a>) go into device-local memory. Textures in particular are images with an optimal tiled layout, which the
+    CPU can't write. So the pixels are first copied into a temporary host-visible <dfn>staging buffer</dfn>,
+    and then the GPU itself is told to copy from that buffer into the image, rearranging the pixels as it goes.
+    The staging buffer has to stay alive until the GPU has actually done that copy.</p>
+
+    <figure class="diagram">
+      <svg viewBox="0 0 640 330" role="img" aria-labelledby="stt">
+        <title id="stt">The staging path for a texture</title>
+        <defs><marker id="sta" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" class="fill-muted"/></marker></defs>
+        <g font-size="14">
+          <rect class="box" x="20" y="20" width="180" height="80" rx="8"/>
+          <text x="110" y="48" text-anchor="middle" font-weight="700">PNG / JPEG file</text>
+          <text x="110" y="70" text-anchor="middle" class="muted">decoded on the CPU</text>
+          <text x="110" y="88" text-anchor="middle" class="muted">to RGBA bytes</text>
+          <rect class="box-rust" x="230" y="20" width="180" height="80" rx="8"/>
+          <text x="320" y="48" text-anchor="middle" font-weight="700">Staging buffer</text>
+          <text x="320" y="70" text-anchor="middle" class="muted">host-visible,</text>
+          <text x="320" y="88" text-anchor="middle" class="muted">plain bytes</text>
+          <rect class="box-accent" x="440" y="20" width="180" height="80" rx="8"/>
+          <text x="530" y="48" text-anchor="middle" font-weight="700">Image</text>
+          <text x="530" y="70" text-anchor="middle" class="muted">device-local,</text>
+          <text x="530" y="88" text-anchor="middle" class="muted">tiled for the GPU</text>
+          <text x="215" y="130" text-anchor="middle" font-size="12" class="muted">CPU memcpy</text>
+          <text x="425" y="130" text-anchor="middle" font-size="12" class="muted">GPU copy command</text>
+          <rect class="box" x="20" y="170" width="600" height="140" rx="8"/>
+          <text x="40" y="196" font-weight="700">The image's layout changes as it goes</text>
+          <rect class="box-aside" x="40" y="214" width="170" height="44" rx="6"/>
+          <text x="125" y="241" text-anchor="middle" class="mono" font-size="12">UNDEFINED</text>
+          <rect class="box-aside" x="235" y="214" width="170" height="44" rx="6"/>
+          <text x="320" y="241" text-anchor="middle" class="mono" font-size="12">TRANSFER_DST</text>
+          <rect class="box-aside" x="430" y="214" width="170" height="44" rx="6"/>
+          <text x="515" y="241" text-anchor="middle" class="mono" font-size="12">SHADER_READ_ONLY</text>
+          <text x="125" y="290" text-anchor="middle" font-size="12" class="muted">just created</text>
+          <text x="320" y="290" text-anchor="middle" font-size="12" class="muted">ready to be copied into</text>
+          <text x="515" y="290" text-anchor="middle" font-size="12" class="muted">ready for shaders</text>
+        </g>
+        <path class="wire" marker-end="url(#sta)" d="M200 60 H227"/>
+        <path class="wire" marker-end="url(#sta)" d="M410 60 H437"/>
+        <path class="wire" marker-end="url(#sta)" d="M210 236 H232"/>
+        <path class="wire" marker-end="url(#sta)" d="M405 236 H427"/>
+      </svg>
+      <figcaption>Pixels take two hops: a CPU copy into a staging buffer, then a GPU copy into the image. Along
+      the way the image is moved between <em>layouts</em>, each suited to one kind of access.</figcaption>
+    </figure>
+    <p>The bottom row introduces an idea that recurs throughout Vulkan. An image's <dfn>layout</dfn> is the
+    arrangement its data is in, and each kind of use expects a particular one. Moving an image from one layout
+    to another is an explicit step, recorded with a <em>barrier</em>, which also makes sure the previous step
+    has finished. <a href="10-render-graph.html#barriers">Chapter 10</a> covers barriers properly.</p>
+  </section>
+
+  <div class="dive-divider"><span>Deeper dive</span></div>
+
+  <section id="deep-dive">
+    <h2>The allocator</h2>
+    <p>VMA is created once, straight after the device, in <code>VulkanBase::new</code>:</p>
+    <!--x src/vulkan/base/setup.rs 511-515--><figure class="code"><pre><code class="language-rust">// Create a Vulkan Memory Allocator (VMA) instance.
+let mut allocator_info =
+    vk_mem::AllocatorCreateInfo::new(&amp;instance, &amp;device, physical_device);
+allocator_info.flags |= vk_mem::AllocatorCreateFlags::EXT_MEMORY_BUDGET;
+let allocator = unsafe { Allocator::new(allocator_info)? };</code></pre><figcaption>src/vulkan/base/setup.rs:511-515</figcaption></figure><!--/x-->
+    <p>The <code>EXT_MEMORY_BUDGET</code> flag lets VMA track how much memory the system is willing to give
+    this process. The allocator is stored as an <code>Option</code> so it can be destroyed at a chosen moment
+    during teardown (<a href="02-rust-meets-c.html#rust-drop">Chapter 2</a>). That's why later code reaches
+    it through <code>vb.allocator.as_ref()</code>.</p>
+
+    <h2>A vertex, as the GPU sees it</h2>
+    <p>Before uploading vertices, the code needs a Rust type whose memory layout the GPU can read:</p>
+    <!--x src/graphics/mesh.rs 19-29--><figure class="code"><pre><code class="language-rust">/// A single vertex: 3D position + normal, color, uv, tangent, bitangent.
+#[repr(C)]
+#[derive(Default, Clone, Copy, Pod, Zeroable)]
+pub struct Vertex {
+    pub pos: [f32; 3],
+    pub normal: [f32; 3],
+    pub color: [f32; 3],
+    pub uv: [f32; 2],
+    pub tangent: [f32; 3],
+    pub bitangent: [f32; 3],
+}</code></pre><figcaption>src/graphics/mesh.rs:19-29</figcaption></figure><!--/x-->
+    <aside class="callout rust" id="rust-repr-c"><p class="callout-title">Rust note · repr(C), derive, and bytemuck</p>
+      <p>By default, Rust may reorder a struct's fields to save space. <code>#[repr(C)]</code> forbids that:
+      fields are laid out in declaration order with C's padding rules, so the GPU can be told exactly where
+      each one is. Here that's six arrays of <code>f32</code>, 68 bytes per vertex.</p>
+      <p><code>#[derive(…)]</code> asks the compiler to generate standard trait implementations.
+      <code>Clone, Copy</code> make the type copyable like an integer
+      (<a href="02-rust-meets-c.html#rust-handles-copy">Chapter 2</a>), and <code>Default</code> gives an
+      all-zero value. <code>Pod</code> and <code>Zeroable</code> come from the <code>bytemuck</code> crate.
+      <code>Pod</code> ("plain old data") is a checked promise that the type has no padding, pointers or other
+      hidden state, so viewing it as raw bytes is safe. The derive fails to compile if that isn't true.</p>
+    </aside>
+    <p>The same file also describes this layout to Vulkan, field by field, with
+    <code>offset_of!(Vertex, normal)</code> giving each field's byte offset. That description is part of the
+    pipeline, so it's covered in <a href="07-pipelines.html">Chapter 7</a>.</p>
+
+    <h2>Vertex and index buffers: write in place</h2>
+    <!--x src/graphics/mesh.rs 99-126--><figure class="code"><pre><code class="language-rust">pub fn new&lt;T: Pod&gt;(allocator: &amp;Allocator, data: &amp;[T]) -&gt; Result&lt;Self, Box&lt;dyn Error&gt;&gt; {
+    let size = std::mem::size_of_val(data) as vk::DeviceSize;
+
+    let buffer_info = vk::BufferCreateInfo {
+        size,
+        usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+        sharing_mode: vk::SharingMode::EXCLUSIVE,
+        ..Default::default()
+    };
+    let alloc_info = vk_mem::AllocationCreateInfo {
+        usage: MemoryUsage::AutoPreferHost,
+        flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
+            | vk_mem::AllocationCreateFlags::MAPPED,
+        ..Default::default()
+    };
+    let (buffer, mut allocation) =
+        unsafe { allocator.create_buffer(&amp;buffer_info, &amp;alloc_info)? };
+
+    unsafe {
+        let ptr = allocator.map_memory(&amp;mut allocation)? as *mut T;
+        std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+        // Host-visible memory is not guaranteed to be coherent on every GPU.
+        allocator.flush_allocation(&amp;allocation, 0, size)?;
+        allocator.unmap_memory(&amp;mut allocation);
+    }
+
+    Ok(VertexBuffer { buffer, allocation })
+}</code></pre><figcaption>src/graphics/mesh.rs:99-126</figcaption></figure><!--/x-->
+    <p>Step by step:</p>
+    <ul>
+      <li>The buffer is described: its size in bytes, and that it'll be used as a vertex buffer.</li>
+      <li>VMA is asked for memory: <code>AutoPreferHost</code> picks CPU-visible memory where possible, and
+      <code>HOST_ACCESS_SEQUENTIAL_WRITE</code> promises that the CPU will only write it, in order. That lets
+      VMA choose memory that's fast to write but slow to read back. <code>create_buffer</code> creates the
+      buffer, allocates memory and binds them together, returning both.</li>
+      <li>The memory is mapped, the data copied with <code>copy_nonoverlapping</code> (Rust's
+      <code>memcpy</code>, except that it counts elements of type <code>T</code>, not bytes), then flushed and
+      unmapped. Asking for <code>MAPPED</code> as well as mapping by hand is redundant but harmless.</li>
+    </ul>
+    <p>The flush matters. Some host-visible memory is <em>non-coherent</em>: the CPU's writes may sit in its
+    caches, invisible to the GPU, until explicitly flushed. VMA's flush does nothing on coherent memory, so
+    calling it unconditionally is the portable choice. (Apple Silicon's memory is coherent, so here the flush is
+    effectively free.) <code>DEVELOPMENT.md</code> makes it a rule: flush
+    non-coherent host writes before submission.</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · generics</p>
+      <p><code>new&lt;T: Pod&gt;(…, data: &amp;[T])</code> is a <em>generic</em> function: it works for a
+      slice of any type <code>T</code>, provided <code>T</code> implements <code>Pod</code>. The grass code uses
+      the same trick in its own <code>upload_buffer&lt;T: Pod&gt;</code>
+      (<a href="14-grass.html">Chapter 14</a>). The compiler generates a separate copy for each type used
+      (<em>monomorphisation</em>), so there's no run-time cost. <code>&amp;[T]</code> is a <em>slice</em>, a pointer plus a length, and
+      <code>size_of_val</code> gives its total size in bytes.</p>
+    </aside>
+    <p><code>IndexBuffer::new</code> is the same with <code>u32</code> indices and <code>INDEX_BUFFER</code>
+    usage. <code>LoadedMesh::load</code> creates one of each for a mesh, keeping the mesh's bounding box for
+    placing it on the terrain later.</p>
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p>This is roughly <code>glGenBuffers</code> + <code>glBufferData</code> made explicit (though GL would
+      likely have put static mesh data in GPU-only memory). In GL
+      the usage hint was a guess the driver might ignore, and where the bytes went was invisible. Here the code
+      states exactly which memory it wants, and does the copy itself.</p>
+    </aside>
+
+    <h2>Uniform data: write in place, every frame</h2>
+    <p>The per-frame block of settings (sun direction, shadow matrices, lights) also lives in host-visible
+    buffers, one per swapchain image, created with VMA's <code>MAPPED</code> flag so they stay mapped for their
+    whole life. Updating one is just a copy and a flush:</p>
+    <!--x src/vulkan/base.rs 503-520--><figure class="code"><pre><code class="language-rust">pub fn update_global_ubo(&amp;mut self, image_index: usize, ubo: &amp;GlobalUbo) {
+    let allocator = self.allocator.as_ref().expect("allocator");
+    let allocation = &amp;self.ubo_allocations[image_index];
+    unsafe {
+        // These allocations were created with MAPPED, so VMA keeps the pointer valid
+        // for their lifetime and the per-frame path does not need map/unmap calls.
+        let ptr = allocator.get_allocation_info(allocation).mapped_data as *mut u8;
+        debug_assert!(!ptr.is_null());
+        std::ptr::copy_nonoverlapping(
+            ubo as *const GlobalUbo as *const u8,
+            ptr,
+            std::mem::size_of::&lt;GlobalUbo&gt;(),
+        );
+        allocator
+            .flush_allocation(allocation, 0, std::mem::size_of::&lt;GlobalUbo&gt;() as u64)
+            .expect("flush UBO");
+    }
+}</code></pre><figcaption>src/vulkan/base.rs:503-520</figcaption></figure><!--/x-->
+    <p>There's one buffer per swapchain image so that the CPU never overwrites data the GPU is still reading
+    for an earlier frame. <a href="09-frame-loop.html">Chapter 9</a> shows how the frame loop guarantees that,
+    and <a href="08-descriptors-materials.html">Chapter 8</a> how shaders find these buffers.</p>
+
+    <h2>Textures: stage, copy, transition</h2>
+    <p>Texture uploads are batched. While the scene is being built, every texture's copy commands are recorded
+    into one command buffer, which is submitted once at the end. Here is <code>TextureUploadBatch::upload</code>,
+    first decoding the file and filling a staging buffer:</p>
+    <!--x src/graphics/texture.rs 81-105--><figure class="code"><pre><code class="language-rust">// Decode on the CPU first so every source format becomes RGBA8.
+let img = image::open(image_path)?.to_rgba8();
+let (width, height) = img.dimensions();
+let pixels = img.into_raw();
+
+// Stage the pixels in host-visible memory; the final image stays device-local.
+let buffer_info = vk::BufferCreateInfo {
+    size: pixels.len() as vk::DeviceSize,
+    usage: vk::BufferUsageFlags::TRANSFER_SRC,
+    sharing_mode: vk::SharingMode::EXCLUSIVE,
+    ..Default::default()
+};
+let alloc_info = vk_mem::AllocationCreateInfo {
+    usage: MemoryUsage::AutoPreferHost,
+    flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
+    ..Default::default()
+};
+let (staging_buffer, mut staging_allocation) =
+    unsafe { allocator.create_buffer(&amp;buffer_info, &amp;alloc_info)? };
+unsafe {
+    let data_ptr = allocator.map_memory(&amp;mut staging_allocation)?;
+    std::ptr::copy_nonoverlapping(pixels.as_ptr(), data_ptr, pixels.len());
+    allocator.flush_allocation(&amp;staging_allocation, 0, pixels.len() as u64)?;
+    allocator.unmap_memory(&amp;mut staging_allocation);
+}</code></pre><figcaption>src/graphics/texture.rs:81-105</figcaption></figure><!--/x-->
+    <p>The <code>image</code> crate decodes PNG or JPEG and converts it to 8-bit RGBA. The staging buffer's
+    usage is <code>TRANSFER_SRC</code>: it will only ever be copied from. Next, the real image:</p>
+    <!--x src/graphics/texture.rs 108-130--><figure class="code"><pre><code class="language-rust">let image_info = vk::ImageCreateInfo {
+    image_type: vk::ImageType::TYPE_2D,
+    format: vk::Format::R8G8B8A8_UNORM,
+    extent: vk::Extent3D {
+        width,
+        height,
+        depth: 1,
+    },
+    mip_levels: 1,
+    array_layers: 1,
+    samples: vk::SampleCountFlags::TYPE_1,
+    tiling: vk::ImageTiling::OPTIMAL,
+    usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+    sharing_mode: vk::SharingMode::EXCLUSIVE,
+    initial_layout: vk::ImageLayout::UNDEFINED,
+    ..Default::default()
+};
+let image_alloc_info = vk_mem::AllocationCreateInfo {
+    usage: MemoryUsage::AutoPreferDevice,
+    ..Default::default()
+};
+let (image, allocation) =
+    unsafe { allocator.create_image(&amp;image_info, &amp;image_alloc_info)? };</code></pre><figcaption>src/graphics/texture.rs:108-130</figcaption></figure><!--/x-->
+    <p><code>OPTIMAL</code> tiling is the GPU's own arrangement. The usage flags say it will be copied into
+    (<code>TRANSFER_DST</code>) and read by shaders (<code>SAMPLED</code>). <code>AutoPreferDevice</code> asks
+    for device-local memory. It has one mip level only: this renderer doesn't generate smaller mipmap
+    versions of its textures. And it's <code>R8G8B8A8_UNORM</code>, the format behind
+    <a href="04-swapchain.html">Chapter 4</a>'s note about gamma.</p>
+    <p>Then three commands are recorded: a barrier to move the image into the transfer layout, the copy, and a
+    barrier to make it shader-readable. The two barrier structs are built just above (elided):</p>
+    <!--x src/graphics/texture.rs 170-197--><figure class="code"><pre><code class="language-rust">unsafe {
+    // undefined -&gt; transfer destination -&gt; shader-readable
+    device.cmd_pipeline_barrier(
+        self.command_buffer,
+        vk::PipelineStageFlags::TOP_OF_PIPE,
+        vk::PipelineStageFlags::TRANSFER,
+        vk::DependencyFlags::empty(),
+        &amp;[],
+        &amp;[],
+        &amp;[to_transfer],
+    );
+    device.cmd_copy_buffer_to_image(
+        self.command_buffer,
+        staging_buffer,
+        image,
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        &amp;[region],
+    );
+    device.cmd_pipeline_barrier(
+        self.command_buffer,
+        vk::PipelineStageFlags::TRANSFER,
+        vk::PipelineStageFlags::FRAGMENT_SHADER,
+        vk::DependencyFlags::empty(),
+        &amp;[],
+        &amp;[],
+        &amp;[to_shader_read],
+    );
+}</code></pre><figcaption>src/graphics/texture.rs:170-197</figcaption></figure><!--/x-->
+    <p>Each barrier names two pipeline stages: "work at the first stage must finish before work at the second
+    may start". The first waits on nothing earlier (<code>TOP_OF_PIPE</code>), but the transfer stage may not
+    start until the layout change is done. The second makes fragment shaders wait for the copy to complete.</p>
+    <p>Nothing has actually happened yet. These are only <em>recorded</em> commands. So the staging buffer
+    can't be freed here; it's handed to the batch to keep:</p>
+    <!--x src/graphics/texture.rs 208-212--><figure class="code"><pre><code class="language-rust">// The copy has not run yet, so keep the staging allocation alive until `finish`.
+self.staging_buffers.push(StagingBuffer {
+    buffer: staging_buffer,
+    allocation: staging_allocation,
+});</code></pre><figcaption>src/graphics/texture.rs:208-212</figcaption></figure><!--/x-->
+    <p>When scene construction is done, <code>TextureCache::flush</code> calls <code>finish</code>:</p>
+    <!--x src/graphics/texture.rs 234-252--><figure class="code"><pre><code class="language-rust">unsafe {
+    // Submit all recorded copies together, then wait once before rendering begins.
+    device.end_command_buffer(self.command_buffer)?;
+    let fence = device.create_fence(&amp;vk::FenceCreateInfo::default(), None)?;
+    let submit_info = vk::SubmitInfo {
+        command_buffer_count: 1,
+        p_command_buffers: &amp;self.command_buffer,
+        ..Default::default()
+    };
+    device.queue_submit(queue, &amp;[submit_info], fence)?;
+    device.wait_for_fences(&amp;[fence], true, u64::MAX)?;
+    // The fence guarantees the GPU no longer reads the staging buffers.
+    device.destroy_fence(fence, None);
+    device.free_command_buffers(command_pool, &amp;[self.command_buffer]);
+    for staging in self.staging_buffers.drain(..) {
+        let mut allocation = staging.allocation;
+        allocator.destroy_buffer(staging.buffer, &amp;mut allocation);
+    }
+}</code></pre><figcaption>src/graphics/texture.rs:234-252</figcaption></figure><!--/x-->
+    <p>Submit, then wait on a <dfn>fence</dfn> (a CPU-visible "done" signal) until the GPU finishes, and only
+    then destroy the staging buffers. Stalling like this is fine at start-up, once. The frame loop, in
+    <a href="09-frame-loop.html">Chapter 9</a>, uses the same fence idea but avoids waiting.</p>
+    <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
+      <p><code>glTexImage2D</code> did all of this invisibly: it copied your pixels somewhere, scheduled an
+      upload, tracked when it was safe to reuse your memory, and converted to the GPU's tiling. Pixel buffer
+      objects were OpenGL's opt-in version of a staging buffer.</p>
+    </aside>
+    <aside class="callout aside"><p class="callout-title">Not finished yet</p>
+      <p><code>DEVELOPMENT.md</code> lists texture uploads among the paths that still lack full partial-failure
+      cleanup. For example, if <code>create_image</code> or <code>create_image_view</code> fails in
+      <code>upload</code>, the staging buffer (and in the second case the image) hasn't yet been handed to anyone,
+      so nothing will destroy it. The same applies in
+      <code>LoadedMesh::load</code> if the index buffer fails after the vertex buffer succeeded. Compare
+      the swapchain's step-by-step ownership in <a href="04-swapchain.html">Chapter 4</a>.</p>
+    </aside>
+  </section>
+
+  <section id="recap" class="recap">
+    <h2>Recap</h2>
+    <ul>
+      <li>Buffers are raw bytes; images are tiled pixel data with a format and layout. Neither has memory
+      until you allocate and bind it.</li>
+      <li>VMA picks memory types from stated preferences and sub-allocates from large blocks.</li>
+      <li>Vertex, index and per-frame uniform data are written in place into host-visible memory, then
+      flushed.</li>
+      <li>Textures go through a staging buffer: CPU copy, then a recorded GPU copy bracketed by layout
+      barriers. Staging memory lives until a fence says the GPU is done.</li>
+    </ul>
+  </section>
+
+  <nav class="pager"><a class="prev" href="04-swapchain.html">← 04 · Surfaces and the swapchain</a><a class="next" href="06-shaders.html">06 · Shaders →</a></nav>
+</main>
+<footer class="site">Written against RustyVulkan commit <code>79546db</code>. · <a href="index.html#contents">Contents</a></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>
+<script src="guide.js"></script>
+</body>
+</html>

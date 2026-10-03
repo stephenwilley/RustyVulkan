@@ -84,13 +84,14 @@ fn fit_frustum_slice(
 
     let mut direction = Vector3::new(sun_dir[0], sun_dir[1], sun_dir[2]);
     direction /= direction.magnitude().max(1e-6);
-    let light_eye = center - direction * (radius * 2.0 + 1.0);
     let light_up = if direction.y.abs() > 0.99 {
         Vector3::unit_z()
     } else {
         Vector3::unit_y()
     };
-    let light_view = Matrix4::look_at_rh(light_eye, center, light_up);
+    // Orientation only: a light view that followed the slice would move the texel grid
+    // with the camera, defeating the snapping below.
+    let light_view = Matrix4::look_at_rh(Point3::origin(), Point3::from_vec(direction), light_up);
 
     let mut min_light = Vector3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
     let mut max_light = Vector3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
@@ -111,9 +112,10 @@ fn fit_frustum_slice(
     let center_x = ((min_light.x + max_light.x) * 0.5 / units_per_texel).floor() * units_per_texel;
     let center_y = ((min_light.y + max_light.y) * 0.5 / units_per_texel).floor() * units_per_texel;
 
-    // Extra depth leaves room for nearby geometry outside the slice to cast into it.
-    let near = 0.001;
-    let far = (-min_light.z + radius * 0.25 + 0.5).max(near + 0.001);
+    // Casters up to r + 1 sunward of the slice's nearest corner still land in the map;
+    // the small margin beyond the far side keeps receivers at the slice's edge inside it.
+    let near = -max_light.z - (radius + 1.0);
+    let far = -min_light.z + radius * 0.25 + 0.5;
     let projection_gl = cgmath::ortho(
         center_x - half_extent,
         center_x + half_extent,
@@ -181,6 +183,60 @@ mod tests {
 
         assert!(splits.windows(2).all(|pair| pair[0] < pair[1]));
         assert!((splits[SHADOW_CASCADE_COUNT - 1] - 75.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn moving_the_camera_shifts_cascades_by_whole_texels() {
+        let res = 2048;
+        let mut camera = Camera::new();
+        camera.set_view_yxz(Point3::new(1.0, 2.0, 3.0), 30.0, -10.0, 0.0);
+        let before = compute_shadow_cascades(&camera, [0.3, -1.0, 0.2], res, 75.0);
+        camera.set_view_yxz(Point3::new(1.37, 2.0, 3.21), 30.0, -10.0, 0.0);
+        let after = compute_shadow_cascades(&camera, [0.3, -1.0, 0.2], res, 75.0);
+
+        // Orthographic: clip.x = row0 · p + w.x, so a change in w.x is a shift of
+        // (res / 2) texels.
+        for (a, b) in before.iter().zip(&after) {
+            for row in 0..2 {
+                let shift_texels = (b.world_to_light_clip.w[row] - a.world_to_light_clip.w[row])
+                    * res as f32
+                    / 2.0;
+                assert!(
+                    (shift_texels - shift_texels.round()).abs() < 0.05,
+                    "cascade shifted by {shift_texels} texels"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn each_cascade_contains_its_view_slice() {
+        let camera = Camera::new();
+        let cascades = compute_shadow_cascades(&camera, [0.3, -1.0, 0.2], 2048, 75.0);
+        let inv_view = camera.get_view().invert().unwrap();
+        let splits = cascade_splits(&camera, 75.0);
+        let mut slice_near = camera.get_near();
+        for (cascade, slice_far) in cascades.iter().zip(splits) {
+            let corners = frustum_corners(
+                Point3::new(inv_view.w.x, inv_view.w.y, inv_view.w.z),
+                inv_view.x.truncate(),
+                inv_view.y.truncate(),
+                -inv_view.z.truncate(),
+                (camera.get_fov_deg().to_radians() * 0.5).tan(),
+                camera.get_aspect(),
+                slice_near,
+                slice_far,
+            );
+            for corner in corners {
+                let clip = cascade.world_to_light_clip * corner.to_homogeneous();
+                assert!(
+                    clip.x.abs() <= 1.0 && clip.y.abs() <= 1.0,
+                    "corner outside map"
+                );
+                assert!((0.0..=1.0).contains(&clip.z), "corner outside depth range");
+            }
+            slice_near = slice_far;
+        }
     }
 
     #[test]

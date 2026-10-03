@@ -14,7 +14,7 @@
 //!
 //! Usage:
 //!   1. `ImGuiRenderer::new(base: &mut VulkanBase, imgui: &mut imgui::Context) -> Self`
-//!   2. `renderer.render(device, allocator, cmd_buf: vk::CommandBuffer, draw_data: &imgui::DrawData)`
+//!   2. `renderer.render(device, allocator, cmd_buf, draw_data, image_index)`
 //!   3. `renderer.cleanup(allocator)`
 //!
 //! --------------------------------------------------------------------------------------
@@ -30,6 +30,17 @@ use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
 mod pipeline;
 mod resources;
 
+/// Host-visible ImGui geometry for one swapchain image.
+#[derive(Default)]
+struct UiFrameBuffers {
+    vertex_buffer: vk::Buffer,
+    vertex_allocation: Option<Allocation>,
+    vertex_buffer_size: vk::DeviceSize,
+    index_buffer: vk::Buffer,
+    index_allocation: Option<Allocation>,
+    index_buffer_size: vk::DeviceSize,
+}
+
 /// Renders ImGui UI elements using Vulkan.
 pub struct ImGuiRenderer {
     descriptor_set_layout: vk::DescriptorSetLayout,
@@ -41,12 +52,9 @@ pub struct ImGuiRenderer {
     pub font_image: Option<vk::Image>,
     pub font_image_allocation: Option<Allocation>,
     pub font_image_view: Option<vk::ImageView>,
-    pub vertex_buffer: vk::Buffer,
-    pub vertex_allocation: Option<Allocation>,
-    pub vertex_buffer_size: vk::DeviceSize,
-    pub index_buffer: vk::Buffer,
-    pub index_allocation: Option<Allocation>,
-    pub index_buffer_size: vk::DeviceSize,
+    /// One buffer pair per swapchain image: rewriting a single pair each frame would race
+    /// with the previous frame, which may still be drawing from it.
+    frame_buffers: Vec<UiFrameBuffers>,
     device: ash::Device,
     vert_stage: Option<ShaderStageInfo>,
     frag_stage: Option<ShaderStageInfo>,
@@ -61,39 +69,41 @@ pub struct ImGuiRenderer {
 impl ImGuiRenderer {
     /// Ensures the vertex and index buffers are large enough and uploads ImGui draw data into them.
     /// # Arguments
+    /// * `allocator` - The VMA allocator used to (re)create the buffers.
     /// * `draw_data` - The ImGui draw data.
-    pub fn update_buffers(&mut self, allocator: &Allocator, draw_data: &DrawData) {
+    /// * `image_index` - Swapchain image being recorded; selects that image's buffer pair.
+    pub fn update_buffers(
+        &mut self,
+        allocator: &Allocator,
+        draw_data: &DrawData,
+        image_index: usize,
+    ) {
         // Total vertex and index data sizes
         let vertex_size = (draw_data.total_vtx_count as usize * std::mem::size_of::<DrawVert>())
             as vk::DeviceSize;
         let index_size =
             (draw_data.total_idx_count as usize * std::mem::size_of::<DrawIdx>()) as vk::DeviceSize;
-        let grow_vertex_buffer = vertex_size > self.vertex_buffer_size;
-        let grow_index_buffer = index_size > self.index_buffer_size;
-
-        // Reallocation invalidates buffers that may be referenced by previous
-        // frames.  Wait once when either buffer grows, then grow capacity
-        // geometrically to avoid repeating this work for small UI changes.
-        if (grow_vertex_buffer && self.vertex_buffer != vk::Buffer::null())
-            || (grow_index_buffer && self.index_buffer != vk::Buffer::null())
-        {
-            unsafe {
-                self.device
-                    .device_wait_idle()
-                    .expect("wait for ImGui buffer resize");
-            }
+        if self.frame_buffers.len() <= image_index {
+            self.frame_buffers
+                .resize_with(image_index + 1, UiFrameBuffers::default);
         }
+        // `begin_frame` has already waited on this image's previous submit, so its buffers
+        // are idle and may be replaced or rewritten. Capacity grows geometrically to avoid
+        // reallocating for small UI changes.
+        let buffers = &mut self.frame_buffers[image_index];
+        let grow_vertex_buffer = vertex_size > buffers.vertex_buffer_size;
+        let grow_index_buffer = index_size > buffers.index_buffer_size;
 
         if grow_vertex_buffer {
-            if self.vertex_buffer != vk::Buffer::null()
-                && let Some(allocation) = &mut self.vertex_allocation
+            if buffers.vertex_buffer != vk::Buffer::null()
+                && let Some(allocation) = &mut buffers.vertex_allocation
             {
                 unsafe {
-                    allocator.destroy_buffer(self.vertex_buffer, allocation);
+                    allocator.destroy_buffer(buffers.vertex_buffer, allocation);
                 }
             }
             let capacity = vertex_size
-                .max(self.vertex_buffer_size.saturating_mul(2))
+                .max(buffers.vertex_buffer_size.saturating_mul(2))
                 .max(1024);
             let buffer_info = vk::BufferCreateInfo {
                 size: capacity,
@@ -112,21 +122,21 @@ impl ImGuiRenderer {
                     .create_buffer(&buffer_info, &alloc_info)
                     .expect("create vertex buffer")
             };
-            self.vertex_buffer = buf;
-            self.vertex_allocation = Some(alloc);
-            self.vertex_buffer_size = capacity;
+            buffers.vertex_buffer = buf;
+            buffers.vertex_allocation = Some(alloc);
+            buffers.vertex_buffer_size = capacity;
         }
 
         if grow_index_buffer {
-            if self.index_buffer != vk::Buffer::null()
-                && let Some(allocation) = &mut self.index_allocation
+            if buffers.index_buffer != vk::Buffer::null()
+                && let Some(allocation) = &mut buffers.index_allocation
             {
                 unsafe {
-                    allocator.destroy_buffer(self.index_buffer, allocation);
+                    allocator.destroy_buffer(buffers.index_buffer, allocation);
                 }
             }
             let capacity = index_size
-                .max(self.index_buffer_size.saturating_mul(2))
+                .max(buffers.index_buffer_size.saturating_mul(2))
                 .max(1024);
             let buffer_info = vk::BufferCreateInfo {
                 size: capacity,
@@ -145,14 +155,14 @@ impl ImGuiRenderer {
                     .create_buffer(&buffer_info, &alloc_info)
                     .expect("create index buffer")
             };
-            self.index_buffer = buf;
-            self.index_allocation = Some(alloc);
-            self.index_buffer_size = capacity;
+            buffers.index_buffer = buf;
+            buffers.index_allocation = Some(alloc);
+            buffers.index_buffer_size = capacity;
         }
 
         // The host-visible UI allocations stay mapped, avoiding map/unmap bookkeeping.
         unsafe {
-            if let Some(allocation) = &self.vertex_allocation {
+            if let Some(allocation) = &buffers.vertex_allocation {
                 let vtx_ptr = allocator.get_allocation_info(allocation).mapped_data as *mut u8;
                 debug_assert!(!vtx_ptr.is_null());
                 let mut offset = 0;
@@ -171,7 +181,7 @@ impl ImGuiRenderer {
                     .expect("flush ImGui vertices");
             }
 
-            if let Some(allocation) = &self.index_allocation {
+            if let Some(allocation) = &buffers.index_allocation {
                 let idx_ptr = allocator.get_allocation_info(allocation).mapped_data as *mut u8;
                 debug_assert!(!idx_ptr.is_null());
                 let mut idx_offset = 0;
@@ -197,15 +207,13 @@ impl ImGuiRenderer {
     pub fn cleanup(&mut self, allocator: &Allocator) {
         unsafe {
             // Destroy dynamic buffers
-            if self.vertex_buffer != vk::Buffer::null()
-                && let Some(allocation) = &mut self.vertex_allocation
-            {
-                allocator.destroy_buffer(self.vertex_buffer, allocation);
-            }
-            if self.index_buffer != vk::Buffer::null()
-                && let Some(allocation) = &mut self.index_allocation
-            {
-                allocator.destroy_buffer(self.index_buffer, allocation);
+            for mut buffers in self.frame_buffers.drain(..) {
+                if let Some(allocation) = &mut buffers.vertex_allocation {
+                    allocator.destroy_buffer(buffers.vertex_buffer, allocation);
+                }
+                if let Some(allocation) = &mut buffers.index_allocation {
+                    allocator.destroy_buffer(buffers.index_buffer, allocation);
+                }
             }
 
             // Destroy font resources
@@ -247,6 +255,7 @@ impl ImGuiRenderer {
     /// * `device` - The Vulkan device to use for command recording.
     /// * `cmd_buf` - The command buffer to record the ImGui draw commands into.
     /// * `draw_data` - The ImGui draw data containing vertex and index information.
+    /// * `image_index` - Swapchain image being recorded (see [`UiFrameBuffers`]).
     ///   This function performs the following steps:
     ///   1. Updates the vertex and index buffers with the latest ImGui draw data.
     ///   2. Binds the vertex and index buffers to the command buffer.
@@ -264,6 +273,7 @@ impl ImGuiRenderer {
         allocator: &Allocator,
         cmd_buf: vk::CommandBuffer,
         draw_data: &DrawData,
+        image_index: usize,
     ) {
         // If there is nothing to draw, skip UI rendering
         if draw_data.total_vtx_count == 0 || draw_data.total_idx_count == 0 {
@@ -272,12 +282,13 @@ impl ImGuiRenderer {
         // Account for HiDPI: logical→physical scale
         let fb_scale = draw_data.framebuffer_scale;
         // 1) Ensure buffers are up-to-date with ImGui draw data
-        self.update_buffers(allocator, draw_data);
+        self.update_buffers(allocator, draw_data, image_index);
 
         // 2) Bind vertex and index buffers
+        let buffers = &self.frame_buffers[image_index];
         unsafe {
-            device.cmd_bind_vertex_buffers(cmd_buf, 0, &[self.vertex_buffer], &[0]);
-            device.cmd_bind_index_buffer(cmd_buf, self.index_buffer, 0, vk::IndexType::UINT16);
+            device.cmd_bind_vertex_buffers(cmd_buf, 0, &[buffers.vertex_buffer], &[0]);
+            device.cmd_bind_index_buffer(cmd_buf, buffers.index_buffer, 0, vk::IndexType::UINT16);
         }
         // Bind ImGui pipeline and descriptor set
         unsafe {

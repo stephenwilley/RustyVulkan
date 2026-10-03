@@ -49,10 +49,12 @@ impl ShaderModule {
     /// * `Result<Self, Box<dyn Error>>` - Returns the created `ShaderModule` on
     ///   success, or an error on failure.
     pub fn from_spv_file(device: &Device, path: impl AsRef<Path>) -> Result<Self, Box<dyn Error>> {
-        let bytes = std::fs::read(path)?;
-        // SPIR-V words are u32, not u8, so we cast here:
-        let code = bytemuck::cast_slice::<u8, u32>(&bytes);
-        let create_info = vk::ShaderModuleCreateInfo::default().code(code);
+        let mut file = std::fs::File::open(path)?;
+        // A byte buffer need not be u32-aligned. Ash also validates the magic
+        // number and handles byte-swapped SPIR-V, returning an I/O error for
+        // malformed input instead of panicking during a slice cast.
+        let code = ash::util::read_spv(&mut file)?;
+        let create_info = vk::ShaderModuleCreateInfo::default().code(&code);
 
         let vk_shader_module = unsafe { device.create_shader_module(&create_info, None)? };
         Ok(Self {

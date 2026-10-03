@@ -94,7 +94,6 @@ impl Material {
             descriptor_count: 2,
         };
         let pool_info = vk::DescriptorPoolCreateInfo {
-            flags: vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
             pool_size_count: 1,
             p_pool_sizes: &pool_size,
             max_sets: 1,
@@ -269,14 +268,9 @@ impl Material {
         if self.textures.is_some() {
             // Descriptor sets belong to this material; cache-owned images outlive them.
             unsafe {
-                device
-                    .free_descriptor_sets(
-                        self.texture_descriptor_pool,
-                        &[self.texture_descriptor_set],
-                    )
-                    .expect("Failed to free descriptor set");
-                device.destroy_descriptor_set_layout(self.texture_descriptor_set_layout, None);
+                // Destroying the pool implicitly frees every set it owns.
                 device.destroy_descriptor_pool(self.texture_descriptor_pool, None);
+                device.destroy_descriptor_set_layout(self.texture_descriptor_set_layout, None);
             }
         }
         self.pipeline.cleanup(device);

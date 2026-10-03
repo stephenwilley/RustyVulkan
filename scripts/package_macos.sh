@@ -1,8 +1,8 @@
 #!/bin/zsh
 
 # Build a Finder-launchable Apple Silicon application and a shareable zip.
-# Homebrew is needed only on the machine assembling the bundle; its Vulkan and
-# Assimp libraries are copied into the application for the recipient.
+# Homebrew is needed only for Assimp on the machine assembling the bundle. The
+# Vulkan loader and KosmicKrisp are copied from the Vulkan SDK.
 set -euo pipefail
 
 SCRIPT_DIR=${0:A:h}
@@ -24,13 +24,16 @@ cd "$PROJECT_DIR"
 cargo build --release --locked
 
 ASSIMP_PREFIX=$(brew --prefix assimp)
-VULKAN_PREFIX=$(brew --prefix vulkan-loader)
-MOLTENVK_PREFIX=$(brew --prefix molten-vk)
 ASSIMP_SOURCE="$ASSIMP_PREFIX/lib/libassimp.6.dylib"
-VULKAN_SOURCE="$VULKAN_PREFIX/lib/libvulkan.1.dylib"
-MOLTENVK_SOURCE="$MOLTENVK_PREFIX/lib/libMoltenVK.dylib"
+if [[ -n ${VULKAN_SDK:-} && -f "$VULKAN_SDK/lib/libvulkan.1.dylib" ]]; then
+    VULKAN_LIB_DIR="$VULKAN_SDK/lib"
+else
+    VULKAN_LIB_DIR="/usr/local/lib"
+fi
+VULKAN_SOURCE="$VULKAN_LIB_DIR/libvulkan.1.dylib"
+KOSMICKRISP_SOURCE="$VULKAN_LIB_DIR/libvulkan_kosmickrisp.dylib"
 
-for dependency in "$ASSIMP_SOURCE" "$VULKAN_SOURCE" "$MOLTENVK_SOURCE"; do
+for dependency in "$ASSIMP_SOURCE" "$VULKAN_SOURCE" "$KOSMICKRISP_SOURCE"; do
     if [[ ! -f "$dependency" ]]; then
         print -u2 "Missing required library: $dependency"
         exit 1
@@ -45,28 +48,35 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR/vulkan/icd.d" "$FRAMEWORKS_DIR"
 cp target/release/RustyVulkan "$MACOS_DIR/RustyVulkan"
 ditto assets "$RESOURCES_DIR/assets"
 cp packaging/macos/Info.plist "$CONTENTS/Info.plist"
-cp packaging/macos/MoltenVK_icd.json "$RESOURCES_DIR/vulkan/icd.d/MoltenVK_icd.json"
+cp packaging/macos/libkosmickrisp_icd.json \
+    "$RESOURCES_DIR/vulkan/icd.d/libkosmickrisp_icd.json"
 cp "$ASSIMP_SOURCE" "$FRAMEWORKS_DIR/libassimp.6.dylib"
 cp "$VULKAN_SOURCE" "$FRAMEWORKS_DIR/libvulkan.1.dylib"
-cp "$MOLTENVK_SOURCE" "$FRAMEWORKS_DIR/libMoltenVK.dylib"
+cp "$KOSMICKRISP_SOURCE" "$FRAMEWORKS_DIR/libvulkan_kosmickrisp.dylib"
 
-# Replace Homebrew's machine-local library paths with paths inside the bundle.
+# Replace machine-local library references with paths inside the bundle.
+VULKAN_LINK_REFERENCE=$(otool -L "$MACOS_DIR/RustyVulkan" | \
+    awk '$1 ~ /libvulkan\.1(\.[0-9]+)*\.dylib$/ { print $1; exit }')
+if [[ -z "$VULKAN_LINK_REFERENCE" ]]; then
+    print -u2 "Could not find the Vulkan loader reference in the executable."
+    exit 1
+fi
 install_name_tool -change "$ASSIMP_SOURCE" \
     @executable_path/../Frameworks/libassimp.6.dylib "$MACOS_DIR/RustyVulkan"
-install_name_tool -change "$VULKAN_SOURCE" \
+install_name_tool -change "$VULKAN_LINK_REFERENCE" \
     @executable_path/../Frameworks/libvulkan.1.dylib "$MACOS_DIR/RustyVulkan"
 install_name_tool -id @executable_path/../Frameworks/libassimp.6.dylib \
     "$FRAMEWORKS_DIR/libassimp.6.dylib"
 install_name_tool -id @executable_path/../Frameworks/libvulkan.1.dylib \
     "$FRAMEWORKS_DIR/libvulkan.1.dylib"
-install_name_tool -id @executable_path/../Frameworks/libMoltenVK.dylib \
-    "$FRAMEWORKS_DIR/libMoltenVK.dylib"
+install_name_tool -id @executable_path/../Frameworks/libvulkan_kosmickrisp.dylib \
+    "$FRAMEWORKS_DIR/libvulkan_kosmickrisp.dylib"
 
 # Ad-hoc signing prevents modified-binary errors. A publicly distributed build
 # would additionally need an Apple Developer ID signature and notarisation.
 codesign --force --sign - "$FRAMEWORKS_DIR/libassimp.6.dylib"
 codesign --force --sign - "$FRAMEWORKS_DIR/libvulkan.1.dylib"
-codesign --force --sign - "$FRAMEWORKS_DIR/libMoltenVK.dylib"
+codesign --force --sign - "$FRAMEWORKS_DIR/libvulkan_kosmickrisp.dylib"
 codesign --force --deep --sign - "$APP_BUNDLE"
 
 if otool -L "$MACOS_DIR/RustyVulkan" | grep -q '/opt/homebrew'; then

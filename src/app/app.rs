@@ -70,6 +70,7 @@ pub fn release_first_person_cursor(window: &Window) {
 /// event loop.
 pub struct App {
     pub window: Option<Window>,
+    pub(super) fatal_error: Option<Box<dyn Error>>,
     pub vulkan_base: Option<VulkanBase>,
     pub scene: Scene,
     pub camera: Camera,
@@ -121,6 +122,7 @@ impl App {
     pub fn new() -> Self {
         App {
             window: None,
+            fatal_error: None,
             vulkan_base: None,
             scene: Scene::new(),
             camera: Camera::new(),
@@ -156,20 +158,25 @@ impl App {
     pub fn run(mut self) -> Result<(), Box<dyn Error>> {
         let event_loop = EventLoop::new()?;
         event_loop.set_control_flow(ControlFlow::Poll);
-        Ok(event_loop.run_app(&mut self)?)
+        event_loop.run_app(&mut self)?;
+        match self.fatal_error.take() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
-    fn create_window(&mut self, event_loop: &ActiveEventLoop) -> Window {
+    fn create_window(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+    ) -> Result<Window, winit::error::OsError> {
         let window_attributes = WindowAttributes::default()
             .with_title("Rusty Vulkan")
             .with_inner_size(LogicalSize::new(1280, 720));
-        let window = event_loop
-            .create_window(window_attributes)
-            .expect("Failed to create window");
+        let window = event_loop.create_window(window_attributes)?;
         println!("🪟 Window created");
 
         capture_first_person_cursor(&window);
-        window
+        Ok(window)
     }
 
     fn set_up_scene(&mut self) -> Result<(), Box<dyn Error>> {
@@ -460,7 +467,19 @@ impl App {
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.window = Some(self.create_window(event_loop));
+        // Winit can emit Resumed more than once. Keep the existing ownership
+        // tree rather than replacing live GPU resources and the ImGui context.
+        if self.window.is_some() {
+            return;
+        }
+        match self.create_window(event_loop) {
+            Ok(window) => self.window = Some(window),
+            Err(error) => {
+                self.fatal_error = Some(Box::new(error));
+                event_loop.exit();
+                return;
+            }
+        }
 
         let mut imgui = ImGuiContext::create();
         let mut platform = WinitPlatform::new(&mut imgui);
@@ -477,7 +496,7 @@ impl ApplicationHandler for App {
                 self.vulkan_base = Some(vulkan_base);
             }
             Err(e) => {
-                eprintln!("Failed to create VulkanBase: {}", e);
+                self.fatal_error = Some(e);
                 event_loop.exit();
                 return;
             }
@@ -493,7 +512,7 @@ impl ApplicationHandler for App {
         self.imgui_renderer = Some(renderer);
 
         if let Err(e) = self.set_up_scene() {
-            eprintln!("Failed to set up scene: {}", e);
+            self.fatal_error = Some(e);
             event_loop.exit();
             return;
         }

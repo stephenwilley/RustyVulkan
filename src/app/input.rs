@@ -56,6 +56,9 @@ pub fn handle_window_event(
     event: WindowEvent,
 ) {
     if let Some(win) = &app.window {
+        if window_id != win.id() {
+            return;
+        }
         if let (Some(platform), Some(imgui)) = (app.platform.as_mut(), app.imgui.as_mut()) {
             let full_event: Event<()> = Event::WindowEvent {
                 window_id: win.id(),
@@ -160,6 +163,11 @@ pub fn handle_window_event(
                     }
                 }
                 WindowEvent::RedrawRequested => {
+                    let size = win.inner_size();
+                    if size.width == 0 || size.height == 0 {
+                        app.last_movement_update = Instant::now();
+                        return;
+                    }
                     // Exit requested via UI? Signal the event loop to exit.
                     if app.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
                         println!("👋 Exit requested from UI");
@@ -211,7 +219,10 @@ pub fn handle_window_event(
 
                     let mut graph = std::mem::take(&mut app.render_graph);
                     if let Err(e) = graph.execute(app) {
-                        eprintln!("draw_frame error: {}", e);
+                        app.fatal_error = Some(e);
+                        // A failure after acquisition may leave a reset fence
+                        // unsignalled. Retrying could hang the next frame.
+                        event_loop.exit();
                     }
                     app.render_graph = graph;
 

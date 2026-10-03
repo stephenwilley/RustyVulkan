@@ -570,11 +570,6 @@ impl VulkanBase {
     pub fn recreate_swapchain(&mut self, window: &Window) -> Result<(), Box<dyn Error>> {
         let old_color_format = self.swapchain.color_format;
         let old_depth_format = self.swapchain.depth_format;
-        unsafe {
-            self.device
-                .device_wait_idle()
-                .expect("Failed to wait device idle before recreating swapchain");
-        }
         self.swapchain.recreate(
             &self.instance,
             &self.device,
@@ -589,6 +584,7 @@ impl VulkanBase {
             self.device
                 .free_command_buffers(self.command_pool, &self.command_buffers);
         }
+        self.command_buffers.clear();
         self.command_buffers = Self::allocate_command_buffers(
             &self.device,
             self.command_pool,
@@ -596,7 +592,7 @@ impl VulkanBase {
             self.swapchain.swapchain_image_views.len(),
         )?;
         // Destroy old per-image present semaphores
-        for &sem in &self.render_finished_semaphores {
+        for sem in self.render_finished_semaphores.drain(..) {
             unsafe {
                 self.device.destroy_semaphore(sem, None);
             }
@@ -613,30 +609,35 @@ impl VulkanBase {
         }
         // Reset per-image fence tracking
         self.image_owner_fence = vec![vk::Fence::null(); new_image_count];
-        // Tear down old UBO buffers and descriptor pool
-        for (buf, alloc) in self.ubo_buffers.iter().zip(self.ubo_allocations.iter_mut()) {
-            unsafe {
-                self.allocator.as_ref().unwrap().destroy_buffer(*buf, alloc);
-            }
-        }
+        // Clear ownership as resources are destroyed, so a later allocation
+        // failure cannot make Drop destroy the same handles again.
         unsafe {
             self.device
                 .destroy_descriptor_pool(self.set0_descriptor_pool, None);
         }
+        self.set0_descriptor_pool = vk::DescriptorPool::null();
+        self.set0_descriptor_sets.clear();
+        for (buffer, mut allocation) in self
+            .ubo_buffers
+            .drain(..)
+            .zip(self.ubo_allocations.drain(..))
+        {
+            unsafe {
+                self.allocator
+                    .as_ref()
+                    .unwrap()
+                    .destroy_buffer(buffer, &mut allocation)
+            };
+        }
 
-        // Recreate UBO buffers and set0 descriptor sets for the new image count
-        let (new_ubo_buffers, new_ubo_allocations) =
-            Self::create_uniform_buffers(self.allocator.as_ref().unwrap(), new_image_count);
-        let (new_pool, new_sets) = Self::create_set0_descriptor_pool_and_sets(
-            &self.device,
-            self.set0_global_layout,
-            &new_ubo_buffers,
-        );
-
-        self.ubo_buffers = new_ubo_buffers;
-        self.ubo_allocations = new_ubo_allocations;
-        self.set0_descriptor_pool = new_pool;
-        self.set0_descriptor_sets = new_sets;
+        (self.ubo_buffers, self.ubo_allocations) =
+            Self::create_uniform_buffers(self.allocator.as_ref().unwrap(), new_image_count)?;
+        (self.set0_descriptor_pool, self.set0_descriptor_sets) =
+            Self::create_set0_descriptor_pool_and_sets(
+                &self.device,
+                self.set0_global_layout,
+                &self.ubo_buffers,
+            )?;
         self.shadow_descriptor_views = vec![vk::ImageView::null(); new_image_count];
 
         self.attachment_manager
@@ -647,6 +648,7 @@ impl VulkanBase {
             self.device
                 .destroy_query_pool(self.timestamp_query_pool, None);
         }
+        self.timestamp_query_pool = vk::QueryPool::null();
         let qp_info = vk::QueryPoolCreateInfo {
             query_type: vk::QueryType::TIMESTAMP,
             query_count: (new_image_count as u32) * TIMESTAMPS_PER_IMAGE,
@@ -743,9 +745,11 @@ impl Drop for VulkanBase {
         unsafe {
             // `Drop` gives us `&mut self`, but Vulkan does not know Rust's
             // ownership graph.  Destroy resources in reverse dependency order.
-            self.device
-                .device_wait_idle()
-                .expect("Failed to wait device idle");
+            // Destructors must not panic, including after device loss or while
+            // another error is unwinding the application's ownership tree.
+            if let Err(error) = self.device.device_wait_idle() {
+                eprintln!("Failed to wait for device during shutdown: {error}");
+            }
 
             self.attachment_manager
                 .cleanup(&self.device, self.allocator.as_ref().unwrap());

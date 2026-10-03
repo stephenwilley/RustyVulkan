@@ -38,10 +38,10 @@ pub struct Swapchain {
     pub depth_format: vk::Format,
     pub color_msaa_image: vk::Image,
     pub color_msaa_image_view: vk::ImageView,
-    pub color_msaa_allocation: Allocation,
+    color_msaa_allocation: Option<Allocation>,
     pub depth_msaa_image: vk::Image,
     pub depth_msaa_image_view: vk::ImageView,
-    pub depth_msaa_allocation: Allocation,
+    depth_msaa_allocation: Option<Allocation>,
 }
 
 impl Swapchain {
@@ -68,10 +68,35 @@ impl Swapchain {
         allocator: &Allocator,
         msaa_samples: u32,
     ) -> Result<Self, Box<dyn Error>> {
+        Self::new_with_old_swapchain(
+            instance,
+            device,
+            physical_device,
+            surface,
+            surface_loader,
+            window,
+            allocator,
+            msaa_samples,
+            vk::SwapchainKHR::null(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_old_swapchain(
+        instance: &Instance,
+        device: &ash::Device,
+        physical_device: vk::PhysicalDevice,
+        surface: &vk::SurfaceKHR,
+        surface_loader: &surface::Instance,
+        window: &Window,
+        allocator: &Allocator,
+        msaa_samples: u32,
+        old_swapchain: vk::SwapchainKHR,
+    ) -> Result<Self, Box<dyn Error>> {
         let swapchain_support =
             SwapchainSupportDetails::query(physical_device, *surface, surface_loader)?;
 
-        let surface_format = Self::choose_swap_surface_format(&swapchain_support.formats);
+        let surface_format = Self::choose_swap_surface_format(&swapchain_support.formats)?;
         let present_mode = Self::choose_swap_present_mode(&swapchain_support.present_modes);
         let extent = Self::choose_swap_extent(&swapchain_support.capabilities, window);
         let depth_format = vk::Format::D32_SFLOAT;
@@ -96,70 +121,87 @@ impl Swapchain {
             image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
             image_sharing_mode: vk::SharingMode::EXCLUSIVE,
             pre_transform: swapchain_support.capabilities.current_transform,
-            composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
+            composite_alpha: Self::choose_composite_alpha(
+                swapchain_support.capabilities.supported_composite_alpha,
+            )?,
             present_mode,
             clipped: vk::TRUE,
-            old_swapchain: vk::SwapchainKHR::null(),
+            old_swapchain,
             ..Default::default()
         };
 
         let swapchain_loader = swapchain::Device::new(instance, device);
         let handle = unsafe { swapchain_loader.create_swapchain(&create_info, None)? };
 
-        let swapchain_images = unsafe { swapchain_loader.get_swapchain_images(handle)? };
-        let image_count = swapchain_images.len();
-        println!("🖼️ Swapchain created with {} images", image_count);
-
-        let (color_msaa_image, color_msaa_allocation) = Self::create_msaa_image(
-            allocator,
-            extent,
-            surface_format.format,
-            msaa_samples,
-            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
-        )?;
-        let color_msaa_image_view = Self::create_msaa_image_view(
-            device,
-            &color_msaa_image,
-            surface_format.format,
-            vk::ImageAspectFlags::COLOR,
-        )?;
-        let (depth_msaa_image, depth_msaa_allocation) = Self::create_msaa_image(
-            allocator,
-            extent,
-            depth_format,
-            msaa_samples,
-            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
-                | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
-        )?;
-        let depth_msaa_image_view = Self::create_msaa_image_view(
-            device,
-            &depth_msaa_image,
-            depth_format,
-            vk::ImageAspectFlags::DEPTH,
-        )?;
-
-        let swapchain_image_views =
-            Self::create_image_views(device, &swapchain_images, surface_format.format)?;
-
-        Ok(Self {
+        // Keep ownership recorded as each fallible step succeeds, so any later
+        // failure can release exactly the resources that were created.
+        let mut swapchain = Self {
             handle,
-            images: swapchain_images,
-            swapchain_image_views,
+            images: Vec::new(),
+            swapchain_image_views: Vec::new(),
             extent,
             color_format: surface_format.format,
             depth_format,
-            color_msaa_image,
-            color_msaa_image_view,
-            color_msaa_allocation,
-            depth_msaa_image,
-            depth_msaa_image_view,
-            depth_msaa_allocation,
-        })
+            color_msaa_image: vk::Image::null(),
+            color_msaa_image_view: vk::ImageView::null(),
+            color_msaa_allocation: None,
+            depth_msaa_image: vk::Image::null(),
+            depth_msaa_image_view: vk::ImageView::null(),
+            depth_msaa_allocation: None,
+        };
+        let result = (|| -> Result<(), Box<dyn Error>> {
+            swapchain.images = unsafe { swapchain_loader.get_swapchain_images(handle)? };
+            let (image, allocation) = Self::create_msaa_image(
+                allocator,
+                extent,
+                surface_format.format,
+                msaa_samples,
+                vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+            )?;
+            swapchain.color_msaa_image = image;
+            swapchain.color_msaa_allocation = Some(allocation);
+            swapchain.color_msaa_image_view = Self::create_msaa_image_view(
+                device,
+                &image,
+                surface_format.format,
+                vk::ImageAspectFlags::COLOR,
+            )?;
+            let (image, allocation) = Self::create_msaa_image(
+                allocator,
+                extent,
+                depth_format,
+                msaa_samples,
+                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+                    | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
+            )?;
+            swapchain.depth_msaa_image = image;
+            swapchain.depth_msaa_allocation = Some(allocation);
+            swapchain.depth_msaa_image_view = Self::create_msaa_image_view(
+                device,
+                &image,
+                depth_format,
+                vk::ImageAspectFlags::DEPTH,
+            )?;
+            swapchain.swapchain_image_views =
+                Self::create_image_views(device, &swapchain.images, surface_format.format)?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            swapchain.cleanup(instance, device, allocator);
+            return Err(error);
+        }
+        println!(
+            "🖼️ Swapchain created with {} images",
+            swapchain.images.len()
+        );
+        Ok(swapchain)
     }
 
     /// Recreates the swapchain and associated resources when the window is resized.
-    /// This method waits for the device to be idle, cleans up existing resources,
-    /// and creates a new swapchain with the updated parameters.
+    /// This method waits for the device to be idle, creates the replacement,
+    /// then cleans up existing resources. Vulkan retires the old swapchain when
+    /// replacement creation is attempted; on failure it remains owned for
+    /// cleanup, but the caller must stop rendering.
     /// # Arguments
     /// * `instance` - The Vulkan `Instance` to use for creating the swapchain
     /// * `device` - The Vulkan logical device to use for creating resources
@@ -182,9 +224,9 @@ impl Swapchain {
         allocator: &Allocator,
         msaa_samples: u32,
     ) -> Result<(), Box<dyn Error>> {
-        self.cleanup(instance, device, allocator);
-
-        let new_swapchain = Swapchain::new(
+        // Synchronize before destroying images or views referenced by the GPU.
+        unsafe { device.device_wait_idle()? };
+        let new_swapchain = Self::new_with_old_swapchain(
             instance,
             device,
             physical_device,
@@ -193,7 +235,9 @@ impl Swapchain {
             window,
             allocator,
             msaa_samples,
+            self.handle,
         )?;
+        self.cleanup(instance, device, allocator);
         *self = new_swapchain;
 
         println!("🔄 Swapchain recreated successfully");
@@ -208,17 +252,36 @@ impl Swapchain {
     /// * `instance` - The Vulkan `Instance` to use for destroying the swapchain
     /// * `device` - The Vulkan logical device to use for destroying resources
     pub fn cleanup(&mut self, instance: &Instance, device: &ash::Device, allocator: &Allocator) {
+        // Taking allocations and clearing handles also makes cleanup safe to
+        // repeat after an aborted recreation. The caller must ensure GPU work
+        // that references these resources has completed.
         unsafe {
-            for &view in &self.swapchain_image_views {
+            for view in self.swapchain_image_views.drain(..) {
                 device.destroy_image_view(view, None);
             }
-            device.destroy_image_view(self.color_msaa_image_view, None);
-            allocator.destroy_image(self.color_msaa_image, &mut self.color_msaa_allocation);
-            device.destroy_image_view(self.depth_msaa_image_view, None);
-            allocator.destroy_image(self.depth_msaa_image, &mut self.depth_msaa_allocation);
+            device.destroy_image_view(
+                std::mem::replace(&mut self.color_msaa_image_view, vk::ImageView::null()),
+                None,
+            );
+            if let Some(mut allocation) = self.color_msaa_allocation.take() {
+                allocator.destroy_image(self.color_msaa_image, &mut allocation);
+            }
+            self.color_msaa_image = vk::Image::null();
+            device.destroy_image_view(
+                std::mem::replace(&mut self.depth_msaa_image_view, vk::ImageView::null()),
+                None,
+            );
+            if let Some(mut allocation) = self.depth_msaa_allocation.take() {
+                allocator.destroy_image(self.depth_msaa_image, &mut allocation);
+            }
+            self.depth_msaa_image = vk::Image::null();
             let swapchain_loader = swapchain::Device::new(instance, device);
-            swapchain_loader.destroy_swapchain(self.handle, None);
+            swapchain_loader.destroy_swapchain(
+                std::mem::replace(&mut self.handle, vk::SwapchainKHR::null()),
+                None,
+            );
         }
+        self.images.clear();
     }
 
     /// Chooses the best swap surface format from the available formats.
@@ -228,15 +291,39 @@ impl Swapchain {
     /// * `vk::SurfaceFormatKHR` - The chosen surface format.
     fn choose_swap_surface_format(
         available_formats: &[vk::SurfaceFormatKHR],
-    ) -> vk::SurfaceFormatKHR {
+    ) -> Result<vk::SurfaceFormatKHR, vk::Result> {
+        // Older implementations may report UNDEFINED to permit any format.
+        if let [format] = available_formats
+            && format.format == vk::Format::UNDEFINED
+        {
+            return Ok(vk::SurfaceFormatKHR {
+                format: vk::Format::B8G8R8A8_UNORM,
+                color_space: format.color_space,
+            });
+        }
         available_formats
             .iter()
-            .cloned()
+            .copied()
             .find(|f| {
                 f.format == vk::Format::B8G8R8A8_UNORM
                     && f.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
             })
-            .unwrap_or_else(|| available_formats[0])
+            .or_else(|| available_formats.first().copied())
+            .ok_or(vk::Result::ERROR_FORMAT_NOT_SUPPORTED)
+    }
+
+    fn choose_composite_alpha(
+        supported: vk::CompositeAlphaFlagsKHR,
+    ) -> Result<vk::CompositeAlphaFlagsKHR, vk::Result> {
+        [
+            vk::CompositeAlphaFlagsKHR::OPAQUE,
+            vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED,
+            vk::CompositeAlphaFlagsKHR::POST_MULTIPLIED,
+            vk::CompositeAlphaFlagsKHR::INHERIT,
+        ]
+        .into_iter()
+        .find(|mode| supported.contains(*mode))
+        .ok_or(vk::Result::ERROR_INITIALIZATION_FAILED)
     }
 
     /// Chooses the best swap present mode from the available present modes.
@@ -353,27 +440,35 @@ impl Swapchain {
         swapchain_images: &[vk::Image],
         swapchain_format: vk::Format,
     ) -> Result<Vec<vk::ImageView>, vk::Result> {
-        swapchain_images
-            .iter()
-            .map(|&image| {
-                let create_info = vk::ImageViewCreateInfo {
-                    image,
-                    view_type: vk::ImageViewType::TYPE_2D,
-                    format: swapchain_format,
-                    components: vk::ComponentMapping::default(),
-                    subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    },
-                    ..Default::default()
-                };
+        let mut views = Vec::with_capacity(swapchain_images.len());
+        for &image in swapchain_images {
+            let create_info = vk::ImageViewCreateInfo {
+                image,
+                view_type: vk::ImageViewType::TYPE_2D,
+                format: swapchain_format,
+                components: vk::ComponentMapping::default(),
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                ..Default::default()
+            };
 
-                unsafe { device.create_image_view(&create_info, None) }
-            })
-            .collect()
+            match unsafe { device.create_image_view(&create_info, None) } {
+                Ok(view) => views.push(view),
+                Err(error) => {
+                    // collect::<Result<_, _>>() would drop only the Rust handles.
+                    for view in views {
+                        unsafe { device.destroy_image_view(view, None) };
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        Ok(views)
     }
 
     // Render passes are no longer needed with dynamic rendering.
@@ -429,5 +524,77 @@ impl SwapchainSupportDetails {
             formats,
             present_modes,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Swapchain;
+    use ash::vk;
+
+    #[test]
+    fn empty_surface_formats_return_an_error() {
+        assert_eq!(
+            Swapchain::choose_swap_surface_format(&[]),
+            Err(vk::Result::ERROR_FORMAT_NOT_SUPPORTED)
+        );
+    }
+
+    #[test]
+    fn surface_format_prefers_supported_bgra_and_preserves_fallback() {
+        let fallback = vk::SurfaceFormatKHR {
+            format: vk::Format::R8G8B8A8_UNORM,
+            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+        };
+        let preferred = vk::SurfaceFormatKHR {
+            format: vk::Format::B8G8R8A8_UNORM,
+            ..fallback
+        };
+        let chosen = Swapchain::choose_swap_surface_format(&[fallback, preferred]).unwrap();
+        assert_eq!(chosen.format, preferred.format);
+        let chosen = Swapchain::choose_swap_surface_format(&[fallback]).unwrap();
+        assert_eq!(chosen.format, fallback.format);
+        assert_eq!(chosen.color_space, fallback.color_space);
+    }
+
+    #[test]
+    fn undefined_surface_format_allows_an_explicit_format() {
+        let chosen = Swapchain::choose_swap_surface_format(&[vk::SurfaceFormatKHR {
+            format: vk::Format::UNDEFINED,
+            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+        }])
+        .unwrap();
+        assert_eq!(chosen.format, vk::Format::B8G8R8A8_UNORM);
+        assert_eq!(chosen.color_space, vk::ColorSpaceKHR::SRGB_NONLINEAR);
+    }
+
+    #[test]
+    fn composite_alpha_uses_only_a_supported_mode() {
+        let transparent =
+            vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED | vk::CompositeAlphaFlagsKHR::INHERIT;
+        assert_eq!(
+            Swapchain::choose_composite_alpha(transparent),
+            Ok(vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED)
+        );
+        assert_eq!(
+            Swapchain::choose_composite_alpha(transparent | vk::CompositeAlphaFlagsKHR::OPAQUE),
+            Ok(vk::CompositeAlphaFlagsKHR::OPAQUE)
+        );
+        assert!(Swapchain::choose_composite_alpha(vk::CompositeAlphaFlagsKHR::empty()).is_err());
+    }
+
+    #[test]
+    fn present_mode_prefers_mailbox_and_falls_back_to_fifo() {
+        assert_eq!(
+            Swapchain::choose_swap_present_mode(&[vk::PresentModeKHR::FIFO]),
+            vk::PresentModeKHR::FIFO
+        );
+        assert_eq!(
+            Swapchain::choose_swap_present_mode(&[
+                vk::PresentModeKHR::FIFO,
+                vk::PresentModeKHR::MAILBOX,
+            ]),
+            vk::PresentModeKHR::MAILBOX
+        );
     }
 }

@@ -37,7 +37,8 @@ impl VulkanBase {
             name == vk::KHR_PORTABILITY_ENUMERATION_NAME
         });
 
-        // On MoltenVK we must enable portability enumeration; on Windows it's absent.
+        // Enable portability enumeration only when the active loader exposes it.
+        // KosmicKrisp does not need it, while MoltenVK and some other drivers do.
         let mut instance_flags = vk::InstanceCreateFlags::empty();
         if supports_portability_enum {
             extension_ptrs.push(vk::KHR_PORTABILITY_ENUMERATION_NAME.as_ptr());
@@ -205,7 +206,7 @@ impl VulkanBase {
             device_extensions.push(vk::KHR_DYNAMIC_RENDERING_NAME.as_ptr());
         }
         if has_portability_subset {
-            // Present on MoltenVK, absent on native Windows/NVIDIA
+            // Required by portability drivers such as MoltenVK; absent on KosmicKrisp.
             device_extensions.push(vk::KHR_PORTABILITY_SUBSET_NAME.as_ptr());
         }
 
@@ -302,11 +303,11 @@ impl VulkanBase {
         Ok(command_buffers)
     }
 
-    /// Create N host-visible, coherent uniform buffers sized for `GlobalUbo`.
+    /// Create N mapped host-visible uniform buffers sized for `GlobalUbo`.
     pub(super) fn create_uniform_buffers(
         allocator: &Allocator,
         count: usize,
-    ) -> (Vec<vk::Buffer>, Vec<Allocation>) {
+    ) -> Result<(Vec<vk::Buffer>, Vec<Allocation>), vk::Result> {
         let mut buffers = Vec::with_capacity(count);
         let mut allocations = Vec::with_capacity(count);
 
@@ -325,16 +326,21 @@ impl VulkanBase {
                     | vk_mem::AllocationCreateFlags::MAPPED,
                 ..Default::default()
             };
-            let (buffer, allocation) = unsafe {
-                allocator
-                    .create_buffer(&buffer_info, &alloc_info)
-                    .expect("create uniform buffer")
-            };
+            let (buffer, allocation) =
+                match unsafe { allocator.create_buffer(&buffer_info, &alloc_info) } {
+                    Ok(resource) => resource,
+                    Err(error) => {
+                        for (buffer, mut allocation) in buffers.into_iter().zip(allocations) {
+                            unsafe { allocator.destroy_buffer(buffer, &mut allocation) };
+                        }
+                        return Err(error);
+                    }
+                };
             buffers.push(buffer);
             allocations.push(allocation);
         }
 
-        (buffers, allocations)
+        Ok((buffers, allocations))
     }
 
     /// Build a descriptor pool and one set=0 descriptor set per swapchain image, then write binding 0 to each UBO.
@@ -342,7 +348,7 @@ impl VulkanBase {
         device: &ash::Device,
         layout: vk::DescriptorSetLayout,
         ubo_buffers: &[vk::Buffer],
-    ) -> (vk::DescriptorPool, Vec<vk::DescriptorSet>) {
+    ) -> Result<(vk::DescriptorPool, Vec<vk::DescriptorSet>), vk::Result> {
         let count = ubo_buffers.len() as u32;
 
         // Pool: one UBO and one sampler per set
@@ -362,11 +368,7 @@ impl VulkanBase {
             max_sets: count,
             ..Default::default()
         };
-        let pool = unsafe {
-            device
-                .create_descriptor_pool(&pool_info, None)
-                .expect("create set0 pool")
-        };
+        let pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
 
         // Allocate
         let layouts = vec![layout; count as usize];
@@ -376,10 +378,12 @@ impl VulkanBase {
             p_set_layouts: layouts.as_ptr(),
             ..Default::default()
         };
-        let sets = unsafe {
-            device
-                .allocate_descriptor_sets(&alloc_info)
-                .expect("alloc set0 sets")
+        let sets = match unsafe { device.allocate_descriptor_sets(&alloc_info) } {
+            Ok(sets) => sets,
+            Err(error) => {
+                unsafe { device.destroy_descriptor_pool(pool, None) };
+                return Err(error);
+            }
         };
 
         // Write binding 0
@@ -409,7 +413,7 @@ impl VulkanBase {
             device.update_descriptor_sets(&writes, &[]);
         }
 
-        (pool, sets)
+        Ok((pool, sets))
     }
 
     /// Creates the Vulkan ownership tree stored by `VulkanBase`.
@@ -543,9 +547,9 @@ impl VulkanBase {
 
         // Create sync objects: N frames-in-flight worth of semaphores/fences
         let image_count = swapchain.swapchain_image_views.len();
-        let (ubo_buffers, ubo_allocations) = Self::create_uniform_buffers(&allocator, image_count);
+        let (ubo_buffers, ubo_allocations) = Self::create_uniform_buffers(&allocator, image_count)?;
         let (set0_descriptor_pool, set0_descriptor_sets) =
-            Self::create_set0_descriptor_pool_and_sets(&device, set0_global_layout, &ubo_buffers);
+            Self::create_set0_descriptor_pool_and_sets(&device, set0_global_layout, &ubo_buffers)?;
 
         // Shadow sampler (no compare; better compatibility with portability subset on macOS)
         let sampler_info = vk::SamplerCreateInfo {

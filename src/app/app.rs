@@ -190,8 +190,8 @@ impl App {
             vulkan_base,
             MaterialProperties {
                 name: "InfinitePlaneMaterial".into(),
-                vs_path: "assets/shaders/spv/infinite_plane.vert.spv".into(),
-                fs_path: "assets/shaders/spv/infinite_plane.frag.spv".into(),
+                vertex_shader: "infinite_plane.vert.spv".into(),
+                fragment_shader: "infinite_plane.frag.spv".into(),
                 diffuse_texture_path: None,
                 normalmap_texture_path: None,
                 depth_write: false,
@@ -204,8 +204,8 @@ impl App {
                 // Vertex colours carry the biome; the dedicated fragment shader adds
                 // stable fine detail without requiring a large ground texture asset.
                 name: "TerrainBiomeMaterial".into(),
-                vs_path: "assets/shaders/spv/terrain.vert.spv".into(),
-                fs_path: "assets/shaders/spv/terrain.frag.spv".into(),
+                vertex_shader: "terrain.vert.spv".into(),
+                fragment_shader: "terrain.frag.spv".into(),
                 diffuse_texture_path: None,
                 normalmap_texture_path: None,
                 depth_write: true,
@@ -230,10 +230,7 @@ impl App {
             let rock = import_model_as_object_with_shared_textured_material(
                 path,
                 material_name,
-                [
-                    "assets/shaders/spv/rock.vert.spv",
-                    "assets/shaders/spv/rock.frag.spv",
-                ],
+                ["rock.vert.spv", "rock.frag.spv"],
                 vulkan_base,
                 &mut self.mesh_manager,
                 &mut self.material_manager,
@@ -271,8 +268,8 @@ impl App {
             vulkan_base,
             MaterialProperties {
                 name: "Cube1Material".into(),
-                vs_path: "assets/shaders/spv/main.vert.spv".into(),
-                fs_path: "assets/shaders/spv/main.frag.spv".into(),
+                vertex_shader: "main.vert.spv".into(),
+                fragment_shader: "main.frag.spv".into(),
                 diffuse_texture_path: Some("assets/textures/cube1/diffuse.png".into()),
                 normalmap_texture_path: Some("assets/textures/cube1/normal.png".into()),
                 depth_write: true,
@@ -304,8 +301,8 @@ impl App {
             vulkan_base,
             MaterialProperties {
                 name: "Cube2Material".into(),
-                vs_path: "assets/shaders/spv/main.vert.spv".into(),
-                fs_path: "assets/shaders/spv/main.frag.spv".into(),
+                vertex_shader: "main.vert.spv".into(),
+                fragment_shader: "main.frag.spv".into(),
                 diffuse_texture_path: Some("assets/textures/cube2/diffuse.png".into()),
                 normalmap_texture_path: Some("assets/textures/cube2/normal.png".into()),
                 depth_write: true,

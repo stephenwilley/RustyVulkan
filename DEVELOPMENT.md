@@ -12,7 +12,9 @@
   attachment transitions. It is a linear pass scheduler, not a general graph compiler.
 - `assets/shaders/` contains GLSL sources. Add new sources to `SHADERS` in
   `build.rs`; Cargo tracks that list plus the shared `global.glsl` interface and
-  the script regenerates SPIR-V when rerun.
+  the script regenerates SPIR-V in Cargo's `OUT_DIR` when rerun. A generated
+  Rust table embeds the results in the executable, so no shader binaries need
+  copying into the application bundle.
 
 ## Ownership and failure handling
 
@@ -79,9 +81,8 @@ startup paths and grass uploads still need
 ownership guards for every partial failure. Several helpers still panic on Vulkan
 errors. Avoid copying those paths as a complete production error-handling model.
 
-Further improvements include moving generated shaders to Cargo's `OUT_DIR`
-(and adapting loading and packaging), tightening resource APIs so callers cannot
-destroy borrowed handles, and validating on additional drivers and platforms.
+Further improvements include tightening resource APIs so callers cannot destroy
+borrowed handles, and validating on additional drivers and platforms.
 The desktop resume guard prevents repeated initialization; mobile surface-loss
 and suspension handling have not been implemented.
 

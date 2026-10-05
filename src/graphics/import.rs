@@ -35,7 +35,7 @@ pub fn import_model_as_object(
 pub fn import_model_as_object_with_shared_textured_material(
     path: &str,
     shared_material_name: &str,
-    textured_shader_paths: [&str; 2],
+    textured_shader_names: [&str; 2],
     vb: &VulkanBase,
     meshes: &mut MeshManager,
     mats: &mut MaterialManager,
@@ -43,7 +43,7 @@ pub fn import_model_as_object_with_shared_textured_material(
     crate::graphics::assimp_loader::import_model_as_object_with_shared_textured_material(
         path,
         shared_material_name,
-        textured_shader_paths,
+        textured_shader_names,
         vb,
         meshes,
         mats,

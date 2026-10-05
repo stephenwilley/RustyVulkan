@@ -197,14 +197,8 @@ struct SkyShaders {
 impl SkyShaders {
     fn load() -> Result<Self, Box<dyn Error>> {
         Ok(Self {
-            vertex: ShaderStageInfo::load(
-                vk::ShaderStageFlags::VERTEX,
-                "assets/shaders/spv/sky.vert.spv",
-            )?,
-            fragment: ShaderStageInfo::load(
-                vk::ShaderStageFlags::FRAGMENT,
-                "assets/shaders/spv/sky.frag.spv",
-            )?,
+            vertex: ShaderStageInfo::load(vk::ShaderStageFlags::VERTEX, "sky.vert.spv")?,
+            fragment: ShaderStageInfo::load(vk::ShaderStageFlags::FRAGMENT, "sky.frag.spv")?,
         })
     }
 }

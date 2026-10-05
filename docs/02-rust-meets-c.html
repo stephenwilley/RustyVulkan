@@ -162,7 +162,7 @@ Ok(unsafe { entry.create_instance(&amp;create_info, None)? })</code></pre><figca
       for an interface that a type can implement; here it supplies the zero/empty value.</p>
       <p><code>ash</code> also offers <em>builder methods</em>, one per field, which you'll see in places. Here
       <code>code</code> is the SPIR-V shader program as a slice of 32-bit words:</p>
-      <!--x src/graphics/shaders.rs 53--><figure class="code"><pre><code class="language-rust">vk::ShaderModuleCreateInfo::default().code(&amp;self.code)</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/shaders.rs#L53">src/graphics/shaders.rs:53</a></figcaption></figure><!--/x-->
+      <!--x src/graphics/shaders.rs 58--><figure class="code"><pre><code class="language-rust">vk::ShaderModuleCreateInfo::default().code(&amp;self.code)</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shaders.rs#L58-L58">src/graphics/shaders.rs:58</a></figcaption></figure><!--/x-->
       <p>The difference matters. A raw <code>.as_ptr()</code> pointer in a struct literal is invisible to the
       compiler: if the vector it points into were freed before the create call, you'd pass a dangling pointer,
       just as in C. Builder methods take a Rust reference instead, and <code>ash</code>'s structs carry a
@@ -331,7 +331,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
     managers built on top of it. After a <code>drop</code> body finishes, Rust drops the struct's fields in
     declaration order, which isn't the order Vulkan needs. So <code>App::drop</code> takes the backend out first, cleans up everything that
     depends on it, and only then lets it go:</p>
-    <!--x src/app/app.rs 557-568,583-591--><figure class="code"><pre><code class="language-rust">impl Drop for App {
+    <!--x src/app/app.rs 554-565,580-588--><figure class="code"><pre><code class="language-rust">impl Drop for App {
     fn drop(&amp;mut self) {
         // `take` moves VulkanBase out of the Option.  Its own Drop runs only
         // after the managers below release resources that depend on its device.
@@ -352,7 +352,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
             }
         }
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L557-L591">src/app/app.rs:557-568,583-591</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L554-L588">src/app/app.rs:554-565,580-588</a></figcaption></figure><!--/x-->
     <p>At the end of the <code>if let</code> block, <code>vb</code> goes out of scope and <code>VulkanBase</code>'s own
     <code>Drop</code>, above, runs last.</p>
 

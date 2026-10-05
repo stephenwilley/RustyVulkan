@@ -27,8 +27,8 @@ pub struct MaterialManager {
 /// Properties for creating a new material.
 pub struct MaterialProperties {
     pub name: String,
-    pub vs_path: String,
-    pub fs_path: String,
+    pub vertex_shader: String,
+    pub fragment_shader: String,
     pub diffuse_texture_path: Option<String>,
     pub normalmap_texture_path: Option<String>,
     pub depth_write: bool,
@@ -78,8 +78,8 @@ impl MaterialManager {
                 props.name,
                 vb,
                 &mut self.texture_cache,
-                props.vs_path,
-                props.fs_path,
+                props.vertex_shader,
+                props.fragment_shader,
                 props.diffuse_texture_path,
                 props.normalmap_texture_path,
                 props.depth_write,

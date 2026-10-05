@@ -8,7 +8,7 @@
 // and compiles the GLSL files listed in `SHADERS`
 // into SPIR-V binaries using the `shaderc` crate.
 //
-// The output `.spv` files are written alongside the originals for later loading by Vulkan.
+// SPIR-V and its Rust include manifest are written into Cargo OUT_DIR and embedded in the binary.
 //
 // Note:
 //   • Add new shader source files to `SHADERS` below
@@ -47,9 +47,11 @@ fn compile_shaders() {
     let shader_dir = Path::new("assets/shaders");
     let compiler = shaderc::Compiler::new().unwrap();
     println!("cargo:rerun-if-changed=assets/shaders/global.glsl");
-    let spv_dir = shader_dir.join("spv");
+    let output_dir = std::path::PathBuf::from(env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
+    let spv_dir = output_dir.join("shaders");
     fs::create_dir_all(&spv_dir).unwrap();
 
+    let mut manifest = String::from("const EMBEDDED_SHADERS: &[(&str, &[u8])] = &[\n");
     for shader_name in SHADERS {
         let path = shader_dir.join(shader_name);
         println!("cargo:rerun-if-changed={}", path.display());
@@ -104,7 +106,13 @@ fn compile_shaders() {
             .expect("📝 Shader compilation failed");
 
         fs::write(&spv_path, binary_result.as_binary_u8()).unwrap();
+        let name = format!("{shader_name}.spv");
+        manifest.push_str(&format!(
+            "    ({name:?}, include_bytes!(concat!(env!(\"OUT_DIR\"), \"/shaders/\", {name:?}))),\n"
+        ));
     }
+    manifest.push_str("];\n");
+    fs::write(output_dir.join("shader_assets.rs"), manifest).unwrap();
 }
 
 fn configure_macos_vulkan_linking() {

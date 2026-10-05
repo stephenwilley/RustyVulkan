@@ -215,14 +215,8 @@ impl ImGuiRenderer {
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
     pub fn rebuild_pipeline(&mut self, base: &VulkanBase) -> Result<(), Box<dyn Error>> {
-        let vert_stage = ShaderStageInfo::load(
-            vk::ShaderStageFlags::VERTEX,
-            "assets/shaders/spv/imgui.vert.spv",
-        )?;
-        let frag_stage = ShaderStageInfo::load(
-            vk::ShaderStageFlags::FRAGMENT,
-            "assets/shaders/spv/imgui.frag.spv",
-        )?;
+        let vert_stage = ShaderStageInfo::load(vk::ShaderStageFlags::VERTEX, "imgui.vert.spv")?;
+        let frag_stage = ShaderStageInfo::load(vk::ShaderStageFlags::FRAGMENT, "imgui.frag.spv")?;
         let mut vert_module = vert_stage.module_create_info();
         let mut frag_module = frag_stage.module_create_info();
         let shader_stages = [

@@ -17,17 +17,11 @@ pub(super) struct GrassShaders {
 impl GrassShaders {
     pub(super) fn load() -> Result<Self, Box<dyn Error>> {
         Ok(Self {
-            vertex: ShaderStageInfo::load(
-                vk::ShaderStageFlags::VERTEX,
-                "assets/shaders/spv/grass.vert.spv",
-            )?,
-            fragment: ShaderStageInfo::load(
-                vk::ShaderStageFlags::FRAGMENT,
-                "assets/shaders/spv/grass.frag.spv",
-            )?,
+            vertex: ShaderStageInfo::load(vk::ShaderStageFlags::VERTEX, "grass.vert.spv")?,
+            fragment: ShaderStageInfo::load(vk::ShaderStageFlags::FRAGMENT, "grass.frag.spv")?,
             mid_fragment: ShaderStageInfo::load(
                 vk::ShaderStageFlags::FRAGMENT,
-                "assets/shaders/spv/grass_mid.frag.spv",
+                "grass_mid.frag.spv",
             )?,
         })
     }

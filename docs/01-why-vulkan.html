@@ -285,12 +285,12 @@ use std::path::PathBuf;</code></pre><figcaption><a href="https://github.com/step
     </aside>
 
     <h2>Finding the assets when launched from Finder</h2>
-    <p>The renderer loads shaders, models and textures by relative paths like <code>assets/shaders/…</code>.
+    <p>The renderer loads models and textures by relative paths under <code>assets/</code>.
     That works under <code>cargo run</code>, which starts the program in the repository folder. When the app is
     double-clicked in Finder, though, the working directory is meaningless. So <code>configure_runtime</code>
     checks whether the executable lives inside a macOS app bundle (<code>Something.app/Contents/MacOS/</code>)
     and, if so, moves the working directory to the bundle's <code>Contents/Resources</code>, where the packaging
-    script copies the assets (<a href="16-app-shell.html">Chapter 16</a>).</p>
+    script copies the assets (<a href="16-app-shell.html">Chapter 16</a>). Shaders are compiled during the build and embedded in the executable.</p>
     <!--x src/main.rs 23-37--><figure class="code"><pre><code class="language-rust">fn configure_runtime() -&gt; std::io::Result&lt;()&gt; {
     let executable = std::env::current_exe()?;
     let bundle_resources = executable

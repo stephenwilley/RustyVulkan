@@ -324,7 +324,7 @@ let image_info = vk::DescriptorImageInfo {
     sampler,
     image_view,
     image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/sky.rs#L39-L49">src/graphics/sky.rs:39-49</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/sky.rs#L39-L49">src/graphics/sky.rs:39-49</a></figcaption></figure><!--/x-->
     <p>The sampler and view go into a <code>DescriptorImageInfo</code>, which <code>draw</code> pushes as set 0
     each frame, the same way materials push their textures (<a href="08-descriptors-materials.html">Chapter 8</a>).
     Its pipeline is the <code>new_background</code> variant from <a href="07-pipelines.html">Chapter 7</a>: no
@@ -354,7 +354,7 @@ let image_info = vk::DescriptorImageInfo {
     rotation_only_view.w = Vector4::new(0.0, 0.0, 0.0, 1.0);
     let inverse_view_projection = (*camera.get_projection() * rotation_only_view)
         .invert()
-        .unwrap_or_else(Matrix4::identity);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/sky.rs#L162-L167">src/graphics/sky.rs:162-167</a></figcaption></figure><!--/x-->
+        .unwrap_or_else(Matrix4::identity);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/sky.rs#L162-L167">src/graphics/sky.rs:162-167</a></figcaption></figure><!--/x-->
     <p>The fragment shader converts the interpolated direction to longitude and latitude, the panorama's two
     texture coordinates:</p>
     <!--x assets/shaders/sky.frag 22-28--><figure class="code"><pre><code class="language-glsl">void main() {

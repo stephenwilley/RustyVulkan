@@ -42,3 +42,7 @@ so a driver can still be selected explicitly for diagnostics.
 See [PACKAGING.md](PACKAGING.md) for creating a standalone macOS application.
 See [DEVELOPMENT.md](DEVELOPMENT.md) for the code map, ownership rules, and checks.
 See the [RustyVulkan guide](https://stephenwilley.github.io/RustyVulkan/) for a chapter-by-chapter explanation of how the renderer works.
+
+Shaders are compiled by `build.rs` into Cargo's `OUT_DIR` and embedded in the
+executable. Rebuilding after a GLSL or `global.glsl` edit updates them; there are
+no runtime `.spv` files to install. Models and textures remain external assets.

@@ -68,7 +68,7 @@
           <text x="245" y="192" text-anchor="middle" class="muted">SPIR-V binary</text>
           <rect class="box-accent" x="350" y="140" width="130" height="70" rx="8"/>
           <text x="415" y="170" text-anchor="middle" font-weight="700" font-size="13">ShaderStageInfo</text>
-          <text x="415" y="192" text-anchor="middle" class="muted">read at start-up</text>
+          <text x="415" y="192" text-anchor="middle" class="muted">embedded bytes</text>
           <rect class="box-accent" x="500" y="140" width="120" height="70" rx="8"/>
           <text x="560" y="170" text-anchor="middle" font-weight="700">Pipeline</text>
           <text x="560" y="192" text-anchor="middle" class="muted">Chapter 7</text>
@@ -78,8 +78,7 @@
         <path class="wire" marker-end="url(#sha)" d="M310 175 H347"/>
         <path class="wire" marker-end="url(#sha)" d="M480 175 H497"/>
       </svg>
-      <figcaption>Cargo runs <code>build.rs</code> before compiling the Rust code. The program then loads the
-      <code>.spv</code> files from disk when it builds its pipelines.</figcaption>
+      <figcaption>Cargo runs <code>build.rs</code> before compiling the Rust code. The generated SPIR-V is embedded in the executable and decoded when pipelines are built.</figcaption>
     </figure>
 
     <h3>How a shader gets its data</h3>
@@ -127,7 +126,8 @@ const SHADERS: &amp;[&amp;str] = &amp;[
 ];</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/build.rs#L23-L44">build.rs:23-27,43-44</a></figcaption></figure><!--/x-->
     <p>As the comment says, the list doubles as a manifest. For each entry, the script tells Cargo to rerun it
     if that file changes, works out the shader stage from the extension, and compiles:</p>
-    <!--x build.rs 53-69,80-106--><figure class="code"><pre><code class="language-rust">for shader_name in SHADERS {
+    <!--x build.rs 54-71,82-108--><figure class="code"><pre><code class="language-rust">let mut manifest = String::from("const EMBEDDED_SHADERS: &amp;[(&amp;str, &amp;[u8])] = &amp;[\n");
+for shader_name in SHADERS {
     let path = shader_dir.join(shader_name);
     println!("cargo:rerun-if-changed={}", path.display());
 
@@ -171,32 +171,30 @@ const SHADERS: &amp;[&amp;str] = &amp;[
         )
         .expect("📝 Shader compilation failed");
 
-    fs::write(&amp;spv_path, binary_result.as_binary_u8()).unwrap();</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/build.rs#L53-L106">build.rs:53-69,80-106</a></figcaption></figure><!--/x-->
+    fs::write(&amp;spv_path, binary_result.as_binary_u8()).unwrap();</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/build.rs#L54-L108">build.rs:54-71,82-108</a></figcaption></figure><!--/x-->
     <p><code>set_target_env(Vulkan, 0)</code> selects Vulkan's flavour of GLSL, which adds things OpenGL GLSL
     lacks, such as descriptor <code>set</code> numbers and push constants. The <code>0</code> means the default
     target, Vulkan 1.0's SPIR-V, which is all these shaders need. (<code>shaderc</code> is Google's wrapper
     around glslang, Khronos's reference GLSL compiler.) The
-    output lands next to the sources in <code>assets/shaders/spv/</code>, which is git-ignored. Failures use
+    output goes to <code>shaders/</code> under Cargo's <code>OUT_DIR</code>, inside <code>target/</code>. Failures use
     <code>expect</code> and <code>panic!</code>, which abort the build with the compiler's message. That's
     exactly right for a build script: a shader typo shows up as a build error, not a run-time surprise.</p>
-    <p>Two practical consequences. The generated <code>.spv</code> files are deliberately not watched, so if
-    you delete them, Cargo won't notice until a shader or <code>build.rs</code> changes (touch
-    <code>build.rs</code> to force it). And the program loads them by relative paths such as
-    <code>assets/shaders/spv/main.vert.spv</code>, so run it from the repository root, or from an app bundle
-    (<a href="01-why-vulkan.html">Chapter 1</a>).</p>
+    <p>The script also generates a Rust table using <code>include_bytes!</code> for each compiled shader.
+    <code>ShaderStageInfo</code> includes that table with <code>include!(concat!(env!("OUT_DIR"),
+    "/shader_assets.rs"))</code>. Both macros run during Rust compilation: the finished executable contains
+    the SPIR-V and needs no shader files at run time. Add a shader to <code>SHADERS</code> to compile and embed
+    it; after editing GLSL or the shared include, rebuild to update the executable.</p>
+    <p>Models and textures still come from external assets, so launch from the repository root or the packaged
+    application as described in <a href="01-why-vulkan.html">Chapter 1</a>.</p>
     <aside class="callout rust"><p class="callout-title">Rust note · let-else</p>
       <p><code>let Some(shader_kind) = shader_kind else { continue; };</code> either unpacks the value or runs
       the <code>else</code> block, which must leave the current scope (here, skip to the next shader). It
       avoids nesting the rest of the loop inside an <code>if let</code>.</p>
     </aside>
-    <aside class="callout aside"><p class="callout-title">Not finished yet</p>
-      <p>Build scripts are supposed to write generated files into Cargo's <code>OUT_DIR</code>, not into the
-      source tree. <code>DEVELOPMENT.md</code> lists moving the SPIR-V there as future work, along with
-      adapting loading and packaging to match.</p>
-    </aside>
+
     <p>The same script also finds the Vulkan loader on macOS so the <code>linked</code> build of
     <code>ash</code> (<a href="01-why-vulkan.html">Chapter 1</a>) can link against it:</p>
-    <!--x build.rs 123-131--><figure class="code"><pre><code class="language-rust">let library_dir = candidates
+    <!--x build.rs 131-139--><figure class="code"><pre><code class="language-rust">let library_dir = candidates
     .into_iter()
     .find(|directory| directory.join("libvulkan.dylib").is_file())
     .expect(
@@ -204,7 +202,7 @@ const SHADERS: &amp;[&amp;str] = &amp;[
     );
 
 println!("cargo:rustc-link-search=native={}", library_dir.display());
-println!("cargo:rustc-link-arg=-Wl,-rpath,{}", library_dir.display());</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/build.rs#L123-L131">build.rs:123-131</a></figcaption></figure><!--/x-->
+println!("cargo:rustc-link-arg=-Wl,-rpath,{}", library_dir.display());</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/build.rs#L131-L139">build.rs:131-139</a></figcaption></figure><!--/x-->
     <p>It tells the linker where <code>libvulkan.dylib</code> is, and adds an <em>rpath</em> so the finished
     program can find it again at run time.</p>
 
@@ -215,28 +213,30 @@ println!("cargo:rustc-link-arg=-Wl,-rpath,{}", library_dir.display());</code></p
 
     <h2>Loading SPIR-V</h2>
 
-
-    <p>At run time, <code>ShaderStageInfo::load</code> reads a <code>.spv</code> file and records which stage
+    <p>At run time, <code>ShaderStageInfo::load</code> looks up embedded SPIR-V by name and records which stage
     (vertex or fragment) it's for:</p>
-    <!--x src/graphics/shaders.rs 26-30,39-49--><figure class="code"><pre><code class="language-rust">/// One programmable stage (vertex or fragment) and its SPIR-V.
+    <!--x src/graphics/shaders.rs 29-33,41-54--><figure class="code"><pre><code class="language-rust">/// One programmable stage (vertex or fragment) and its SPIR-V.
 pub struct ShaderStageInfo {
     pub stage: vk::ShaderStageFlags,
     code: Vec&lt;u32&gt;,
 }
 // ...
-    pub fn load(
-        stage: vk::ShaderStageFlags,
-        path: impl AsRef&lt;Path&gt;,
-    ) -&gt; Result&lt;Self, Box&lt;dyn Error&gt;&gt; {
-        let mut file = std::fs::File::open(path)?;
+    /// * `Result&lt;Self, Box&lt;dyn Error&gt;&gt;` - The loaded stage, or an unknown-name or SPIR-V decoding error.
+    pub fn load(stage: vk::ShaderStageFlags, name: &amp;str) -&gt; Result&lt;Self, Box&lt;dyn Error&gt;&gt; {
+        let bytes = EMBEDDED_SHADERS
+            .iter()
+            .find(|(shader_name, _)| *shader_name == name)
+            .map(|(_, bytes)| *bytes)
+            .ok_or_else(|| format!("unknown embedded shader: {name}"))?;
+        let mut file = Cursor::new(bytes);
         // A byte buffer need not be u32-aligned. Ash also validates the magic
         // number and handles byte-swapped SPIR-V, returning an I/O error for
         // malformed input instead of panicking during a slice cast.
         let code = ash::util::read_spv(&amp;mut file)?;
         Ok(Self { stage, code })
-    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/shaders.rs#L26-L49">src/graphics/shaders.rs:26-49</a></figcaption></figure><!--/x-->
+    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shaders.rs#L29-L54">src/graphics/shaders.rs:29-33,41-54</a></figcaption></figure><!--/x-->
     <p>SPIR-V is a sequence of 32-bit words, and Vulkan wants it as a pointer to <code>u32</code>s.
-    <code>ash::util::read_spv</code> reads the file into a properly aligned <code>Vec&lt;u32&gt;</code> and
+    <code>ash::util::read_spv</code> decodes the embedded bytes into a properly aligned <code>Vec&lt;u32&gt;</code> and
     checks the SPIR-V header, which is safer than reinterpreting raw bytes. Nothing has been given to Vulkan
     yet: the words just sit in memory.</p>
     <p>They reach the driver when a pipeline is created (<a href="07-pipelines.html">Chapter 7</a>). Each
@@ -244,7 +244,7 @@ pub struct ShaderStageInfo {
     <code>VK_KHR_maintenance5</code> extension (<a href="03-instance-devices.html">Chapter 3</a>) the SPIR-V can
     be chained straight onto it as a <code>ShaderModuleCreateInfo</code>, using <code>push_next</code> from
     <a href="02-rust-meets-c.html#rust-builders">Chapter 2</a>:</p>
-    <!--x src/graphics/shaders.rs 51-65--><figure class="code"><pre><code class="language-rust">/// Describes this stage's SPIR-V, ready to chain into its pipeline stage info.
+    <!--x src/graphics/shaders.rs 56-70--><figure class="code"><pre><code class="language-rust">/// Describes this stage's SPIR-V, ready to chain into its pipeline stage info.
 pub fn module_create_info(&amp;self) -&gt; vk::ShaderModuleCreateInfo&lt;'_&gt; {
     vk::ShaderModuleCreateInfo::default().code(&amp;self.code)
 }
@@ -258,7 +258,7 @@ pub fn to_create_info&lt;'a&gt;(
         .stage(self.stage)
         .name(ENTRY_POINT)
         .push_next(module_info)
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/shaders.rs#L51-L65">src/graphics/shaders.rs:51-65</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shaders.rs#L56-L70">src/graphics/shaders.rs:56-70</a></figcaption></figure><!--/x-->
     <p>The driver compiles the stage as part of building the pipeline, so there's no separate shader object to
     create first and destroy afterwards. Both structs only borrow: the stage info points at the module info,
     which points at the words, so a pipeline builder keeps all three alive until
@@ -272,12 +272,15 @@ pub fn to_create_info&lt;'a&gt;(
       string literal compiled into the binary, valid for the whole run.</p>
     </aside>
     <p>Materials load their vertex/fragment pair together:</p>
-    <!--x src/graphics/material.rs 208-213--><figure class="code"><pre><code class="language-rust">pub fn load(vs_path: String, fs_path: String) -&gt; Result&lt;Self, Box&lt;dyn std::error::Error&gt;&gt; {
+    <!--x src/graphics/material.rs 208-216--><figure class="code"><pre><code class="language-rust">pub fn load(
+    vertex_shader: String,
+    fragment_shader: String,
+) -&gt; Result&lt;Self, Box&lt;dyn std::error::Error&gt;&gt; {
     Ok(LoadedShaders {
-        vertex: ShaderStageInfo::load(vk::ShaderStageFlags::VERTEX, vs_path)?,
-        fragment: ShaderStageInfo::load(vk::ShaderStageFlags::FRAGMENT, fs_path)?,
+        vertex: ShaderStageInfo::load(vk::ShaderStageFlags::VERTEX, &amp;vertex_shader)?,
+        fragment: ShaderStageInfo::load(vk::ShaderStageFlags::FRAGMENT, &amp;fragment_shader)?,
     })
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/material.rs#L208-L213">src/graphics/material.rs:208-213</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/material.rs#L208-L216">src/graphics/material.rs:208-216</a></figcaption></figure><!--/x-->
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
       <p>There's no equivalent of <code>glLinkProgram</code> here. In OpenGL, linking joined the stages and
       checked their interfaces. In Vulkan, that joining happens when a pipeline is created

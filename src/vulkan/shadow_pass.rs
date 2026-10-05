@@ -62,10 +62,8 @@ impl ShadowPass {
         self.pipeline_layout = unsafe { device.create_pipeline_layout(&layout_info, None)? };
 
         // Load vertex shader (no fragment stage)
-        let vs_stage = ShaderStageInfo::load(
-            vk::ShaderStageFlags::VERTEX,
-            "assets/shaders/spv/shadow_depth.vert.spv",
-        )?;
+        let vs_stage =
+            ShaderStageInfo::load(vk::ShaderStageFlags::VERTEX, "shadow_depth.vert.spv")?;
         let mut vs_module = vs_stage.module_create_info();
         let stages = [vs_stage.to_create_info(&mut vs_module)];
 

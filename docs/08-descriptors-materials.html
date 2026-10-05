@@ -281,7 +281,7 @@ pub fn update_shadow_descriptor(&amp;mut self, image_index: usize, image_view: v
     Some([image_info(diffuse_view), image_info(normal_view)])
 } else {
     None
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/material.rs#L98-L114">src/graphics/material.rs:98-114</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/material.rs#L98-L114">src/graphics/material.rs:98-114</a></figcaption></figure><!--/x-->
     <p>A <code>DescriptorImageInfo</code> is exactly what a texture descriptor holds, so the material keeps
     these two and needs nothing else to draw. The layout for set 1 has two image-sampler bindings, and the
     <code>PUSH_DESCRIPTOR_KHR</code> flag marks it as a push-descriptor layout:</p>
@@ -298,7 +298,7 @@ pub fn update_shadow_descriptor(&amp;mut self, image_index: usize, image_view: v
         .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR)
         .bindings(&amp;bindings);
     unsafe { device.create_descriptor_set_layout(&amp;layout_info, None) }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/material.rs#L57-L70">src/graphics/material.rs:57-70</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/material.rs#L57-L70">src/graphics/material.rs:57-70</a></figcaption></figure><!--/x-->
     <p>The pipeline layout then lists the set layouts in order. Set numbers are positions in this list, which
     is why the comment insists they be contiguous from 0:</p>
     <!--x src/graphics/material.rs 122-130--><figure class="code"><pre><code class="language-rust">// Pipeline layout must be contiguous sets starting at 0.
@@ -309,7 +309,7 @@ let layouts = if textures.is_some() {
     vec![vb.set0_global_layout] // set 0 only
 };
 
-let pipeline = Pipeline::new(&amp;vb.device, &amp;layouts, depth_write)?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/material.rs#L122-L130">src/graphics/material.rs:122-130</a></figcaption></figure><!--/x-->
+let pipeline = Pipeline::new(&amp;vb.device, &amp;layouts, depth_write)?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/material.rs#L122-L130">src/graphics/material.rs:122-130</a></figcaption></figure><!--/x-->
     <p>An untextured material has only set 0, and its shaders (<code>vertex_color.*</code>) declare only set
     0. A textured one records its two descriptors into the command buffer whenever it's selected for drawing:</p>
     <!--x src/graphics/material.rs 156-176--><figure class="code"><pre><code class="language-rust">/// Records this material's textures as set 1 for the draws that follow.
@@ -332,7 +332,7 @@ pub fn push_textures(&amp;self, vb: &amp;VulkanBase, cmd: vk::CommandBuffer) {
             &amp;writes,
         );
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/material.rs#L156-L176">src/graphics/material.rs:156-176</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/material.rs#L156-L176">src/graphics/material.rs:156-176</a></figcaption></figure><!--/x-->
     <p><code>std::slice::from_ref</code> turns a reference to one value into a one-element slice, which is
     what the builder's <code>image_info</code> expects. The layout given is <code>SHADER_READ_ONLY_OPTIMAL</code>,
     the layout the texture <em>will</em> be in. When the material is created, its upload is only recorded, not run (<a href="05-gpu-memory.html#staging">Chapter 5</a>).
@@ -351,8 +351,8 @@ pub fn push_textures(&amp;self, vb: &amp;VulkanBase, cmd: vk::CommandBuffer) {
         props.name,
         vb,
         &amp;mut self.texture_cache,
-        props.vs_path,
-        props.fs_path,
+        props.vertex_shader,
+        props.fragment_shader,
         props.diffuse_texture_path,
         props.normalmap_texture_path,
         props.depth_write,
@@ -360,7 +360,7 @@ pub fn push_textures(&amp;self, vb: &amp;VulkanBase, cmd: vk::CommandBuffer) {
     )?;
     self.materials.push(mat);
     Ok(self.materials.len() - 1)
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/materialmanager.rs#L72-L90">src/graphics/materialmanager.rs:72-90</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/materialmanager.rs#L72-L90">src/graphics/materialmanager.rs:72-90</a></figcaption></figure><!--/x-->
     <p>The texture cache does the same for images, keyed by the file's canonical path, so two spellings of the
     same path share one texture:</p>
     <!--x src/graphics/texture.rs 341-345,352-363--><figure class="code"><pre><code class="language-rust">let key = Self::key_for_path(image_path);
@@ -440,7 +440,7 @@ device.cmd_push_constants(
 // The ordering is a Vulkan lifetime rule that raw handles cannot encode:
 // materials use image views, so destroy their descriptors before the cache images.
 self.materials.clear();
-self.texture_cache.cleanup(device, allocator, command_pool);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/materialmanager.rs#L123-L130">src/graphics/materialmanager.rs:123-130</a></figcaption></figure><!--/x-->
+self.texture_cache.cleanup(device, allocator, command_pool);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/materialmanager.rs#L123-L130">src/graphics/materialmanager.rs:123-130</a></figcaption></figure><!--/x-->
     <p>Materials go first: each destroys its layout and pipeline, and
     <code>clear()</code> then drops them, freeing their SPIR-V. Only then does the cache
     destroy the images the materials pointed at, and the material sampler. (The shadow sampler belongs to

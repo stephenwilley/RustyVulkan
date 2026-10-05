@@ -74,8 +74,8 @@ impl Material {
     /// * `name` - The name of the material.
     /// * `vb` - The VulkanBase struct.
     /// * `texture_cache` - Shares decoded textures and records their startup uploads.
-    /// * `vs_path` - The path to the vertex shader.
-    /// * `fs_path` - The path to the fragment shader.
+    /// * `vertex_shader` - The embedded vertex shader name.
+    /// * `fragment_shader` - The embedded fragment shader name.
     /// * `diffuse_texture_path` - The path to the diffuse texture.
     /// * `normalmap_texture_path` - The path to the normalmap texture.
     /// # Returns
@@ -87,8 +87,8 @@ impl Material {
         name: String,
         vb: &VulkanBase,
         texture_cache: &mut TextureCache,
-        vs_path: String,
-        fs_path: String,
+        vertex_shader: String,
+        fragment_shader: String,
         diffuse_texture_path: Option<String>,
         normalmap_texture_path: Option<String>,
         depth_write: bool,
@@ -129,7 +129,7 @@ impl Material {
 
         let pipeline = Pipeline::new(&vb.device, &layouts, depth_write)?;
 
-        let shaders = LoadedShaders::load(vs_path, fs_path)?;
+        let shaders = LoadedShaders::load(vertex_shader, fragment_shader)?;
 
         let mut material = Self {
             name,
@@ -199,16 +199,19 @@ pub struct LoadedShaders {
 }
 
 impl LoadedShaders {
-    /// Loads SPIR-V files into ShaderStageInfo structs
+    /// Loads embedded SPIR-V into ShaderStageInfo structs
     /// # Arguments
-    /// * `vs_path` - The path to the vertex shader.
-    /// * `fs_path` - The path to the fragment shader.
+    /// * `vertex_shader` - The embedded vertex shader name.
+    /// * `fragment_shader` - The embedded fragment shader name.
     /// # Returns
     /// * `Result<Self, Box<dyn std::error::Error>>` - Returns the loaded shaders on success, or an error on failure.
-    pub fn load(vs_path: String, fs_path: String) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load(
+        vertex_shader: String,
+        fragment_shader: String,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(LoadedShaders {
-            vertex: ShaderStageInfo::load(vk::ShaderStageFlags::VERTEX, vs_path)?,
-            fragment: ShaderStageInfo::load(vk::ShaderStageFlags::FRAGMENT, fs_path)?,
+            vertex: ShaderStageInfo::load(vk::ShaderStageFlags::VERTEX, &vertex_shader)?,
+            fragment: ShaderStageInfo::load(vk::ShaderStageFlags::FRAGMENT, &fragment_shader)?,
         })
     }
 }

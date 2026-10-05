@@ -47,6 +47,8 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR/vulkan/icd.d" "$FRAMEWORKS_DIR"
 
 cp target/release/RustyVulkan "$MACOS_DIR/RustyVulkan"
 ditto assets "$RESOURCES_DIR/assets"
+# SPIR-V is embedded in the executable. Omit any legacy source-tree build output.
+rm -rf "$RESOURCES_DIR/assets/shaders/spv"
 cp packaging/macos/Info.plist "$CONTENTS/Info.plist"
 cp packaging/macos/libkosmickrisp_icd.json \
     "$RESOURCES_DIR/vulkan/icd.d/libkosmickrisp_icd.json"

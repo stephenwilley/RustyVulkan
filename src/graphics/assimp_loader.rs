@@ -49,7 +49,7 @@ pub fn import_model_as_object(
 pub fn import_model_as_object_with_shared_textured_material(
     path: &str,
     shared_material_name: &str,
-    textured_shader_paths: [&str; 2],
+    textured_shader_names: [&str; 2],
     vb: &VulkanBase,
     meshes: &mut MeshManager,
     mats: &mut MaterialManager,
@@ -59,7 +59,7 @@ pub fn import_model_as_object_with_shared_textured_material(
         vb,
         meshes,
         mats,
-        Some((shared_material_name, textured_shader_paths)),
+        Some((shared_material_name, textured_shader_names)),
     )
 }
 
@@ -134,21 +134,16 @@ fn import_model(
         // A normal-map-only material is still textured: `Material::new`
         // supplies a neutral diffuse texture for its required albedo binding.
         let use_textured = diffuse_tex.is_some() || normal_tex.is_some();
-        let (vs_path, fs_path) = if use_textured {
+        let (vertex_shader, fragment_shader) = if use_textured {
             shared_material.map_or_else(
-                || {
-                    (
-                        "assets/shaders/spv/main.vert.spv".into(),
-                        "assets/shaders/spv/main.frag.spv".into(),
-                    )
-                },
+                || ("main.vert.spv".into(), "main.frag.spv".into()),
                 |(_, paths)| (paths[0].into(), paths[1].into()),
             )
         } else {
             // The colour-only path still receives the global shadow map.
             (
-                "assets/shaders/spv/vertex_color.vert.spv".into(),
-                "assets/shaders/spv/vertex_color.frag.spv".into(),
+                "vertex_color.vert.spv".into(),
+                "vertex_color.frag.spv".into(),
             )
         };
 
@@ -156,8 +151,8 @@ fn import_model(
             vb,
             crate::graphics::materialmanager::MaterialProperties {
                 name,
-                vs_path,
-                fs_path,
+                vertex_shader,
+                fragment_shader,
                 diffuse_texture_path: if use_textured { diffuse_tex } else { None },
                 normalmap_texture_path: if use_textured { normal_tex } else { None },
                 depth_write: true,
@@ -171,8 +166,8 @@ fn import_model(
             vb,
             crate::graphics::materialmanager::MaterialProperties {
                 name: "assimp_default_mat".into(),
-                vs_path: "assets/shaders/spv/vertex_color.vert.spv".into(),
-                fs_path: "assets/shaders/spv/vertex_color.frag.spv".into(),
+                vertex_shader: "vertex_color.vert.spv".into(),
+                fragment_shader: "vertex_color.frag.spv".into(),
                 diffuse_texture_path: None,
                 normalmap_texture_path: None,
                 depth_write: true,

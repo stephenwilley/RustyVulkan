@@ -117,7 +117,7 @@ pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     </aside>
 
     <h2>Start-up in <code>resumed</code></h2>
-    <!--x src/app/app.rs 468-481,493-502,520-529--><figure class="code"><pre><code class="language-rust">fn resumed(&amp;mut self, event_loop: &amp;ActiveEventLoop) {
+    <!--x src/app/app.rs 465-478,490-499,517-526--><figure class="code"><pre><code class="language-rust">fn resumed(&amp;mut self, event_loop: &amp;ActiveEventLoop) {
     // Winit can emit Resumed more than once. Keep the existing ownership
     // tree rather than replacing live GPU resources and the ImGui context.
     if self.window.is_some() {
@@ -152,7 +152,7 @@ pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     self.render_graph.add(RenderPassNode::Shadow);
     self.render_graph.add(RenderPassNode::Main);
     let show = self.vulkan_base.as_ref().unwrap().engine_settings.show_ui;
-    self.render_graph.set_pass_enabled(RenderPassNode::UI, show);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L468-L529">src/app/app.rs:468-481,493-502,520-529</a></figcaption></figure><!--/x-->
+    self.render_graph.set_pass_enabled(RenderPassNode::UI, show);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L465-L526">src/app/app.rs:465-478,490-499,517-526</a></figcaption></figure><!--/x-->
     <p>The order is the order of the guide: window, ImGui context, the Vulkan backend
     (<a href="03-instance-devices.html">Chapter 3</a>), the ImGui renderer, the scene
     (<a href="12-main-pass-scene.html">Chapter 12</a>), and finally the passes. The guard at the top matters
@@ -176,7 +176,7 @@ pub fn capture_first_person_cursor(window: &amp;Window) {
 }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L42-L55">src/app/app.rs:42-55</a></figcaption></figure><!--/x-->
 
     <h2>Events</h2>
-    <!--x src/app/app.rs 532-554--><figure class="code"><pre><code class="language-rust">fn device_event(
+    <!--x src/app/app.rs 529-551--><figure class="code"><pre><code class="language-rust">fn device_event(
     &amp;mut self,
     _event_loop: &amp;ActiveEventLoop,
     _device_id: winit::event::DeviceId,
@@ -198,7 +198,7 @@ fn about_to_wait(&amp;mut self, _event_loop: &amp;ActiveEventLoop) {
     if let Some(window) = &amp;self.window {
         window.request_redraw();
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L532-L554">src/app/app.rs:532-554</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L529-L551">src/app/app.rs:529-551</a></figcaption></figure><!--/x-->
     <p><code>about_to_wait</code> runs when the loop has handled all pending events. Requesting a redraw every
     time is what keeps frames coming; each <code>RedrawRequested</code> then moves the camera and runs the render
     graph (<a href="09-frame-loop.html">Chapter 9</a>). Mouse look uses <em>device</em> events, the raw relative
@@ -261,10 +261,12 @@ pub fn handle_device_event(app: &amp;mut App, event: DeviceEvent) {
     <h2>Packaging a Mac app</h2>
     <p><code>scripts/package_macos.sh</code> builds a release binary and assembles the bundle. The core of
     it:</p>
-    <!--x scripts/package_macos.sh 46-55,64-67,77-80--><figure class="code"><pre><code class="language-bash">mkdir -p "$MACOS_DIR" "$RESOURCES_DIR/vulkan/icd.d" "$FRAMEWORKS_DIR"
+    <!--x scripts/package_macos.sh 46-57,66-69,79-82--><figure class="code"><pre><code class="language-bash">mkdir -p "$MACOS_DIR" "$RESOURCES_DIR/vulkan/icd.d" "$FRAMEWORKS_DIR"
 
 cp target/release/RustyVulkan "$MACOS_DIR/RustyVulkan"
 ditto assets "$RESOURCES_DIR/assets"
+# SPIR-V is embedded in the executable. Omit any legacy source-tree build output.
+rm -rf "$RESOURCES_DIR/assets/shaders/spv"
 cp packaging/macos/Info.plist "$CONTENTS/Info.plist"
 cp packaging/macos/libkosmickrisp_icd.json \
     "$RESOURCES_DIR/vulkan/icd.d/libkosmickrisp_icd.json"
@@ -280,7 +282,7 @@ install_name_tool -change "$VULKAN_LINK_REFERENCE" \
 codesign --force --sign - "$FRAMEWORKS_DIR/libassimp.6.dylib"
 codesign --force --sign - "$FRAMEWORKS_DIR/libvulkan.1.dylib"
 codesign --force --sign - "$FRAMEWORKS_DIR/libvulkan_kosmickrisp.dylib"
-codesign --force --deep --sign - "$APP_BUNDLE"</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/scripts/package_macos.sh#L46-L80">scripts/package_macos.sh:46-80</a></figcaption></figure><!--/x-->
+codesign --force --deep --sign - "$APP_BUNDLE"</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/scripts/package_macos.sh#L46-L82">scripts/package_macos.sh:46-57,66-69,79-82</a></figcaption></figure><!--/x-->
     <ul>
       <li>The executable goes in <code>Contents/MacOS</code>, the assets and an installable client driver (ICD) manifest in
       <code>Contents/Resources</code>, and the three libraries in <code>Contents/Frameworks</code>.</li>
@@ -310,8 +312,7 @@ codesign --force --deep --sign - "$APP_BUNDLE"</code></pre><figcaption><a href="
     <p><code>DEVELOPMENT.md</code> lists the checks to run after any change (<code>cargo fmt</code>,
     <code>cargo clippy</code>, <code>cargo test</code>, and running with validation while resizing, minimising,
     toggling fullscreen and MSAA), and the known gaps: some start-up and upload paths that don't yet clean up
-    after a partial failure, helpers that panic on Vulkan errors, and generated shaders that should move to
-    Cargo's <code>OUT_DIR</code>. Two stricter validation modes are also worth knowing, because they catch
+    after a partial failure and helpers that panic on Vulkan errors. Two stricter validation modes are also worth knowing, because they catch
     problems the default checks can't see:</p>
     <figure class="code cmd"><pre><code class="language-bash">VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true cargo run   # synchronisation hazards
 VK_KHRONOS_VALIDATION_GPUAV_ENABLE=true cargo run   # GPU-side checks, e.g. indirect draws</code></pre>

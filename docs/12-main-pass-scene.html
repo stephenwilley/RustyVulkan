@@ -266,32 +266,27 @@ let scene = Scene::from_file(
         PostProcess::CalculateTangentSpace,
         PostProcess::ImproveCacheLocality,
     ],
-)?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/assimp_loader.rs#L76-L85">src/graphics/assimp_loader.rs:76-85</a></figcaption></figure><!--/x-->
+)?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/assimp_loader.rs#L76-L85">src/graphics/assimp_loader.rs:76-85</a></figcaption></figure><!--/x-->
     <p>Assimp turns every polygon into triangles, computes the tangent and bitangent vectors that normal mapping
     needs, and reorders vertices for the GPU's cache. The loader then works through the file in three steps.</p>
     <p><strong>Materials.</strong> For each material it looks for a colour texture and a normal map, resolving
     file names relative to the model's folder, and chooses shaders accordingly:</p>
-    <!--x src/graphics/assimp_loader.rs 133-153--><figure class="code"><pre><code class="language-rust">// Choose shader based on texture availability
+    <!--x src/graphics/assimp_loader.rs 133-148--><figure class="code"><pre><code class="language-rust">// Choose shader based on texture availability
 // A normal-map-only material is still textured: `Material::new`
 // supplies a neutral diffuse texture for its required albedo binding.
 let use_textured = diffuse_tex.is_some() || normal_tex.is_some();
-let (vs_path, fs_path) = if use_textured {
+let (vertex_shader, fragment_shader) = if use_textured {
     shared_material.map_or_else(
-        || {
-            (
-                "assets/shaders/spv/main.vert.spv".into(),
-                "assets/shaders/spv/main.frag.spv".into(),
-            )
-        },
+        || ("main.vert.spv".into(), "main.frag.spv".into()),
         |(_, paths)| (paths[0].into(), paths[1].into()),
     )
 } else {
     // The colour-only path still receives the global shadow map.
     (
-        "assets/shaders/spv/vertex_color.vert.spv".into(),
-        "assets/shaders/spv/vertex_color.frag.spv".into(),
+        "vertex_color.vert.spv".into(),
+        "vertex_color.frag.spv".into(),
     )
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/assimp_loader.rs#L133-L153">src/graphics/assimp_loader.rs:133-153</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/assimp_loader.rs#L133-L148">src/graphics/assimp_loader.rs:133-148</a></figcaption></figure><!--/x-->
     <p>Textured materials use <code>main.vert</code>/<code>main.frag</code>. Untextured ones use the
     <code>vertex_color</code> pair, which lights a colour carried in each vertex. The loader copies the
     material's base colour into every vertex for exactly that reason.</p>
@@ -321,7 +316,7 @@ let (vs_path, fs_path) = if use_textured {
     loader walks the tree with an explicit stack, combining transforms on the way down, and emits one part per
     mesh with its transform relative to the root. Assimp gives each node a general 4×4 matrix; the renderer's
     <code>Transform</code> only allows uniform scale, so <code>decompose</code> averages the three axis scales:</p>
-    <!--x src/graphics/assimp_loader.rs 268-279--><figure class="code"><pre><code class="language-rust">fn decompose(transform: &amp;russimp_ng::Matrix4x4) -&gt; SceneTransform {
+    <!--x src/graphics/assimp_loader.rs 263-274--><figure class="code"><pre><code class="language-rust">fn decompose(transform: &amp;russimp_ng::Matrix4x4) -&gt; SceneTransform {
     // Interpret as row-major with last column = translation (a4,b4,c4)
     let t = CVec3::new(transform.a4, transform.b4, transform.c4);
     // Upper-left 3x3 contains rotation*scale. Treat its columns as basis vectors.
@@ -332,7 +327,7 @@ let (vs_path, fs_path) = if use_textured {
     let s1 = c1.magnitude();
     let s2 = c2.magnitude();
     // Uniform scale approximation to match SceneTransform design
-    let scale = ((s0 + s1 + s2) / 3.0).max(1e-6);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/assimp_loader.rs#L268-L279">src/graphics/assimp_loader.rs:268-279</a></figcaption></figure><!--/x-->
+    let scale = ((s0 + s1 + s2) / 3.0).max(1e-6);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/assimp_loader.rs#L263-L274">src/graphics/assimp_loader.rs:263-274</a></figcaption></figure><!--/x-->
     <p>That's an approximation: a model built with stretched nodes would come out slightly wrong, a trade-off
     the comment owns.</p>
 
@@ -342,7 +337,7 @@ let (vs_path, fs_path) = if use_textured {
     function and the lowest point of its mesh's bounding box, which the mesh manager keeps after the CPU
     vertices are discarded. The rocks show the reuse at work: each of the five models is imported once as a
     template, then placed many times by cloning its parts:</p>
-    <!--x src/app/app.rs 400-409--><figure class="code"><pre><code class="language-rust">// A shallow burial hides perfectly sharp model bottoms and makes each rock
+    <!--x src/app/app.rs 397-406--><figure class="code"><pre><code class="language-rust">// A shallow burial hides perfectly sharp model bottoms and makes each rock
 // feel embedded in the heightfield rather than balanced on top of it.
 transform.translation.y -= member.size * 0.07;
 rock_clusters.push(SceneObject {
@@ -351,10 +346,10 @@ rock_clusters.push(SceneObject {
     // duplicate the Vulkan buffers or atlas image.
     parts: template.parts.clone(),
     visible: true,
-});</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L400-L409">src/app/app.rs:400-409</a></figcaption></figure><!--/x-->
+});</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L397-L406">src/app/app.rs:397-406</a></figcaption></figure><!--/x-->
     <p>The last steps flush every queued texture upload in one GPU submission
     (<a href="05-gpu-memory.html#staging">Chapter 5</a>) and put the camera at eye height:</p>
-    <!--x src/app/app.rs 452-461--><figure class="code"><pre><code class="language-rust">// All scene materials have now recorded their texture uploads.  Submit
+    <!--x src/app/app.rs 449-458--><figure class="code"><pre><code class="language-rust">// All scene materials have now recorded their texture uploads.  Submit
 // them together once, before the first frame can sample the images.
 self.material_manager.finish_loading(vulkan_base)?;
 
@@ -363,7 +358,7 @@ let camera_position = self.camera.position();
 self.camera.set_height_above_ground(
     terrain_settings.height_at(camera_position.x, camera_position.z),
     FIRST_PERSON_EYE_HEIGHT,
-);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L452-L461">src/app/app.rs:452-461</a></figcaption></figure><!--/x-->
+);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L449-L458">src/app/app.rs:449-458</a></figcaption></figure><!--/x-->
     <aside class="callout aside"><p class="callout-title">The debug grid</p>
       <p>The infinite grid's vertex shader (<code>infinite_plane.vert</code>) takes a 2 × 2 unit plane and stretches it to two kilometres, centred
       under the camera (though the 220 m far plane clips it). Its fragment shader (<code>infinite_plane.frag</code>) draws grid lines from <code>fwidth</code>, the screen-space rate of

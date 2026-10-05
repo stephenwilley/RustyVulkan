@@ -126,12 +126,12 @@ println!("{}", vertices.len());     // compile error: vertices was moved</code><
     <p>Extensions, optional features outside core Vulkan, get their own small tables, created from the base
     ones. The window-surface, swapchain and push-descriptor functions are extensions, so
     <code>VulkanBase::new</code> builds loaders for them:</p>
-    <!--x src/vulkan/base/setup.rs 460,495,581-582--><figure class="code"><pre><code class="language-rust">let entry = Entry::linked();
+    <!--x src/vulkan/base/setup.rs 460,495,579-580--><figure class="code"><pre><code class="language-rust">let entry = Entry::linked();
 // ...
 let surface_loader = surface::Instance::new(&amp;entry, &amp;instance);
 // ...
 let swapchain_loader = swapchain::Device::new(&amp;instance, &amp;device);
-let push_descriptor = push_descriptor::Device::new(&amp;instance, &amp;device);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L460-L582">src/vulkan/base/setup.rs:460-582</a></figcaption></figure><!--/x-->
+let push_descriptor = push_descriptor::Device::new(&amp;instance, &amp;device);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L460-L580">src/vulkan/base/setup.rs:460,495,579-580</a></figcaption></figure><!--/x-->
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
       <p>This is the same job that GLEW or glad did for you: OpenGL functions past version 1.1 had to be fetched
       as function pointers at run time. <code>ash</code> fetches device functions per device, which avoids the
@@ -151,7 +151,7 @@ let push_descriptor = push_descriptor::Device::new(&amp;instance, &amp;device);<
     ..Default::default()
 };
 
-Ok(unsafe { entry.create_instance(&amp;create_info, None)? })</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L55-L65">src/vulkan/base/setup.rs:55-65</a></figcaption></figure><!--/x-->
+Ok(unsafe { entry.create_instance(&amp;create_info, None)? })</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L55-L65">src/vulkan/base/setup.rs:55-65</a></figcaption></figure><!--/x-->
     <p>In C you'd write <code>VkInstanceCreateInfo info = {0};</code>, set
     <code>info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO</code>, and fill in the fields. The Rust version
     does the same, but <code>..Default::default()</code> fills every field not mentioned, and <code>ash</code>'s
@@ -187,7 +187,7 @@ Ok(unsafe { entry.create_instance(&amp;create_info, None)? })</code></pre><figca
     vulkan13.dynamic_rendering == vk::TRUE
         &amp;&amp; vulkan13.synchronization2 == vk::TRUE
         &amp;&amp; maintenance5.maintenance5 == vk::TRUE
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L134-L144">src/vulkan/base/setup.rs:134-144</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L134-L144">src/vulkan/base/setup.rs:134-144</a></figcaption></figure><!--/x-->
 
     <h2>Why it's all <code>unsafe</code></h2>
     <aside class="callout rust" id="rust-unsafe"><p class="callout-title">Rust note · unsafe</p>
@@ -206,7 +206,7 @@ Ok(unsafe { entry.create_instance(&amp;create_info, None)? })</code></pre><figca
     </aside>
     <p>That's why the codebase is dotted with blocks like this, often covering a whole function body:</p>
     <!--x src/vulkan/base/setup.rs 258-259--><figure class="code"><pre><code class="language-rust">let device = unsafe { instance.create_device(physical_device, &amp;device_create_info, None)? };
-let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L258-L259">src/vulkan/base/setup.rs:258-259</a></figcaption></figure><!--/x-->
+let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L258-L259">src/vulkan/base/setup.rs:258-259</a></figcaption></figure><!--/x-->
 
     <h2>Errors: <code>Result</code> and <code>?</code></h2>
     <aside class="callout rust" id="rust-result"><p class="callout-title">Rust note · Result, ?, and Box&lt;dyn Error&gt;</p>
@@ -228,7 +228,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
     event_loop: &amp;ActiveEventLoop,
     layers: &amp;[*const i8],
 ) -&gt; Result&lt;Instance, Box&lt;dyn Error&gt;&gt; {
-    let app_name = std::ffi::CString::new("RustyVulkan")?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L15-L20">src/vulkan/base/setup.rs:15-20</a></figcaption></figure><!--/x-->
+    let app_name = std::ffi::CString::new("RustyVulkan")?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L15-L20">src/vulkan/base/setup.rs:15-20</a></figcaption></figure><!--/x-->
     <p>Below, <code>CString::new</code> can fail with yet another error type (a string containing a zero byte),
     and the <code>?</code> on the last line handles it the same way.</p>
     <p>Sometimes a specific error is expected and handled rather than passed up. Acquiring a swapchain image can
@@ -246,7 +246,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
         return Ok(None);
     }
     Err(e) =&gt; return Err(e.into()),
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base.rs#L269-L281">src/vulkan/base.rs:269-281</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L269-L281">src/vulkan/base.rs:269-281</a></figcaption></figure><!--/x-->
     <p><code>match</code> is like a <code>switch</code> that must cover every case and can look inside values:
     <code>Ok(result)</code> pulls out the success value; the second arm catches one particular error; the last
     converts anything else with <code>.into()</code> and returns it.</p>
@@ -267,7 +267,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
     enable_multi_draw_indirect: bool,
     enable_draw_indirect_first_instance: bool,
     enable_wireframe: bool,
-) -&gt; Result&lt;(ash::Device, vk::Queue), vk::Result&gt; {</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L180-L187">src/vulkan/base/setup.rs:180-187</a></figcaption></figure><!--/x-->
+) -&gt; Result&lt;(ash::Device, vk::Queue), vk::Result&gt; {</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L180-L187">src/vulkan/base/setup.rs:180-187</a></figcaption></figure><!--/x-->
     </aside>
 
     <h2>Handles are just numbers</h2>
@@ -285,7 +285,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
     names:</p>
     <!--x src/vulkan/base.rs 766-768--><figure class="code"><pre><code class="language-rust">for &amp;sem in &amp;self.image_available_semaphores {
     self.device.destroy_semaphore(sem, None);
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base.rs#L766-L768">src/vulkan/base.rs:766-768</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L766-L768">src/vulkan/base.rs:766-768</a></figcaption></figure><!--/x-->
 
     <h2><code>Drop</code>: automatic clean-up, and its limits</h2>
     <aside class="callout rust" id="rust-drop"><p class="callout-title">Rust note · Drop</p>
@@ -305,23 +305,23 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
         // `Drop` gives us `&amp;mut self`, but Vulkan does not know Rust's
         // ownership graph.  Destroy resources in reverse dependency order.
 // ...
-        if let Err(error) = self.device.device_wait_idle() {
-            eprintln!("Failed to wait for device during shutdown: {error}");
-        }
+if let Err(error) = self.device.device_wait_idle() {
+    eprintln!("Failed to wait for device during shutdown: {error}");
+}
 // ...
-        self.device.destroy_command_pool(self.command_pool, None);
-        // `Option::take` moves the allocator out while we only have `&amp;mut self`.
-        // Dropping it here frees VMA memory before its Vulkan device disappears.
-        if let Some(alloc) = self.allocator.take() {
+self.device.destroy_command_pool(self.command_pool, None);
+// `Option::take` moves the allocator out while we only have `&amp;mut self`.
+// Dropping it here frees VMA memory before its Vulkan device disappears.
+if let Some(alloc) = self.allocator.take() {
 // ...
-            drop(alloc);
-        }
-        self.device.destroy_device(None);
-        self.surface_loader.destroy_surface(self.surface, None);
-        #[cfg(debug_assertions)]
-        self.debug_utils_loader
-            .destroy_debug_utils_messenger(self.debug_messenger, None);
-        self.instance.destroy_instance(None);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base.rs#L744-L809">src/vulkan/base.rs:744-809</a></figcaption></figure><!--/x-->
+    drop(alloc);
+}
+self.device.destroy_device(None);
+self.surface_loader.destroy_surface(self.surface, None);
+#[cfg(debug_assertions)]
+self.debug_utils_loader
+    .destroy_debug_utils_messenger(self.debug_messenger, None);
+self.instance.destroy_instance(None);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L744-L809">src/vulkan/base.rs:744-748,751-753,790-793,802-809</a></figcaption></figure><!--/x-->
     <p>Note that it logs the wait-idle error rather than returning it with <code>?</code>: a destructor has no
     caller to report to, and panicking in a destructor while another panic is unwinding aborts the program.
     The allocator is stored as an <code>Option</code> so it can be
@@ -331,7 +331,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
     managers built on top of it. After a <code>drop</code> body finishes, Rust drops the struct's fields in
     declaration order, which isn't the order Vulkan needs. So <code>App::drop</code> takes the backend out first, cleans up everything that
     depends on it, and only then lets it go:</p>
-    <!--x src/app/app.rs 551-563,577-585--><figure class="code"><pre><code class="language-rust">impl Drop for App {
+    <!--x src/app/app.rs 558-569,584-592--><figure class="code"><pre><code class="language-rust">impl Drop for App {
     fn drop(&amp;mut self) {
         // `take` moves VulkanBase out of the Option.  Its own Drop runs only
         // after the managers below release resources that depend on its device.
@@ -343,7 +343,6 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
             // Rust drops fields automatically, but Vulkan handles need this
             // explicit dependency order: passes -&gt; managers -&gt; renderer -&gt; device.
             self.render_graph.cleanup(&amp;vb.device);
-
 // ...
             self.mesh_manager.cleanup(vb.allocator.as_ref().unwrap());
 
@@ -353,7 +352,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
             }
         }
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/app.rs#L551-L585">src/app/app.rs:551-585</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L558-L592">src/app/app.rs:558-569,584-592</a></figcaption></figure><!--/x-->
     <p>At the end of the <code>if let</code> block, <code>vb</code> goes out of scope and <code>VulkanBase</code>'s own
     <code>Drop</code>, above, runs last.</p>
 
@@ -374,13 +373,13 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
         };
     buffers.push(buffer);
     allocations.push(allocation);
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L359-L371">src/vulkan/base/setup.rs:359-371</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L359-L371">src/vulkan/base/setup.rs:359-371</a></figcaption></figure><!--/x-->
     <p>If creating buffer <em>n</em> fails, the error arm destroys buffers 0 to <em>n</em>−1 before
     returning (<code>zip</code> pairs the two vectors; <code>into_iter</code> consumes them).</p>
     <aside class="callout aside"><p class="callout-title">Not finished yet</p>
       <p><code>DEVELOPMENT.md</code> is candid that this isn't applied everywhere. Some start-up paths,
       including much of <code>VulkanBase::new</code>, which uses <code>?</code> after each step without unwinding
-      earlier ones, and the texture, grass and ImGui upload code, don't yet release everything on a partial
+      earlier ones, and the grass upload code, don't yet release everything on a partial
       failure, and several helpers still panic on Vulkan errors. For a program that exits on any start-up
       error this costs little, but don't copy it wholesale.</p>
     </aside>

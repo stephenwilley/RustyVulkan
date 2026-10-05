@@ -155,8 +155,7 @@ impl ImGuiRenderer {
             p_push_constant_ranges: &push_constant_range,
             ..Default::default()
         };
-        self.pipeline_layout =
-            unsafe { device.create_pipeline_layout(&layout_info, None).unwrap() };
+        let new_layout = unsafe { device.create_pipeline_layout(&layout_info, None)? };
 
         // Finally create the graphics pipeline
         let color_formats = [color_format];
@@ -178,18 +177,35 @@ impl ImGuiRenderer {
             p_depth_stencil_state: &depth_stencil,
             p_color_blend_state: &color_blending,
             p_dynamic_state: &dynamic_state,
-            layout: self.pipeline_layout,
+            layout: new_layout,
             render_pass: vk::RenderPass::null(),
             subpass: 0,
             ..Default::default()
         };
         pipeline_info.p_next = &rendering_info as *const _ as *const std::ffi::c_void;
-        self.vk_pipeline = unsafe {
-            device
-                .create_graphics_pipelines(base.pipeline_cache, &[pipeline_info], None)
-                .map_err(|e| e.1)
-                .unwrap()[0]
+        let new_pipeline = match unsafe {
+            device.create_graphics_pipelines(base.pipeline_cache, &[pipeline_info], None)
+        } {
+            Ok(pipelines) => pipelines[0],
+            Err((partial, error)) => {
+                unsafe {
+                    for pipeline in partial {
+                        device.destroy_pipeline(pipeline, None);
+                    }
+                    device.destroy_pipeline_layout(new_layout, None);
+                }
+                return Err(error.into());
+            }
         };
+        // The caller waits for the GPU before rebuilding. Commit ownership only after
+        // both creations succeed, leaving the old pair intact on any error.
+        unsafe {
+            device.destroy_pipeline(std::mem::replace(&mut self.vk_pipeline, new_pipeline), None);
+            device.destroy_pipeline_layout(
+                std::mem::replace(&mut self.pipeline_layout, new_layout),
+                None,
+            );
+        }
         Ok(())
     }
 
@@ -198,7 +214,7 @@ impl ImGuiRenderer {
     /// * `base` - The VulkanBase instance.
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
-    pub fn rebuild_pipeline(&mut self, base: &mut VulkanBase) -> Result<(), Box<dyn Error>> {
+    pub fn rebuild_pipeline(&mut self, base: &VulkanBase) -> Result<(), Box<dyn Error>> {
         let vert_stage = ShaderStageInfo::load(
             vk::ShaderStageFlags::VERTEX,
             "assets/shaders/spv/imgui.vert.spv",
@@ -207,11 +223,6 @@ impl ImGuiRenderer {
             vk::ShaderStageFlags::FRAGMENT,
             "assets/shaders/spv/imgui.frag.spv",
         )?;
-        unsafe {
-            base.device.destroy_pipeline(self.vk_pipeline, None);
-            base.device
-                .destroy_pipeline_layout(self.pipeline_layout, None);
-        }
         let mut vert_module = vert_stage.module_create_info();
         let mut frag_module = frag_stage.module_create_info();
         let shader_stages = [

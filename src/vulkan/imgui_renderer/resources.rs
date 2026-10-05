@@ -7,6 +7,7 @@
 use super::{ImGuiRenderer, VulkanBase};
 use ash::vk;
 use imgui::{Context as ImGuiContext, FontAtlasTexture, FontConfig, FontSource};
+use std::error::Error;
 use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
 
 use crate::graphics::shadow_math::SHADOW_CASCADE_COUNT;
@@ -23,7 +24,7 @@ impl ImGuiRenderer {
     fn create_staging_buffer(
         allocator: &Allocator,
         atlas: &FontAtlasTexture,
-    ) -> (vk::Buffer, Allocation) {
+    ) -> Result<(vk::Buffer, Allocation), vk::Result> {
         let size = (atlas.width * atlas.height * 4) as vk::DeviceSize;
         let buffer_info = vk::BufferCreateInfo {
             size,
@@ -36,11 +37,7 @@ impl ImGuiRenderer {
             flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE,
             ..Default::default()
         };
-        unsafe {
-            allocator
-                .create_buffer(&buffer_info, &alloc_info)
-                .expect("create staging buffer")
-        }
+        unsafe { allocator.create_buffer(&buffer_info, &alloc_info) }
     }
 
     /// Maps the staging buffer memory and copies the font atlas data into it using VMA.
@@ -52,15 +49,15 @@ impl ImGuiRenderer {
         allocator: &Allocator,
         staging_alloc: &mut Allocation,
         atlas: &FontAtlasTexture,
-    ) {
+    ) -> Result<(), vk::Result> {
         unsafe {
-            let data_ptr = allocator.map_memory(staging_alloc).expect("map staging");
+            let data_ptr = allocator.map_memory(staging_alloc)?;
             std::ptr::copy_nonoverlapping(atlas.data.as_ptr(), data_ptr, atlas.data.len());
-            allocator
-                .flush_allocation(staging_alloc, 0, atlas.data.len() as u64)
-                .expect("flush font staging");
+            let result = allocator.flush_allocation(staging_alloc, 0, atlas.data.len() as u64);
             allocator.unmap_memory(staging_alloc);
+            result?;
         }
+        Ok(())
     }
 
     /// Creates an optimal-tiling Vulkan image and device-local memory for the font atlas using VMA.
@@ -74,7 +71,7 @@ impl ImGuiRenderer {
         allocator: &Allocator,
         width: u32,
         height: u32,
-    ) -> (vk::Image, Allocation) {
+    ) -> Result<(vk::Image, Allocation), vk::Result> {
         let image_info = vk::ImageCreateInfo {
             image_type: vk::ImageType::TYPE_2D,
             format: vk::Format::R8G8B8A8_UNORM,
@@ -96,11 +93,7 @@ impl ImGuiRenderer {
             usage: MemoryUsage::AutoPreferDevice,
             ..Default::default()
         };
-        unsafe {
-            allocator
-                .create_image(&image_info, &alloc_info)
-                .expect("create font image")
-        }
+        unsafe { allocator.create_image(&image_info, &alloc_info) }
     }
 
     /// Records and submits a one-time command buffer to transition image layouts and copy data from a staging buffer to the image.
@@ -116,7 +109,7 @@ impl ImGuiRenderer {
         image: vk::Image,
         width: u32,
         height: u32,
-    ) {
+    ) -> Result<(), vk::Result> {
         let device = &base.device;
         let font_image = image;
         let cmd_alloc_info = vk::CommandBufferAllocateInfo {
@@ -125,109 +118,127 @@ impl ImGuiRenderer {
             command_buffer_count: 1,
             ..Default::default()
         };
-        let cmd_buffer = unsafe { device.allocate_command_buffers(&cmd_alloc_info).unwrap()[0] };
-        let cmd_begin = vk::CommandBufferBeginInfo {
-            flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-            ..Default::default()
-        };
-        unsafe { device.begin_command_buffer(cmd_buffer, &cmd_begin).unwrap() };
+        let cmd_buffer = unsafe { device.allocate_command_buffers(&cmd_alloc_info)?[0] };
+        let result = (|| -> Result<(), vk::Result> {
+            let cmd_begin = vk::CommandBufferBeginInfo {
+                flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                ..Default::default()
+            };
+            unsafe { device.begin_command_buffer(cmd_buffer, &cmd_begin)? };
 
-        // Transition to TRANSFER_DST_OPTIMAL
-        let barrier1 = vk::ImageMemoryBarrier2 {
-            dst_stage_mask: vk::PipelineStageFlags2::COPY,
-            dst_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
-            old_layout: vk::ImageLayout::UNDEFINED,
-            new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-            dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-            image: font_image,
-            subresource_range: vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1,
-            },
-            ..Default::default()
-        };
-        unsafe {
-            device.cmd_pipeline_barrier2(
-                cmd_buffer,
-                &vk::DependencyInfo::default().image_memory_barriers(&[barrier1]),
-            );
-        }
+            // Transition to TRANSFER_DST_OPTIMAL
+            let barrier1 = vk::ImageMemoryBarrier2 {
+                dst_stage_mask: vk::PipelineStageFlags2::COPY,
+                dst_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
+                old_layout: vk::ImageLayout::UNDEFINED,
+                new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                image: font_image,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                ..Default::default()
+            };
+            unsafe {
+                device.cmd_pipeline_barrier2(
+                    cmd_buffer,
+                    &vk::DependencyInfo::default().image_memory_barriers(&[barrier1]),
+                );
+            }
 
-        // Copy buffer to image
-        let copy_region = vk::BufferImageCopy {
-            buffer_offset: 0,
-            buffer_row_length: 0,
-            buffer_image_height: 0,
-            image_subresource: vk::ImageSubresourceLayers {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_level: 0,
-                base_array_layer: 0,
-                layer_count: 1,
-            },
-            image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
-            image_extent: vk::Extent3D {
-                width,
-                height,
-                depth: 1,
-            },
-        };
-        unsafe {
-            device.cmd_copy_buffer_to_image(
-                cmd_buffer,
-                staging_buffer,
-                font_image,
-                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                &[copy_region],
-            );
-        }
+            // Copy buffer to image
+            let copy_region = vk::BufferImageCopy {
+                buffer_offset: 0,
+                buffer_row_length: 0,
+                buffer_image_height: 0,
+                image_subresource: vk::ImageSubresourceLayers {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_level: 0,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
+                image_extent: vk::Extent3D {
+                    width,
+                    height,
+                    depth: 1,
+                },
+            };
+            unsafe {
+                device.cmd_copy_buffer_to_image(
+                    cmd_buffer,
+                    staging_buffer,
+                    font_image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[copy_region],
+                );
+            }
 
-        // Transition to SHADER_READ_ONLY_OPTIMAL
-        let barrier2 = vk::ImageMemoryBarrier2 {
-            src_stage_mask: vk::PipelineStageFlags2::COPY,
-            src_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
-            dst_stage_mask: vk::PipelineStageFlags2::FRAGMENT_SHADER,
-            dst_access_mask: vk::AccessFlags2::SHADER_SAMPLED_READ,
-            old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-            dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-            image: font_image,
-            subresource_range: vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1,
-            },
-            ..Default::default()
-        };
-        unsafe {
-            device.cmd_pipeline_barrier2(
-                cmd_buffer,
-                &vk::DependencyInfo::default().image_memory_barriers(&[barrier2]),
-            );
-        }
+            // Transition to SHADER_READ_ONLY_OPTIMAL
+            let barrier2 = vk::ImageMemoryBarrier2 {
+                src_stage_mask: vk::PipelineStageFlags2::COPY,
+                src_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
+                dst_stage_mask: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                dst_access_mask: vk::AccessFlags2::SHADER_SAMPLED_READ,
+                old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                image: font_image,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                },
+                ..Default::default()
+            };
+            unsafe {
+                device.cmd_pipeline_barrier2(
+                    cmd_buffer,
+                    &vk::DependencyInfo::default().image_memory_barriers(&[barrier2]),
+                );
+            }
 
-        unsafe { device.end_command_buffer(cmd_buffer).unwrap() };
+            unsafe { device.end_command_buffer(cmd_buffer)? };
 
-        // Submit and wait
-        let command_buffers = [vk::CommandBufferSubmitInfo::default().command_buffer(cmd_buffer)];
-        let submit = vk::SubmitInfo2::default().command_buffer_infos(&command_buffers);
-        unsafe {
-            device
-                .queue_submit2(base.graphics_queue, &[submit], vk::Fence::null())
-                .unwrap();
-            device.queue_wait_idle(base.graphics_queue).unwrap();
-        }
+            // Submit and wait
+            let command_buffers =
+                [vk::CommandBufferSubmitInfo::default().command_buffer(cmd_buffer)];
+            let submit = vk::SubmitInfo2::default().command_buffer_infos(&command_buffers);
+            unsafe {
+                device.queue_submit2(base.graphics_queue, &[submit], vk::Fence::null())?;
+                // Keep submitted upload resources alive until completion or device loss.
+                // A temporary allocation error while waiting does not establish completion.
+                loop {
+                    match device.queue_wait_idle(base.graphics_queue) {
+                        Err(
+                            vk::Result::ERROR_OUT_OF_HOST_MEMORY
+                            | vk::Result::ERROR_OUT_OF_DEVICE_MEMORY,
+                        ) => {
+                            std::thread::yield_now();
+                        }
+                        result => {
+                            result?;
+                            break;
+                        }
+                    }
+                }
+            }
 
+            Ok(())
+        })();
         // 5) Clean up staging and command buffer
         unsafe {
             device.free_command_buffers(base.command_pool, &[cmd_buffer]);
         }
+        result
     }
 
     /// Creates a 2D ImageView for the font atlas.
@@ -236,7 +247,7 @@ impl ImGuiRenderer {
     /// * `image` - The image to create the view for.
     /// # Returns
     /// * `vk::ImageView` - The created image view.
-    fn create_image_view(base: &VulkanBase, image: vk::Image) -> vk::ImageView {
+    fn create_image_view(base: &VulkanBase, image: vk::Image) -> Result<vk::ImageView, vk::Result> {
         let device = &base.device;
         let view_info = vk::ImageViewCreateInfo {
             image,
@@ -251,7 +262,7 @@ impl ImGuiRenderer {
             },
             ..Default::default()
         };
-        unsafe { device.create_image_view(&view_info, None).unwrap() }
+        unsafe { device.create_image_view(&view_info, None) }
     }
 
     /// Creates a linear, clamp-to-edge sampler.
@@ -259,7 +270,7 @@ impl ImGuiRenderer {
     /// * `base` - The VulkanBase instance.
     /// # Returns
     /// * `vk::Sampler` - The created sampler.
-    fn create_sampler(base: &VulkanBase) -> vk::Sampler {
+    fn create_sampler(base: &VulkanBase) -> Result<vk::Sampler, vk::Result> {
         let device = &base.device;
         let sampler_info = vk::SamplerCreateInfo {
             mag_filter: vk::Filter::LINEAR,
@@ -277,7 +288,7 @@ impl ImGuiRenderer {
             unnormalized_coordinates: vk::FALSE,
             ..Default::default()
         };
-        unsafe { device.create_sampler(&sampler_info, None).unwrap() }
+        unsafe { device.create_sampler(&sampler_info, None) }
     }
 
     // ----------------------------------------------------------
@@ -288,7 +299,9 @@ impl ImGuiRenderer {
     /// * `base` - The VulkanBase instance.
     /// # Returns
     /// * `vk::DescriptorSetLayout` - The created descriptor set layout.
-    fn create_imgui_descriptor_set_layout(base: &VulkanBase) -> vk::DescriptorSetLayout {
+    fn create_imgui_descriptor_set_layout(
+        base: &VulkanBase,
+    ) -> Result<vk::DescriptorSetLayout, vk::Result> {
         let binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
             descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -299,11 +312,7 @@ impl ImGuiRenderer {
         let layout_info = vk::DescriptorSetLayoutCreateInfo::default()
             .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR)
             .bindings(std::slice::from_ref(&binding));
-        unsafe {
-            base.device
-                .create_descriptor_set_layout(&layout_info, None)
-                .unwrap()
-        }
+        unsafe { base.device.create_descriptor_set_layout(&layout_info, None) }
     }
 
     /// Register or replace an image for displaying with ui.image(...).
@@ -353,62 +362,61 @@ impl ImGuiRenderer {
     /// * `imgui` - The ImGui context to initialize the renderer with.
     /// # Returns
     /// A new ImGuiRenderer instance with all resources initialized.
-    pub fn new(base: &mut VulkanBase, imgui: &mut ImGuiContext) -> Self {
-        let device = base.device.clone();
+    pub fn new(base: &mut VulkanBase, imgui: &mut ImGuiContext) -> Result<Self, Box<dyn Error>> {
         let allocator = base.allocator.as_ref().expect("Allocator not initialized");
-
-        // 0) Load default font atlas
-        imgui.fonts().add_font(&[FontSource::DefaultFontData {
-            config: Some(FontConfig {
-                rasterizer_multiply: 1.0,
-                ..FontConfig::default()
-            }),
-        }]);
-        let atlas = imgui.fonts().build_rgba32_texture();
-        // 1) Create staging buffer for font atlas
-        let (staging_buffer, mut staging_alloc) = Self::create_staging_buffer(allocator, &atlas);
-        // 2) Map memory and copy font atlas data into it
-        Self::fill_staging_buffer(allocator, &mut staging_alloc, &atlas);
-        // 3) Create font image with device-local memory
-        let (font_image, font_allocation) =
-            Self::create_font_image(allocator, atlas.width, atlas.height);
-        // 4) Copy from staging to the font image
-        Self::copy_buffer_to_image(base, staging_buffer, font_image, atlas.width, atlas.height);
-        // 5) Clean up staging buffer
-        unsafe {
-            allocator.destroy_buffer(staging_buffer, &mut staging_alloc);
-        }
-        // 6) Create an ImageView for the font atlas
-        let font_image_view = Self::create_image_view(base, font_image);
-        // 7) Create a Sampler for the font atlas
-        let font_sampler = Self::create_sampler(base);
-
-        let font_image_info = vk::DescriptorImageInfo {
-            sampler: font_sampler,
-            image_view: font_image_view,
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-        };
-
-        let mut imgui_renderer = Self {
-            descriptor_set_layout: Self::create_imgui_descriptor_set_layout(base),
+        // Record every owned object before the next fallible step, like Swapchain::new.
+        let mut renderer = Self {
+            descriptor_set_layout: vk::DescriptorSetLayout::null(),
             pipeline_layout: vk::PipelineLayout::null(),
             vk_pipeline: vk::Pipeline::null(),
-            font_sampler: Some(font_sampler),
-            font_image: Some(font_image),
-            font_image_allocation: Some(font_allocation),
-            font_image_view: Some(font_image_view),
+            font_sampler: None,
+            font_image: None,
+            font_image_allocation: None,
+            font_image_view: None,
             frame_buffers: Vec::new(),
-            device,
+            device: base.device.clone(),
             push_descriptor: base.push_descriptor.clone(),
-            textures: vec![font_image_info],
+            textures: Vec::new(),
             shadow_tex_ids: [None; SHADOW_CASCADE_COUNT],
         };
-
-        // 8) Loads the shaders and build the pipeline
-        imgui_renderer
-            .rebuild_pipeline(base)
-            .expect("Failed to rebuild imgui pipeline");
-
-        imgui_renderer
+        let result = (|| -> Result<(), Box<dyn Error>> {
+            imgui.fonts().add_font(&[FontSource::DefaultFontData {
+                config: Some(FontConfig {
+                    rasterizer_multiply: 1.0,
+                    ..FontConfig::default()
+                }),
+            }]);
+            let atlas = imgui.fonts().build_rgba32_texture();
+            let (staging_buffer, mut staging_alloc) =
+                Self::create_staging_buffer(allocator, &atlas)?;
+            let upload = (|| -> Result<(), Box<dyn Error>> {
+                Self::fill_staging_buffer(allocator, &mut staging_alloc, &atlas)?;
+                let (image, allocation) =
+                    Self::create_font_image(allocator, atlas.width, atlas.height)?;
+                renderer.font_image = Some(image);
+                renderer.font_image_allocation = Some(allocation);
+                Self::copy_buffer_to_image(base, staging_buffer, image, atlas.width, atlas.height)?;
+                renderer.font_image_view = Some(Self::create_image_view(base, image)?);
+                renderer.font_sampler = Some(Self::create_sampler(base)?);
+                Ok(())
+            })();
+            unsafe {
+                allocator.destroy_buffer(staging_buffer, &mut staging_alloc);
+            }
+            upload?;
+            renderer.descriptor_set_layout = Self::create_imgui_descriptor_set_layout(base)?;
+            renderer.textures.push(vk::DescriptorImageInfo {
+                sampler: renderer.font_sampler.unwrap(),
+                image_view: renderer.font_image_view.unwrap(),
+                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            });
+            renderer.rebuild_pipeline(base)?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            renderer.cleanup(base.allocator.as_ref().unwrap());
+            return Err(error);
+        }
+        Ok(renderer)
     }
 }

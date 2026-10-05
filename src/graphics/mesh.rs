@@ -115,11 +115,13 @@ impl VertexBuffer {
             unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
 
         unsafe {
-            let ptr = allocator.map_memory(&mut allocation)? as *mut T;
+            // SAFETY: MAPPED keeps this allocation mapped; it holds the whole data slice.
+            let ptr = allocator.get_allocation_info(&allocation).mapped_data as *mut T;
             std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
-            // Host-visible memory is not guaranteed to be coherent on every GPU.
-            allocator.flush_allocation(&allocation, 0, size)?;
-            allocator.unmap_memory(&mut allocation);
+            if let Err(error) = allocator.flush_allocation(&allocation, 0, size) {
+                allocator.destroy_buffer(buffer, &mut allocation);
+                return Err(error.into());
+            }
         }
 
         Ok(VertexBuffer { buffer, allocation })
@@ -166,10 +168,13 @@ impl IndexBuffer {
             unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
 
         unsafe {
-            let ptr = allocator.map_memory(&mut allocation)? as *mut u32;
+            // SAFETY: MAPPED keeps this allocation mapped; it holds the whole data slice.
+            let ptr = allocator.get_allocation_info(&allocation).mapped_data as *mut u32;
             std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
-            allocator.flush_allocation(&allocation, 0, size)?;
-            allocator.unmap_memory(&mut allocation);
+            if let Err(error) = allocator.flush_allocation(&allocation, 0, size) {
+                allocator.destroy_buffer(buffer, &mut allocation);
+                return Err(error);
+            }
         }
 
         Ok(IndexBuffer {
@@ -547,8 +552,14 @@ impl LoadedMesh {
         let indices = &mesh.indices;
         let bounds = MeshBounds::from_vertices(verts).ok_or("cannot upload an empty mesh")?;
 
-        let vb = VertexBuffer::new(allocator, verts)?;
-        let ib = IndexBuffer::new(allocator, indices)?;
+        let mut vb = VertexBuffer::new(allocator, verts)?;
+        let ib = match IndexBuffer::new(allocator, indices) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                vb.cleanup(allocator);
+                return Err(error.into());
+            }
+        };
 
         Ok(LoadedMesh {
             name,

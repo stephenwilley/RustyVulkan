@@ -170,7 +170,7 @@ pub fn attribute_descriptions() -&gt; [vk::VertexInputAttributeDescription; 6] {
             location: 0,
             format: vk::Format::R32G32B32_SFLOAT,
             offset: offset_of!(Vertex, pos) as u32,
-        },</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/mesh.rs#L33-L50">src/graphics/mesh.rs:33-50</a></figcaption></figure><!--/x-->
+        },</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/mesh.rs#L33-L50">src/graphics/mesh.rs:33-50</a></figcaption></figure><!--/x-->
     <p>The remaining five attributes follow the same pattern for <code>normal</code>, <code>color</code>,
     <code>uv</code>, <code>tangent</code> and <code>bitangent</code>, at locations 1–5 in that order, matching
     <code>main.vert</code>. <code>offset_of!</code> computes each field's offset from
@@ -384,7 +384,7 @@ let shader_stage_create_infos: Vec&lt;_&gt; = shader_infos
         // Wireframe affects pipelines; ensure rebuild next frame
         self.pipeline_generation = self.pipeline_generation.saturating_add(1);
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base.rs#L712-L722">src/vulkan/base.rs:712-722</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L712-L722">src/vulkan/base.rs:712-722</a></figcaption></figure><!--/x-->
     <p>At the start of each frame, the render graph compares that counter with the last one it saw. If it has
     changed, the graph waits for the GPU once and asks every owner to rebuild:</p>
     <!--x src/vulkan/render_graph.rs 221-232,242-243--><figure class="code"><pre><code class="language-rust">// Rebuild pipelines only when engine-signaled generation changes (swapchain/MSAA/wireframe)

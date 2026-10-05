@@ -103,7 +103,7 @@ pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
         Some(error) =&gt; Err(error),
         None =&gt; Ok(()),
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/app.rs#L157-L166">src/app/app.rs:157-166</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L157-L166">src/app/app.rs:157-166</a></figcaption></figure><!--/x-->
     <p><code>ControlFlow::Poll</code> keeps the loop spinning instead of sleeping until the next input event,
     which suits a renderer that wants to draw continuously. <code>run_app</code> blocks until the loop exits; any
     fatal error stored along the way is then returned to <code>main</code>, which turns it into a failure exit
@@ -117,7 +117,7 @@ pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     </aside>
 
     <h2>Start-up in <code>resumed</code></h2>
-    <!--x src/app/app.rs 469-482,494-503,514-523--><figure class="code"><pre><code class="language-rust">fn resumed(&amp;mut self, event_loop: &amp;ActiveEventLoop) {
+    <!--x src/app/app.rs 469-482,494-503,521-530--><figure class="code"><pre><code class="language-rust">fn resumed(&amp;mut self, event_loop: &amp;ActiveEventLoop) {
     // Winit can emit Resumed more than once. Keep the existing ownership
     // tree rather than replacing live GPU resources and the ImGui context.
     if self.window.is_some() {
@@ -132,27 +132,27 @@ pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
         }
     }
 // ...
-    match VulkanBase::new(self.window.as_ref().unwrap(), event_loop) {
-        Ok(vulkan_base) =&gt; {
-            self.vulkan_base = Some(vulkan_base);
-        }
-        Err(e) =&gt; {
-            self.fatal_error = Some(e);
-            event_loop.exit();
-            return;
-        }
+match VulkanBase::new(self.window.as_ref().unwrap(), event_loop) {
+    Ok(vulkan_base) =&gt; {
+        self.vulkan_base = Some(vulkan_base);
     }
-// ...
-    if let Err(e) = self.set_up_scene() {
+    Err(e) =&gt; {
         self.fatal_error = Some(e);
         event_loop.exit();
         return;
     }
+}
+// ...
+if let Err(e) = self.set_up_scene() {
+    self.fatal_error = Some(e);
+    event_loop.exit();
+    return;
+}
 
-    self.render_graph.add(RenderPassNode::Shadow);
-    self.render_graph.add(RenderPassNode::Main);
-    let show = self.vulkan_base.as_ref().unwrap().engine_settings.show_ui;
-    self.render_graph.set_pass_enabled(RenderPassNode::UI, show);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/app.rs#L469-L523">src/app/app.rs:469-523</a></figcaption></figure><!--/x-->
+self.render_graph.add(RenderPassNode::Shadow);
+self.render_graph.add(RenderPassNode::Main);
+let show = self.vulkan_base.as_ref().unwrap().engine_settings.show_ui;
+self.render_graph.set_pass_enabled(RenderPassNode::UI, show);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L469-L530">src/app/app.rs:469-482,494-503,521-530</a></figcaption></figure><!--/x-->
     <p>The order is the order of the guide: window, ImGui context, the Vulkan backend
     (<a href="03-instance-devices.html">Chapter 3</a>), the ImGui renderer, the scene
     (<a href="12-main-pass-scene.html">Chapter 12</a>), and finally the passes. The guard at the top matters
@@ -173,10 +173,10 @@ pub fn capture_first_person_cursor(window: &amp;Window) {
             .ok();
     }
     window.set_cursor_visible(false);
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/app.rs#L43-L56">src/app/app.rs:43-56</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L43-L56">src/app/app.rs:43-56</a></figcaption></figure><!--/x-->
 
     <h2>Events</h2>
-    <!--x src/app/app.rs 526-548--><figure class="code"><pre><code class="language-rust">fn device_event(
+    <!--x src/app/app.rs 533-555--><figure class="code"><pre><code class="language-rust">fn device_event(
     &amp;mut self,
     _event_loop: &amp;ActiveEventLoop,
     _device_id: winit::event::DeviceId,
@@ -198,7 +198,7 @@ fn about_to_wait(&amp;mut self, _event_loop: &amp;ActiveEventLoop) {
     if let Some(window) = &amp;self.window {
         window.request_redraw();
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/app.rs#L526-L548">src/app/app.rs:526-548</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L533-L555">src/app/app.rs:533-555</a></figcaption></figure><!--/x-->
     <p><code>about_to_wait</code> runs when the loop has handled all pending events. Requesting a redraw every
     time is what keeps frames coming; each <code>RedrawRequested</code> then moves the camera and runs the render
     graph (<a href="09-frame-loop.html">Chapter 9</a>). Mouse look uses <em>device</em> events, the raw relative

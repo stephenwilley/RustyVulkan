@@ -47,6 +47,7 @@ struct StagingBuffer {
 struct TextureUploadBatch {
     command_buffer: vk::CommandBuffer,
     staging_buffers: Vec<StagingBuffer>,
+    fence: vk::Fence,
 }
 
 impl TextureUploadBatch {
@@ -63,11 +64,17 @@ impl TextureUploadBatch {
             flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
             ..Default::default()
         };
-        unsafe { device.begin_command_buffer(command_buffer, &begin_info)? };
+        if let Err(error) = unsafe { device.begin_command_buffer(command_buffer, &begin_info) } {
+            unsafe {
+                device.free_command_buffers(command_pool, &[command_buffer]);
+            }
+            return Err(error);
+        }
 
         Ok(Self {
             command_buffer,
             staging_buffers: Vec::new(),
+            fence: vk::Fence::null(),
         })
     }
 
@@ -97,12 +104,27 @@ impl TextureUploadBatch {
         };
         let (staging_buffer, mut staging_allocation) =
             unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
-        unsafe {
-            let data_ptr = allocator.map_memory(&mut staging_allocation)?;
-            std::ptr::copy_nonoverlapping(pixels.as_ptr(), data_ptr, pixels.len());
-            allocator.flush_allocation(&staging_allocation, 0, pixels.len() as u64)?;
-            allocator.unmap_memory(&mut staging_allocation);
+        let write_result = (|| -> Result<(), vk::Result> {
+            unsafe {
+                let data_ptr = allocator.map_memory(&mut staging_allocation)?;
+                std::ptr::copy_nonoverlapping(pixels.as_ptr(), data_ptr, pixels.len());
+                let result =
+                    allocator.flush_allocation(&staging_allocation, 0, pixels.len() as u64);
+                allocator.unmap_memory(&mut staging_allocation);
+                result
+            }
+        })();
+        if let Err(error) = write_result {
+            unsafe {
+                allocator.destroy_buffer(staging_buffer, &mut staging_allocation);
+            }
+            return Err(error.into());
         }
+        // The batch owns staging before any subsequent step can fail.
+        self.staging_buffers.push(StagingBuffer {
+            buffer: staging_buffer,
+            allocation: staging_allocation,
+        });
 
         // Create the sampled image now, then record its layout transitions and copy.
         let image_info = vk::ImageCreateInfo {
@@ -126,7 +148,7 @@ impl TextureUploadBatch {
             usage: MemoryUsage::AutoPreferDevice,
             ..Default::default()
         };
-        let (image, allocation) =
+        let (image, mut allocation) =
             unsafe { allocator.create_image(&image_info, &image_alloc_info)? };
 
         let subresource_range = vk::ImageSubresourceRange {
@@ -136,6 +158,24 @@ impl TextureUploadBatch {
             base_array_layer: 0,
             layer_count: 1,
         };
+        let view_info = vk::ImageViewCreateInfo {
+            image,
+            view_type: vk::ImageViewType::TYPE_2D,
+            format: vk::Format::R8G8B8A8_UNORM,
+            components: vk::ComponentMapping::default(),
+            subresource_range,
+            ..Default::default()
+        };
+        let image_view = match unsafe { device.create_image_view(&view_info, None) } {
+            Ok(view) => view,
+            Err(error) => {
+                unsafe {
+                    allocator.destroy_image(image, &mut allocation);
+                }
+                return Err(error.into());
+            }
+        };
+        // No fallible step remains before ownership is returned to the cache.
         let to_transfer = vk::ImageMemoryBarrier2 {
             dst_stage_mask: vk::PipelineStageFlags2::COPY,
             dst_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
@@ -189,21 +229,6 @@ impl TextureUploadBatch {
             );
         }
 
-        let view_info = vk::ImageViewCreateInfo {
-            image,
-            view_type: vk::ImageViewType::TYPE_2D,
-            format: vk::Format::R8G8B8A8_UNORM,
-            components: vk::ComponentMapping::default(),
-            subresource_range,
-            ..Default::default()
-        };
-        let image_view = unsafe { device.create_image_view(&view_info, None)? };
-        // The copy has not run yet, so keep the staging allocation alive until `finish`.
-        self.staging_buffers.push(StagingBuffer {
-            buffer: staging_buffer,
-            allocation: staging_allocation,
-        });
-
         let prepare_ms = prepare_start.elapsed().as_secs_f32() * 1_000.0;
         if prepare_ms >= 100.0 {
             println!("🖼️ Prepared {image_path} ({width}×{height}) in {prepare_ms:.1} ms");
@@ -217,29 +242,17 @@ impl TextureUploadBatch {
         })
     }
 
-    fn finish(
-        mut self,
-        device: &ash::Device,
-        allocator: &Allocator,
-        command_pool: vk::CommandPool,
-        queue: vk::Queue,
-    ) -> Result<(), vk::Result> {
+    fn finish(&mut self, device: &ash::Device, queue: vk::Queue) -> Result<(), vk::Result> {
         unsafe {
-            // Submit all recorded copies together, then wait once before rendering begins.
             device.end_command_buffer(self.command_buffer)?;
-            let fence = device.create_fence(&vk::FenceCreateInfo::default(), None)?;
+            self.fence = device.create_fence(&vk::FenceCreateInfo::default(), None)?;
             let command_buffers =
                 [vk::CommandBufferSubmitInfo::default().command_buffer(self.command_buffer)];
             let submit_info = vk::SubmitInfo2::default().command_buffer_infos(&command_buffers);
-            device.queue_submit2(queue, &[submit_info], fence)?;
-            device.wait_for_fences(&[fence], true, u64::MAX)?;
-            // The fence guarantees the GPU no longer reads the staging buffers.
-            device.destroy_fence(fence, None);
-            device.free_command_buffers(command_pool, &[self.command_buffer]);
-            for staging in self.staging_buffers.drain(..) {
-                let mut allocation = staging.allocation;
-                allocator.destroy_buffer(staging.buffer, &mut allocation);
-            }
+            device.queue_submit2(queue, &[submit_info], self.fence)?;
+            // On failure the cache retains the batch, fence, and staging allocations.
+            // App teardown waits for the device before cache cleanup.
+            device.wait_for_fences(&[self.fence], true, u64::MAX)?;
         }
         Ok(())
     }
@@ -251,7 +264,8 @@ impl TextureUploadBatch {
         command_pool: vk::CommandPool,
     ) {
         unsafe {
-            // Error cleanup path: nothing was submitted, so resources are immediately safe.
+            // Either finish waited for completion or App teardown waited for the device.
+            device.destroy_fence(self.fence, None);
             device.free_command_buffers(command_pool, &[self.command_buffer]);
             for staging in self.staging_buffers.drain(..) {
                 let mut allocation = staging.allocation;
@@ -357,14 +371,14 @@ impl TextureCache {
 
     /// Submit all pending texture copies and wait once before the first draw.
     pub fn flush(&mut self, vb: &VulkanBase) -> Result<(), Box<dyn Error>> {
-        if let Some(batch) = self.upload_batch.take() {
+        if let Some(batch) = self.upload_batch.as_mut() {
             let upload_count = batch.staging_buffers.len();
-            batch.finish(
+            batch.finish(&vb.device, vb.graphics_queue)?;
+            self.upload_batch.take().unwrap().discard(
                 &vb.device,
                 vb.allocator.as_ref().expect("allocator"),
                 vb.command_pool,
-                vb.graphics_queue,
-            )?;
+            );
             println!(
                 "🖼️ Uploaded {} unique textures in one GPU submission",
                 upload_count

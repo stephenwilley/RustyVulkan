@@ -505,10 +505,17 @@ impl ApplicationHandler for App {
         let material_manager = MaterialManager::new();
         self.material_manager = material_manager;
 
-        let renderer = ImGuiRenderer::new(
+        let renderer = match ImGuiRenderer::new(
             self.vulkan_base.as_mut().unwrap(),
             self.imgui.as_mut().unwrap(),
-        );
+        ) {
+            Ok(renderer) => renderer,
+            Err(error) => {
+                self.fatal_error = Some(error);
+                event_loop.exit();
+                return;
+            }
+        };
         self.imgui_renderer = Some(renderer);
 
         if let Err(e) = self.set_up_scene() {

@@ -371,7 +371,7 @@ rock_clusters.push(SceneObject {
     // duplicate the Vulkan buffers or atlas image.
     parts: template.parts.clone(),
     visible: true,
-});</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/app.rs#L401-L410">src/app/app.rs:401-410</a></figcaption></figure><!--/x-->
+});</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L401-L410">src/app/app.rs:401-410</a></figcaption></figure><!--/x-->
     <p>The last steps flush every queued texture upload in one GPU submission
     (<a href="05-gpu-memory.html#staging">Chapter 5</a>) and put the camera at eye height:</p>
     <!--x src/app/app.rs 453-462--><figure class="code"><pre><code class="language-rust">// All scene materials have now recorded their texture uploads.  Submit
@@ -383,7 +383,7 @@ let camera_position = self.camera.position();
 self.camera.set_height_above_ground(
     terrain_settings.height_at(camera_position.x, camera_position.z),
     FIRST_PERSON_EYE_HEIGHT,
-);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/app.rs#L453-L462">src/app/app.rs:453-462</a></figcaption></figure><!--/x-->
+);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L453-L462">src/app/app.rs:453-462</a></figcaption></figure><!--/x-->
     <aside class="callout aside"><p class="callout-title">The debug grid</p>
       <p>The infinite grid's vertex shader (<code>infinite_plane.vert</code>) takes a 2 × 2 unit plane and stretches it to two kilometres, centred
       under the camera (though the 220 m far plane clips it). Its fragment shader (<code>infinite_plane.frag</code>) draws grid lines from <code>fwidth</code>, the screen-space rate of

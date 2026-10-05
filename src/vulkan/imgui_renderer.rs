@@ -13,7 +13,7 @@
 //!   • Cleaning up all ImGui-related Vulkan resources on teardown
 //!
 //! Usage:
-//!   1. `ImGuiRenderer::new(base: &mut VulkanBase, imgui: &mut imgui::Context) -> Self`
+//!   1. `ImGuiRenderer::new(base: &mut VulkanBase, imgui: &mut imgui::Context) -> Result<Self, Box<dyn Error>>`
 //!   2. `renderer.render(device, allocator, cmd_buf, draw_data, image_index)`
 //!   3. `renderer.cleanup(allocator)`
 //!
@@ -27,6 +27,7 @@ use ash::vk;
 use imgui::DrawData;
 use imgui::DrawIdx;
 use imgui::DrawVert;
+use std::error::Error;
 use vk_mem::{Alloc, Allocation, Allocator, MemoryUsage};
 
 mod pipeline;
@@ -73,7 +74,7 @@ impl ImGuiRenderer {
         allocator: &Allocator,
         draw_data: &DrawData,
         image_index: usize,
-    ) {
+    ) -> Result<(), vk::Result> {
         // Total vertex and index data sizes
         let vertex_size = (draw_data.total_vtx_count as usize * std::mem::size_of::<DrawVert>())
             as vk::DeviceSize;
@@ -91,13 +92,6 @@ impl ImGuiRenderer {
         let grow_index_buffer = index_size > buffers.index_buffer_size;
 
         if grow_vertex_buffer {
-            if buffers.vertex_buffer != vk::Buffer::null()
-                && let Some(allocation) = &mut buffers.vertex_allocation
-            {
-                unsafe {
-                    allocator.destroy_buffer(buffers.vertex_buffer, allocation);
-                }
-            }
             let capacity = vertex_size
                 .max(buffers.vertex_buffer_size.saturating_mul(2))
                 .max(1024);
@@ -113,24 +107,20 @@ impl ImGuiRenderer {
                     | vk_mem::AllocationCreateFlags::MAPPED,
                 ..Default::default()
             };
-            let (buf, alloc) = unsafe {
-                allocator
-                    .create_buffer(&buffer_info, &alloc_info)
-                    .expect("create vertex buffer")
-            };
+            let (buf, alloc) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
+            if buffers.vertex_buffer != vk::Buffer::null()
+                && let Some(allocation) = &mut buffers.vertex_allocation
+            {
+                unsafe {
+                    allocator.destroy_buffer(buffers.vertex_buffer, allocation);
+                }
+            }
             buffers.vertex_buffer = buf;
             buffers.vertex_allocation = Some(alloc);
             buffers.vertex_buffer_size = capacity;
         }
 
         if grow_index_buffer {
-            if buffers.index_buffer != vk::Buffer::null()
-                && let Some(allocation) = &mut buffers.index_allocation
-            {
-                unsafe {
-                    allocator.destroy_buffer(buffers.index_buffer, allocation);
-                }
-            }
             let capacity = index_size
                 .max(buffers.index_buffer_size.saturating_mul(2))
                 .max(1024);
@@ -146,11 +136,14 @@ impl ImGuiRenderer {
                     | vk_mem::AllocationCreateFlags::MAPPED,
                 ..Default::default()
             };
-            let (buf, alloc) = unsafe {
-                allocator
-                    .create_buffer(&buffer_info, &alloc_info)
-                    .expect("create index buffer")
-            };
+            let (buf, alloc) = unsafe { allocator.create_buffer(&buffer_info, &alloc_info)? };
+            if buffers.index_buffer != vk::Buffer::null()
+                && let Some(allocation) = &mut buffers.index_allocation
+            {
+                unsafe {
+                    allocator.destroy_buffer(buffers.index_buffer, allocation);
+                }
+            }
             buffers.index_buffer = buf;
             buffers.index_allocation = Some(alloc);
             buffers.index_buffer_size = capacity;
@@ -172,9 +165,7 @@ impl ImGuiRenderer {
                     );
                     offset += byte_len;
                 }
-                allocator
-                    .flush_allocation(allocation, 0, vertex_size)
-                    .expect("flush ImGui vertices");
+                allocator.flush_allocation(allocation, 0, vertex_size)?;
             }
 
             if let Some(allocation) = &buffers.index_allocation {
@@ -191,11 +182,10 @@ impl ImGuiRenderer {
                     );
                     idx_offset += byte_len;
                 }
-                allocator
-                    .flush_allocation(allocation, 0, index_size)
-                    .expect("flush ImGui indices");
+                allocator.flush_allocation(allocation, 0, index_size)?;
             }
         }
+        Ok(())
     }
 
     /// Cleans up ImGui Vulkan resources created by this renderer.
@@ -220,20 +210,30 @@ impl ImGuiRenderer {
                 self.device.destroy_sampler(sampler, None);
             }
             if let Some(image) = self.font_image.take()
-                && let Some(allocation) = &mut self.font_image_allocation
+                && let Some(mut allocation) = self.font_image_allocation.take()
             {
-                allocator.destroy_image(image, allocation);
+                allocator.destroy_image(image, &mut allocation);
             }
 
             // Descriptor layout and pipeline
-            self.device
-                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            self.device.destroy_descriptor_set_layout(
+                std::mem::replace(
+                    &mut self.descriptor_set_layout,
+                    vk::DescriptorSetLayout::null(),
+                ),
+                None,
+            );
             if self.vk_pipeline != vk::Pipeline::null() {
-                self.device.destroy_pipeline(self.vk_pipeline, None);
+                self.device.destroy_pipeline(
+                    std::mem::replace(&mut self.vk_pipeline, vk::Pipeline::null()),
+                    None,
+                );
             }
             if self.pipeline_layout != vk::PipelineLayout::null() {
-                self.device
-                    .destroy_pipeline_layout(self.pipeline_layout, None);
+                self.device.destroy_pipeline_layout(
+                    std::mem::replace(&mut self.pipeline_layout, vk::PipelineLayout::null()),
+                    None,
+                );
             }
         }
     }
@@ -262,15 +262,15 @@ impl ImGuiRenderer {
         cmd_buf: vk::CommandBuffer,
         draw_data: &DrawData,
         image_index: usize,
-    ) {
+    ) -> Result<(), Box<dyn Error>> {
         // If there is nothing to draw, skip UI rendering
         if draw_data.total_vtx_count == 0 || draw_data.total_idx_count == 0 {
-            return;
+            return Ok(());
         }
         // Account for HiDPI: logical→physical scale
         let fb_scale = draw_data.framebuffer_scale;
         // 1) Ensure buffers are up-to-date with ImGui draw data
-        self.update_buffers(allocator, draw_data, image_index);
+        self.update_buffers(allocator, draw_data, image_index)?;
 
         // 2) Bind vertex and index buffers
         let buffers = &self.frame_buffers[image_index];
@@ -370,5 +370,6 @@ impl ImGuiRenderer {
                 vertex_offset += draw_list.vtx_buffer().len() as i32;
             }
         }
+        Ok(())
     }
 }

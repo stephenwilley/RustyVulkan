@@ -394,7 +394,7 @@ impl RenderPass for UiPass {
                 cmd,
                 draw_data,
                 ctx.frame.image_index as usize,
-            );
+            )?;
 
             ctx.vulkan_base.device.cmd_end_rendering(cmd);
         }

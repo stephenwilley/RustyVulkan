@@ -32,6 +32,11 @@ The texture cache owns shared images and its sampler. Materials hold copies of
 those handles and must be destroyed before cache teardown. Upload staging memory must remain alive until
 the GPU has finished reading it. Flush non-coherent host writes before submission.
 
+UI buffer and pipeline replacement creates the new objects before destroying the
+old ones. ImGui construction and mesh uploads release partially created resources
+on errors. Texture batches retain staging and fence ownership if submission or
+waiting fails; shutdown waits for the device before releasing them.
+
 For every fallible creation step, record ownership before attempting the next
 step and release completed resources if a later step fails. The swapchain
 constructor demonstrates this pattern. Clear destroyed handles and take owned
@@ -69,7 +74,7 @@ GPU resource lifetimes and image barriers are correct.
 ## Areas still needing work
 
 This is an educational renderer with explicit manual resource management. Some
-startup paths, texture and grass uploads, and ImGui resource creation still need
+startup paths and grass uploads still need
 ownership guards for every partial failure. Several helpers still panic on Vulkan
 errors. Avoid copying those paths as a complete production error-handling model.
 

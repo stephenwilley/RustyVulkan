@@ -349,7 +349,7 @@ if !transitions.is_empty() {
     }
     let dependency = vk::DependencyInfo::default().image_memory_barriers(&amp;barriers);
     unsafe { self.device.cmd_pipeline_barrier2(cmd, &amp;dependency) };
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base.rs#L325-L349">src/vulkan/base.rs:325-349</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L325-L349">src/vulkan/base.rs:325-349</a></figcaption></figure><!--/x-->
     <aside class="callout aside"><p class="callout-title">synchronization2</p>
       <p><code>vkCmdPipelineBarrier2</code> takes a <code>DependencyInfo</code> listing barriers that each pair
       their own source and destination stage and access masks, and <code>queue_submit2</code> does the same for

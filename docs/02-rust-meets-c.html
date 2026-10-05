@@ -234,7 +234,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
     <p>Sometimes a specific error is expected and handled rather than passed up. Acquiring a swapchain image can
     return <code>ERROR_OUT_OF_DATE_KHR</code> when the window has been resized. That isn't a failure, just a
     signal to rebuild, so <code>begin_frame</code> pattern-matches on it:</p>
-    <!--x src/vulkan/base.rs 270-282--><figure class="code"><pre><code class="language-rust">let (image_index, is_suboptimal) = match self.swapchain_loader.acquire_next_image(
+    <!--x src/vulkan/base.rs 271-283--><figure class="code"><pre><code class="language-rust">let (image_index, is_suboptimal) = match self.swapchain_loader.acquire_next_image(
     self.swapchain.handle,
     u64::MAX,
     self.image_available_semaphores[slot],
@@ -246,7 +246,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
         return Ok(None);
     }
     Err(e) =&gt; return Err(e.into()),
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L270-L282">src/vulkan/base.rs:270-282</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L271-L283">src/vulkan/base.rs:271-283</a></figcaption></figure><!--/x-->
     <p><code>match</code> is like a <code>switch</code> that must cover every case and can look inside values:
     <code>Ok(result)</code> pulls out the success value; the second arm catches one particular error; the last
     converts anything else with <code>.into()</code> and returns it.</p>
@@ -283,9 +283,9 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
     </aside>
     <p>You can see this in shutdown code. <code>for &amp;sem in &amp;self.…</code> borrows the vector and the <code>&amp;sem</code> pattern copies each handle out of it, then destroys the object it
     names:</p>
-    <!--x src/vulkan/base.rs 767-769--><figure class="code"><pre><code class="language-rust">for &amp;sem in &amp;self.image_available_semaphores {
+    <!--x src/vulkan/base.rs 768-770--><figure class="code"><pre><code class="language-rust">for &amp;sem in &amp;self.image_available_semaphores {
     self.device.destroy_semaphore(sem, None);
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L767-L769">src/vulkan/base.rs:767-769</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L768-L770">src/vulkan/base.rs:768-770</a></figcaption></figure><!--/x-->
 
     <h2><code>Drop</code>: automatic clean-up, and its limits</h2>
     <aside class="callout rust" id="rust-drop"><p class="callout-title">Rust note · Drop</p>
@@ -299,7 +299,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
     Instead each owner has an explicit clean-up method, and <code>Drop</code> appears on the two owners at the
     top, which call those methods in the right order. <code>VulkanBase</code> owns the device and everything
     hanging off it, and its <code>Drop</code> waits for the GPU and then destroys things in reverse order:</p>
-    <!--x src/vulkan/base.rs 745-749,752-754,791-794,803-810--><figure class="code"><pre><code class="language-rust">fn drop(&amp;mut self) {
+    <!--x src/vulkan/base.rs 746-750,753-755,792-795,804-811--><figure class="code"><pre><code class="language-rust">fn drop(&amp;mut self) {
     println!("💧 Dropping VulkanBase");
     unsafe {
         // `Drop` gives us `&amp;mut self`, but Vulkan does not know Rust's
@@ -321,7 +321,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
         #[cfg(debug_assertions)]
         self.debug_utils_loader
             .destroy_debug_utils_messenger(self.debug_messenger, None);
-        self.instance.destroy_instance(None);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L745-L810">src/vulkan/base.rs:745-749,752-754,791-794,803-810</a></figcaption></figure><!--/x-->
+        self.instance.destroy_instance(None);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L746-L811">src/vulkan/base.rs:746-750,753-755,792-795,804-811</a></figcaption></figure><!--/x-->
     <p>Note that it logs the wait-idle error rather than returning it with <code>?</code>: a destructor has no
     caller to report to, and panicking in a destructor while another panic is unwinding aborts the program.
     The allocator is stored as an <code>Option</code> so it can be

@@ -23,7 +23,8 @@
 //!
 //! **Usage:**  
 //! Create a `VulkanBase` via `VulkanBase::new(window, event_loop)`, call
-//! `draw_frame()` in your render loop, and rely on `Drop` to clean up on exit.
+//! `begin_frame()`, record the passes, and finish with `end_frame()` in your render loop.
+//! `Drop` waits for the GPU and cleans up on exit.
 //!
 //! --------------------------------------------------------------------------------------
 

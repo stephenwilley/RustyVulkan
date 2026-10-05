@@ -49,7 +49,7 @@ pub struct Pipeline {
 
 impl Pipeline {
     /// Creates a pipeline layout with alpha blending enabled, preserving the original material
-    /// pipeline behaviour.  Shader modules are supplied later when the graphics pipeline is built.
+    /// pipeline behaviour. SPIR-V stage descriptions are supplied later when the graphics pipeline is built.
     /// # Arguments
     /// * `device` - The Vulkan logical device to use for creating the pipeline.
     /// * `set_layouts` - The descriptor set layouts to use for the pipeline.

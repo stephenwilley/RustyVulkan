@@ -198,7 +198,7 @@ unsafe {
     descriptor isn't free, and (without the optional "update after bind" feature, which this code doesn't
     use) a descriptor set must not be changed while a submitted frame may still be using it. So
     <code>update_shadow_descriptor</code> only writes when the view has actually changed:</p>
-    <!--x src/vulkan/base.rs 519-542--><figure class="code"><pre><code class="language-rust">/// Update set=0 binding=1 to point at the current frame's shadow image view
+    <!--x src/vulkan/base.rs 520-543--><figure class="code"><pre><code class="language-rust">/// Update set=0 binding=1 to point at the current frame's shadow image view
 pub fn update_shadow_descriptor(&amp;mut self, image_index: usize, image_view: vk::ImageView) {
     // The view normally stays the same for an image, so avoid a redundant descriptor write.
     if self.shadow_descriptor_views[image_index] == image_view {
@@ -221,7 +221,7 @@ pub fn update_shadow_descriptor(&amp;mut self, image_index: usize, image_view: v
     };
     unsafe { self.device.update_descriptor_sets(&amp;[write], &amp;[]) };
     self.shadow_descriptor_views[image_index] = image_view;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L519-L542">src/vulkan/base.rs:519-542</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L520-L543">src/vulkan/base.rs:520-543</a></figcaption></figure><!--/x-->
     <p>It's called each frame for the swapchain image being recorded. By then the frame loop has already waited
     for that image's previous frame to finish on the GPU (<a href="09-frame-loop.html">Chapter 9</a>), and
     that wait is what makes the write safe.</p>

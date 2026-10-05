@@ -33,8 +33,8 @@ use std::time::Instant;
 use winit::window::Window;
 
 /// Identifiers for the concrete render passes that can be added to a
-/// [`RenderGraph`].  The graph executes passes in the order they were
-/// inserted.
+/// [`RenderGraph`]. Passes execute in fixed order: shadow, main, then UI.
+/// Registration order does not affect execution order.
 #[allow(dead_code)]
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub enum RenderPassNode {
@@ -203,7 +203,7 @@ impl RenderGraph {
         ubo
     }
 
-    /// Execute all passes in insertion order for the current frame.
+    /// Execute enabled shadow, main, and UI passes in their fixed order for this frame.
     pub fn execute(&mut self, app: &mut App) -> Result<(), Box<dyn Error>> {
         let vb = app.vulkan_base.as_mut().unwrap();
 

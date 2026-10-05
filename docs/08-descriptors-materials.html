@@ -117,6 +117,7 @@
   <div class="dive-divider"><span>Deeper dive</span></div>
 
   <section id="deep-dive">
+    <p>The GLSL declaration of the shared set 0 uniform block lives in <code>assets/shaders/global.glsl</code>; its Rust counterpart is <code>GlobalUbo</code> in <code>src/graphics/gpu_data.rs</code>. All six lit fragment shaders include that declaration.</p>
     <h2 id="descriptor-sets">The global set: layout, pool, sets</h2>
     <p><code>VulkanBase::new</code> defines the shape of set 0:</p>
     <!--x src/vulkan/base/setup.rs 541-564--><figure class="code"><pre><code class="language-rust">// Binding 1 contains one sampled 2D-array view of all shadow cascades.

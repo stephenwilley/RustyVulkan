@@ -256,7 +256,7 @@ fn ground_color_at(&amp;self, x: f32, z: f32, slope: f32) -&gt; [f32; 3] {
     <code>terrain.frag</code> starts from that vertex colour and adds detail at scales the one-metre mesh
     can't represent, all from noise and hashes of the world position. The pebbles are the most interesting
     part:</p>
-    <!--x assets/shaders/terrain.frag 94-109--><figure class="code"><pre><code class="language-glsl">vec2 pebble_grid = vTerrainPosition * 5.0;
+    <!--x assets/shaders/terrain.frag 72-87--><figure class="code"><pre><code class="language-glsl">vec2 pebble_grid = vTerrainPosition * 5.0;
 vec2 pebble_cell = floor(pebble_grid);
 vec2 pebble_offset = vec2(
     hash21(pebble_cell + 13.7),
@@ -271,7 +271,7 @@ float pebble = step(0.70, pebble_seed)
                         pebble_distance));
 vec3 pebble_colour = mix(vec3(0.075, 0.065, 0.050), vec3(0.29, 0.27, 0.22),
                          hash21(pebble_cell + 131.2));
-albedo = mix(albedo, pebble_colour, pebble * 0.58);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/assets/shaders/terrain.frag#L94-L109">assets/shaders/terrain.frag:94-109</a></figcaption></figure><!--/x-->
+albedo = mix(albedo, pebble_colour, pebble * 0.58);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/assets/shaders/terrain.frag#L72-L87">assets/shaders/terrain.frag:72-87</a></figcaption></figure><!--/x-->
     <p>The ground is divided into 20 cm cells. A hash decides whether each cell has a pebble (30% do), where in
     the cell it sits, how big it is and what shade. <code>fwidth</code> measures how much the distance changes
     from one pixel to the next and widens the pebble's edge to match, so pebbles soften rather than shimmer as
@@ -303,12 +303,12 @@ albedo = mix(albedo, pebble_colour, pebble * 0.58);</code></pre><figcaption><a h
     the textures for several models), so all five share just two materials. Their vertex shader, <code>rock.vert</code>, is a plain transform; their fragment shader deliberately
     mutes the atlas's colours, keeping its brightness as the surface colour (<em>albedo</em>), so the packs look
     like the same stone:</p>
-    <!--x assets/shaders/rock.frag 52-57--><figure class="code"><pre><code class="language-glsl">vec3 atlas = texture(diffuseMap, vUV).rgb;
+    <!--x assets/shaders/rock.frag 41-46--><figure class="code"><pre><code class="language-glsl">vec3 atlas = texture(diffuseMap, vUV).rgb;
 float atlas_value = dot(atlas, vec3(0.2126, 0.7152, 0.0722));
 vec3 neutral_grey = vec3(mix(0.30, 0.48, atlas_value));
 // Four percent of the atlas chroma is enough to retain slight warm/cool identity
 // without allowing one source model to become visibly brown, green, or blue.
-vec3 albedo = neutral_grey + (atlas - vec3(atlas_value)) * 0.04;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/assets/shaders/rock.frag#L52-L57">assets/shaders/rock.frag:52-57</a></figcaption></figure><!--/x-->
+vec3 albedo = neutral_grey + (atlas - vec3(atlas_value)) * 0.04;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/assets/shaders/rock.frag#L41-L46">assets/shaders/rock.frag:41-46</a></figcaption></figure><!--/x-->
 
     <h2>The sky</h2>
     <p><code>SkyRenderer</code> borrows its panorama from the material manager's texture cache, so the image

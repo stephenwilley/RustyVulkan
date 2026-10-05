@@ -7,34 +7,10 @@
 // GLSL 450
 // --------------------------------------------------------------------------------------
 #version 450
-// Keep in sync with Rust `MAX_LIGHTS`
-#define MAX_LIGHTS 8
-#define SHADOW_CASCADE_COUNT 4
+#extension GL_GOOGLE_include_directive : require
+#include "global.glsl"
 
 layout(push_constant) uniform Push { mat4 mvp; mat4 mv; } pc;
-
-struct Light {
-    vec3 position;
-    float intensity;
-    vec3 color;
-    float _pad;    // keep 16-byte stride
-};
-
-struct DirLight {
-    vec3 direction; // in view space
-    float intensity;
-    vec3 color;
-    float _pad1;
-};
-
-layout(std140, set = 0, binding = 0) uniform GlobalUBO {
-    DirLight sun;                                  // directional light first
-    mat4     light_vp[SHADOW_CASCADE_COUNT];
-    vec4     cascade_splits;
-    Light    lights[MAX_LIGHTS];                   // array of point lights
-    // Scalar pads, not uvec3: std140 aligns a uvec3 to 16 bytes, which would not match Rust.
-    uint     light_count; uint _pad0, _pad1, _pad2;
-} ubo;
 
 layout(set = 0, binding = 1) uniform sampler2DArray shadowMap;
 layout(set = 1, binding = 0) uniform sampler2D diffuseMap;

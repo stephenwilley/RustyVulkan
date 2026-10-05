@@ -46,6 +46,7 @@ const SHADERS: &[&str] = &[
 fn compile_shaders() {
     let shader_dir = Path::new("assets/shaders");
     let compiler = shaderc::Compiler::new().unwrap();
+    println!("cargo:rerun-if-changed=assets/shaders/global.glsl");
     let spv_dir = shader_dir.join("spv");
     fs::create_dir_all(&spv_dir).unwrap();
 
@@ -78,6 +79,19 @@ fn compile_shaders() {
 
         let mut options = shaderc::CompileOptions::new().unwrap();
         options.set_target_env(shaderc::TargetEnv::Vulkan, 0);
+        // This is the one shared interface include; reject other names rather than
+        // silently allowing an untracked include to bypass Cargo's dependency list.
+        options.set_include_callback(|name, _, _, _| {
+            if name != "global.glsl" {
+                return Err(format!("unknown shader include: {name}"));
+            }
+            let path = shader_dir.join(name);
+            let content = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+            Ok(shaderc::ResolvedInclude {
+                resolved_name: path.to_string_lossy().into_owned(),
+                content,
+            })
+        });
 
         let binary_result = compiler
             .compile_into_spirv(

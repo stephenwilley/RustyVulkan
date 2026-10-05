@@ -5,32 +5,8 @@
 // depth testing and avoids the expensive transparency sorting dense grass would need.
 // --------------------------------------------------------------------------------------
 #version 450
-
-#define MAX_LIGHTS 8
-#define SHADOW_CASCADE_COUNT 4
-
-struct Light {
-    vec3 position;
-    float intensity;
-    vec3 color;
-    float _pad;
-};
-
-struct DirLight {
-    vec3 direction;
-    float intensity;
-    vec3 color;
-    float _pad;
-};
-
-layout(std140, set = 0, binding = 0) uniform GlobalUBO {
-    DirLight sun;
-    mat4 light_vp[SHADOW_CASCADE_COUNT];
-    vec4 cascade_splits;
-    Light lights[MAX_LIGHTS];
-    uint light_count;
-    uint _pad0, _pad1, _pad2;
-} ubo;
+#extension GL_GOOGLE_include_directive : require
+#include "global.glsl"
 
 layout(set = 0, binding = 1) uniform sampler2DArray shadowMap;
 

@@ -11,7 +11,8 @@
 - `src/vulkan/render_graph.rs` orders the shadow, main, and UI passes and records
   attachment transitions. It is a linear pass scheduler, not a general graph compiler.
 - `assets/shaders/` contains GLSL sources. Add new sources to `SHADERS` in
-  `build.rs`; Cargo tracks that list and the script regenerates SPIR-V when rerun.
+  `build.rs`; Cargo tracks that list plus the shared `global.glsl` interface and
+  the script regenerates SPIR-V when rerun.
 
 ## Ownership and failure handling
 

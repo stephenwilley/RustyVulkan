@@ -298,7 +298,7 @@ let rasterizer = vk::PipelineRasterizationStateCreateInfo {
     grass shaders each carry their own copy of this function, with slightly different constants.) First it picks a cascade by distance,
     using the split distances from the uniform buffer, and projects the point into that cascade's light
     space:</p>
-    <!--x assets/shaders/main.frag 51-57,63-66--><figure class="code"><pre><code class="language-glsl">float shadow_factor(vec3 fragPosView) {
+    <!--x assets/shaders/main.frag 27-33,39-42--><figure class="code"><pre><code class="language-glsl">float shadow_factor(vec3 fragPosView) {
     float viewDepth = -fragPosView.z;
     if (viewDepth &gt; ubo.cascade_splits.w) return 1.0;
     int cascade = viewDepth &gt; ubo.cascade_splits.z ? 3
@@ -309,9 +309,9 @@ let rasterizer = vk::PipelineRasterizationStateCreateInfo {
     vec3 ndc = lightPos.xyz / lightPos.w;
     // Convert to [0,1]
     vec2 uv = ndc.xy * 0.5 + 0.5;
-    float depth = ndc.z; // [0,1] inside light frustum after Vulkan correction</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/assets/shaders/main.frag#L51-L66">assets/shaders/main.frag:51-66</a></figcaption></figure><!--/x-->
+    float depth = ndc.z; // [0,1] inside light frustum after Vulkan correction</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/assets/shaders/main.frag#L27-L42">assets/shaders/main.frag:27-33,39-42</a></figcaption></figure><!--/x-->
     <p>Then come the PCF taps:</p>
-    <!--x assets/shaders/main.frag 81-102--><figure class="code"><pre><code class="language-glsl">    // Manual PCF with a few jittered taps (compat path for platforms without compare samplers).
+    <!--x assets/shaders/main.frag 57-78--><figure class="code"><pre><code class="language-glsl">    // Manual PCF with a few jittered taps (compat path for platforms without compare samplers).
     // Poisson-ish offsets (in texels):
     const vec2 OFFS[6] = vec2[](
         vec2( 0.0,  0.0),
@@ -332,7 +332,7 @@ let rasterizer = vk::PipelineRasterizationStateCreateInfo {
         sum += (depth - bias &lt;= sm) ? 1.0 : 0.4;
     }
     return sum / 6.0;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/assets/shaders/main.frag#L81-L102">assets/shaders/main.frag:81-102</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/assets/shaders/main.frag#L57-L78">assets/shaders/main.frag:57-78</a></figcaption></figure><!--/x-->
     <p>Each tap samples the cascade's layer of the array at a small offset, measured in texels, and compares the
     stored depth with the fragment's own (minus a tiny extra bias). Lit taps count 1, shadowed ones 0.4, so a
     point in full shadow keeps 40% of the sun's light: a simple stand-in for light bounced in from the sky. Points outside every cascade, or outside

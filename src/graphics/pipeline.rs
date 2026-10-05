@@ -29,7 +29,8 @@ use super::mesh::Vertex;
 use super::shaders::ShaderStageInfo;
 
 /// Shared scene/grass push-constant ABI: two mat4s and one vec4.
-pub(crate) const PUSH_CONSTANT_BYTES: u32 = 144;
+pub(crate) const PUSH_CONSTANT_BYTES: u32 =
+    std::mem::size_of::<crate::graphics::gpu_data::ScenePushConstants>() as u32;
 
 /// Represents the Vulkan graphics pipeline and its layout.
 /// It is responsible for creating the graphics pipeline and managing its resources.

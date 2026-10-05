@@ -32,6 +32,7 @@ const INFLIGHT_FRAMES: usize = 2;
 /// Frame start/end plus the boundaries needed to isolate shadow, scene, and vegetation work.
 const TIMESTAMPS_PER_IMAGE: u32 = 5;
 
+use crate::graphics::gpu_data::GlobalUbo;
 use ash::khr::push_descriptor;
 use ash::khr::surface;
 use ash::khr::swapchain;
@@ -505,7 +506,7 @@ impl VulkanBase {
             let ptr = allocator.get_allocation_info(allocation).mapped_data as *mut u8;
             debug_assert!(!ptr.is_null());
             std::ptr::copy_nonoverlapping(
-                ubo as *const GlobalUbo as *const u8,
+                bytemuck::bytes_of(ubo).as_ptr(),
                 ptr,
                 std::mem::size_of::<GlobalUbo>(),
             );
@@ -818,39 +819,4 @@ pub struct EngineSettings {
     pub msaa_samples: u32,
     pub shadow_map_resolution: u32,
     pub shadow_distance: f32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-pub struct GpuLight {
-    pub position: [f32; 3],
-    pub intensity: f32, // packs with position to 16 bytes
-    pub color: [f32; 3],
-    pub _pad: f32, // pad to 16 bytes
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-pub struct GpuDirLight {
-    pub direction: [f32; 3],
-    pub intensity: f32, // keep std140 friendly packing
-    pub color: [f32; 3],
-    pub _pad: f32,
-}
-
-/// Global (per-frame/per-image) uniform buffer object shared across all pipelines via **descriptor set 0, binding 0**.
-/// There is **one buffer per swapchain image** so the CPU can update the UBO while another image is still in-flight.
-/// Keep fields 16-byte aligned for std140. Field order must match every GLSL `GlobalUBO`.
-#[repr(C, align(16))]
-#[derive(Clone, Copy, Default)]
-pub struct GlobalUbo {
-    pub dir_light: GpuDirLight,
-    /// One view-to-light-clip matrix for each camera-depth slice.
-    pub light_vp: [[[f32; 4]; 4]; crate::graphics::shadow_math::SHADOW_CASCADE_COUNT],
-    /// Positive view-space far depth for each cascade.
-    pub cascade_splits: [f32; crate::graphics::shadow_math::SHADOW_CASCADE_COUNT],
-    // Then the array of point lights (std140 array of structs)
-    pub lights: [GpuLight; crate::app::app::MAX_LIGHTS], // array of point lights
-    pub light_count: u32,                                // number of active point lights
-    pub _pad0: [u32; 3],                                 // three GLSL uints, never a uvec3 (std140)
 }

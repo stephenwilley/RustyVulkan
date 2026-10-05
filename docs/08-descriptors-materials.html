@@ -198,7 +198,7 @@ unsafe {
     descriptor isn't free, and (without the optional "update after bind" feature, which this code doesn't
     use) a descriptor set must not be changed while a submitted frame may still be using it. So
     <code>update_shadow_descriptor</code> only writes when the view has actually changed:</p>
-    <!--x src/vulkan/base.rs 518-541--><figure class="code"><pre><code class="language-rust">/// Update set=0 binding=1 to point at the current frame's shadow image view
+    <!--x src/vulkan/base.rs 519-542--><figure class="code"><pre><code class="language-rust">/// Update set=0 binding=1 to point at the current frame's shadow image view
 pub fn update_shadow_descriptor(&amp;mut self, image_index: usize, image_view: vk::ImageView) {
     // The view normally stays the same for an image, so avoid a redundant descriptor write.
     if self.shadow_descriptor_views[image_index] == image_view {
@@ -221,7 +221,7 @@ pub fn update_shadow_descriptor(&amp;mut self, image_index: usize, image_view: v
     };
     unsafe { self.device.update_descriptor_sets(&amp;[write], &amp;[]) };
     self.shadow_descriptor_views[image_index] = image_view;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L518-L541">src/vulkan/base.rs:518-541</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L519-L542">src/vulkan/base.rs:519-542</a></figcaption></figure><!--/x-->
     <p>It's called each frame for the swapchain image being recorded. By then the frame loop has already waited
     for that image's previous frame to finish on the GPU (<a href="09-frame-loop.html">Chapter 9</a>), and
     that wait is what makes the write safe.</p>
@@ -399,7 +399,7 @@ Ok(image_view)</code></pre><figcaption><a href="https://github.com/stephenwilley
     <h2>Binding at draw time</h2>
     <p>The main pass (<a href="12-main-pass-scene.html">Chapter 12</a>) switches pipeline and descriptors
     only when the material changes, then pushes per-object constants and draws:</p>
-    <!--x src/vulkan/main_pass.rs 159-184--><figure class="code"><pre><code class="language-rust">if current_pipeline_id != part.material_id {
+    <!--x src/vulkan/main_pass.rs 155-180--><figure class="code"><pre><code class="language-rust">if current_pipeline_id != part.material_id {
     let material = &amp;ctx.material_manager.materials[part.material_id];
     device.cmd_bind_pipeline(
         cmd,
@@ -423,8 +423,8 @@ device.cmd_push_constants(
     material.pipeline.vk_layout,
     vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
     0,
-    &amp;push_bytes,
-);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/main_pass.rs#L159-L184">src/vulkan/main_pass.rs:159-184</a></figcaption></figure><!--/x-->
+    bytemuck::bytes_of(&amp;push),
+);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/main_pass.rs#L155-L180">src/vulkan/main_pass.rs:155-180</a></figcaption></figure><!--/x-->
     <p><code>cmd_bind_descriptor_sets</code> binds the given sets starting at slot 0, against the pipeline's
     layout, which they must match (<a href="07-pipelines.html#pipeline-layout">Chapter 7</a>). <code>set0_descriptor_sets[image_index]</code> picks the global set belonging to the swapchain image
     being drawn. <code>push_textures</code> then fills set 1. Because pushed descriptors are copied into the

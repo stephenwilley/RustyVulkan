@@ -188,56 +188,39 @@ pub struct SceneObject {
     <p>For each part, the main pass computes model-view and model-view-projection matrices and packs them,
     with the material's UV tiling, into the 144-byte push-constant block of
     <a href="07-pipelines.html#pipeline-layout">Chapter 7</a>:</p>
-    <!--x src/vulkan/main_pass.rs 256-292--><figure class="code"><pre><code class="language-rust">pub fn compute_push_constant_per_obj(
-    camera: &amp;Camera,
-    model_matrix: &amp;Matrix4&lt;f32&gt;,
-    uv_tiling: [f32; 2],
-) -&gt; [u8; 144] {
-    let proj: Matrix4&lt;f32&gt; = *camera.get_projection();
-    let view: Matrix4&lt;f32&gt; = *camera.get_view();
+    <!--x src/graphics/gpu_data.rs 8-27--><figure class="code"><pre><code class="language-rust">/// main.vert: two column-major mat4s and a vec4 (xy are UV tiling, zw are padding).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct ScenePushConstants {
+    pub mvp: [[f32; 4]; 4],
+    pub mv: [[f32; 4]; 4],
+    pub uv_tiling: [f32; 4],
+}
 
-    let mv = view * model_matrix;
-    let mvp = proj * mv;
-
-    // Two mat4s plus a padded vec4: fixed storage avoids a per-object heap allocation.
-    let mut bytes = [0_u8; 144];
-    let mut offset = 0;
-    let flatten_mat4 = |m: Matrix4&lt;f32&gt;, buf: &amp;mut [u8; 144], offset: &amp;mut usize| {
-        let cols = m.transpose();
-        for row in 0..4 {
-            for col in 0..4 {
-                buf[*offset..*offset + 4].copy_from_slice(&amp;cols[col][row].to_ne_bytes());
-                *offset += 4;
-            }
+impl ScenePushConstants {
+    pub fn new(camera: &amp;Camera, model: &amp;Matrix4&lt;f32&gt;, uv_tiling: [f32; 2]) -&gt; Self {
+        let mv = camera.get_view() * model;
+        let mvp = camera.get_projection() * mv;
+        Self {
+            mvp: mvp.into(),
+            mv: mv.into(),
+            uv_tiling: [uv_tiling[0], uv_tiling[1], 0.0, 0.0],
         }
-    };
-
-    flatten_mat4(mvp, &amp;mut bytes, &amp;mut offset);
-    flatten_mat4(mv, &amp;mut bytes, &amp;mut offset);
-
-    // Append uv_tiling as a vec4 (xy used, zw padding) for alignment
-    for value in [uv_tiling[0], uv_tiling[1], 0.0, 0.0] {
-        bytes[offset..offset + 4].copy_from_slice(&amp;value.to_ne_bytes());
-        offset += 4;
     }
-
-    debug_assert_eq!(offset, bytes.len());
-
-    bytes
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/main_pass.rs#L256-L292">src/vulkan/main_pass.rs:256-292</a></figcaption></figure><!--/x-->
-    <p>GLSL expects matrices column by column. Transposing and then reading <code>[col][row]</code> with
-    <code>row</code> as the outer loop emits each original column in turn, which is that column-major layout
-    (a roundabout route to it, given cgmath already stores columns). The block is a fixed <code>[u8; 144]</code> on the stack, so the
-    inner loop allocates nothing. The <code>debug_assert_eq!</code> checks the packing filled it exactly, in
-    debug builds only.</p>
-    <aside class="callout rust"><p class="callout-title">Rust note · bytes and slices</p>
-      <p><code>to_ne_bytes()</code> gives an <code>f32</code>'s four bytes in the machine's native byte order,
-      and <code>buf[a..b].copy_from_slice(…)</code> copies them into a sub-range of the array; the range is
-      bounds-checked, so an off-by-one panics instead of corrupting memory.</p>
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/gpu_data.rs#L8-L27">src/graphics/gpu_data.rs:8-27</a></figcaption></figure><!--/x-->
+    <p><code>ScenePushConstants</code> names the two matrices and the padded UV field. cgmath already
+    stores matrix columns, so conversion to <code>[[f32; 4]; 4]</code> preserves GLSL's column-major order.
+    <code>bytemuck::bytes_of</code> borrows the struct's bytes for the Vulkan command; no heap allocation
+    or manual byte offsets are needed.</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · a checked GPU layout</p>
+      <p><code>#[repr(C)]</code> fixes field order. Deriving <code>Pod</code> verifies there is no hidden
+      padding or invalid byte representation. Explicit padding is initialized along with every field.
+      Compile-time assertions in <code>gpu_data.rs</code> check the sizes and offsets expected by GLSL:
+      matrices at 0 and 64 bytes, the final vector at 128, and 144 bytes in total.</p>
     </aside>
 
     <h2>The draw loop</h2>
-    <!--x src/vulkan/main_pass.rs 144-159,175-188--><figure class="code"><pre><code class="language-rust">let mut current_pipeline_id = usize::MAX;
+    <!--x src/vulkan/main_pass.rs 143-155,171-184--><figure class="code"><pre><code class="language-rust">let mut current_pipeline_id = usize::MAX;
 for obj in &amp;ctx.scene.objects {
     if !obj.visible {
         continue;
@@ -246,11 +229,8 @@ for obj in &amp;ctx.scene.objects {
     for part in &amp;obj.parts {
         let model_matrix = obj_model * part.transform.model_matrix();
         let material = &amp;ctx.material_manager.materials[part.material_id];
-        let push_bytes = compute_push_constant_per_obj(
-            ctx.camera,
-            &amp;model_matrix,
-            material.uv_tiling,
-        );
+        let push =
+            ScenePushConstants::new(ctx.camera, &amp;model_matrix, material.uv_tiling);
 
         if current_pipeline_id != part.material_id {
 // ...
@@ -262,12 +242,12 @@ for obj in &amp;ctx.scene.objects {
             material.pipeline.vk_layout,
             vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             0,
-            &amp;push_bytes,
+            bytemuck::bytes_of(&amp;push),
         );
 
         ctx.mesh_manager.meshes[part.mesh_id].record(device, cmd);
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/main_pass.rs#L144-L188">src/vulkan/main_pass.rs:144-188</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/main_pass.rs#L143-L184">src/vulkan/main_pass.rs:143-155,171-184</a></figcaption></figure><!--/x-->
     <p>Objects are drawn in scene order, not sorted, and the pipeline and descriptors are rebound only when a
     part's material differs from the previous part's (the binding itself was shown in
     <a href="08-descriptors-materials.html">Chapter 8</a>). Consecutive parts sharing a material therefore cost

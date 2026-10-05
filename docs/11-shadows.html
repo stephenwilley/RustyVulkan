@@ -207,7 +207,7 @@ ShadowCascade {
     binding: 0,
     format: vk::Format::R32G32B32_SFLOAT,
     offset: 0,
-}];</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/shadow_pass.rs#L74-L79">src/vulkan/shadow_pass.rs:74-79</a></figcaption></figure><!--/x-->
+}];</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/shadow_pass.rs#L74-L79">src/vulkan/shadow_pass.rs:74-79</a></figcaption></figure><!--/x-->
     <p>It still steps through the full 68-byte <code>Vertex</code> (the binding stride), but reads only the
     position at offset 0. The vertex shader is the shortest in the project:</p>
     <!--x assets/shaders/shadow_depth.vert 1-11--><figure class="code"><pre><code class="language-glsl">#version 450
@@ -240,7 +240,7 @@ let rasterizer = vk::PipelineRasterizationStateCreateInfo {
     depth_bias_clamp: 0.0,
     line_width: 1.0,
     ..Default::default()
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/shadow_pass.rs#L117-L134">src/vulkan/shadow_pass.rs:117-134</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/shadow_pass.rs#L117-L134">src/vulkan/shadow_pass.rs:117-134</a></figcaption></figure><!--/x-->
     <p><dfn>Depth bias</dfn> pushes the stored depths slightly further from the light, more so on surfaces
     seen at a glancing angle (the slope factor). Without it, a lit surface compares against its own depth, loses
     to limited precision on a patchy, angle-dependent basis, and is covered in stripes known as <em>shadow
@@ -250,7 +250,7 @@ let rasterizer = vk::PipelineRasterizationStateCreateInfo {
     pointing away from the light.</p>
     <p>Recording draws every visible scene object four times, once per cascade, each into one layer of the
     shadow array through that layer's own view (<a href="10-render-graph.html">Chapter 10</a>):</p>
-    <!--x src/vulkan/shadow_pass.rs 257-288--><figure class="code"><pre><code class="language-rust">for (cascade_index, cascade) in cascades.iter().enumerate() {
+    <!--x src/vulkan/shadow_pass.rs 245-278--><figure class="code"><pre><code class="language-rust">for (cascade_index, cascade) in cascades.iter().enumerate() {
     let depth_attachment = vk::RenderingAttachmentInfo::default()
         .image_view(shadow_att.layer_views[cascade_index])
         .image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
@@ -270,19 +270,21 @@ let rasterizer = vk::PipelineRasterizationStateCreateInfo {
         let object_model = object.transform.model_matrix();
         for part in &amp;object.parts {
             let model = object_model * part.transform.model_matrix();
-            let push = Self::flatten_mat4(cascade.world_to_light_clip * model);
+            let push = ShadowPushConstants {
+                mvp: (cascade.world_to_light_clip * model).into(),
+            };
             device.cmd_push_constants(
                 cmd,
                 self.pipeline_layout,
                 vk::ShaderStageFlags::VERTEX,
                 0,
-                &amp;push,
+                bytemuck::bytes_of(&amp;push),
             );
             ctx.mesh_manager.meshes[part.mesh_id].record(device, cmd);
         }
     }
-    device.cmd_end_rendering(cmd);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/shadow_pass.rs#L257-L288">src/vulkan/shadow_pass.rs:257-288</a></figcaption></figure><!--/x-->
-    <p>The push constant is just one matrix, light-space projection × model, for each object part. Note that the
+    device.cmd_end_rendering(cmd);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/shadow_pass.rs#L245-L278">src/vulkan/shadow_pass.rs:245-278</a></figcaption></figure><!--/x-->
+    <p><code>ShadowPushConstants</code> stores just one matrix on the stack; <code>bytemuck::bytes_of</code> passes its bytes without a per-draw allocation. The matrix is light-space projection × model, for each object part. Note that the
     grass isn't drawn here: dense vegetation doesn't cast shadows into the map in this renderer.</p>
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
       <p>The OpenGL version is the same idea: an FBO with a depth texture attached and

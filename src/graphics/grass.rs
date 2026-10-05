@@ -434,7 +434,7 @@ impl GrassRenderer {
                 self.near_pipeline.vk_layout,
                 vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 0,
-                &near_push,
+                bytemuck::bytes_of(&near_push),
             );
             // The first bound buffer is shared blade geometry; the second advances once per
             // instance.  Each chunk draw selects its range through `first_instance` below.
@@ -460,7 +460,7 @@ impl GrassRenderer {
                 self.near_pipeline.vk_layout,
                 vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 0,
-                &medium_push,
+                bytemuck::bytes_of(&medium_push),
             );
             let medium_buffers = [self.medium_blade_vertices.buffer, self.instances.buffer];
             device.cmd_bind_vertex_buffers(cmd, 0, &medium_buffers, &offsets);
@@ -490,7 +490,7 @@ impl GrassRenderer {
                 self.mid_pipeline.vk_layout,
                 vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 0,
-                &mid_push,
+                bytemuck::bytes_of(&mid_push),
             );
             let mid_buffers = [self.mid_blade_vertices.buffer, self.instances.buffer];
             device.cmd_bind_vertex_buffers(cmd, 0, &mid_buffers, &offsets);
@@ -521,7 +521,7 @@ impl GrassRenderer {
                 self.near_pipeline.vk_layout,
                 vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 0,
-                &near_push,
+                bytemuck::bytes_of(&near_push),
             );
             let reed_buffers = [self.reed_vertices.buffer, self.reed_instances.buffer];
             device.cmd_bind_vertex_buffers(cmd, 0, &reed_buffers, &offsets);

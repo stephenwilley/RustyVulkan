@@ -8,11 +8,10 @@
 //!
 //! --------------------------------------------------------------------------------------
 
-use crate::graphics::camera::Camera;
+use crate::graphics::gpu_data::ScenePushConstants;
 use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use ash::vk;
-use cgmath::{Matrix4, prelude::*};
 
 /// Main rendering pass that draws all scene objects
 pub struct MainPass {
@@ -150,11 +149,8 @@ impl RenderPass for MainPass {
                 for part in &obj.parts {
                     let model_matrix = obj_model * part.transform.model_matrix();
                     let material = &ctx.material_manager.materials[part.material_id];
-                    let push_bytes = compute_push_constant_per_obj(
-                        ctx.camera,
-                        &model_matrix,
-                        material.uv_tiling,
-                    );
+                    let push =
+                        ScenePushConstants::new(ctx.camera, &model_matrix, material.uv_tiling);
 
                     if current_pipeline_id != part.material_id {
                         let material = &ctx.material_manager.materials[part.material_id];
@@ -180,7 +176,7 @@ impl RenderPass for MainPass {
                         material.pipeline.vk_layout,
                         vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                         0,
-                        &push_bytes,
+                        bytemuck::bytes_of(&push),
                     );
 
                     ctx.mesh_manager.meshes[part.mesh_id].record(device, cmd);
@@ -250,43 +246,4 @@ impl RenderPass for MainPass {
             ),*/
         }
     }
-}
-
-/// Compute the fixed 144-byte push-constant block for a single object.
-pub fn compute_push_constant_per_obj(
-    camera: &Camera,
-    model_matrix: &Matrix4<f32>,
-    uv_tiling: [f32; 2],
-) -> [u8; 144] {
-    let proj: Matrix4<f32> = *camera.get_projection();
-    let view: Matrix4<f32> = *camera.get_view();
-
-    let mv = view * model_matrix;
-    let mvp = proj * mv;
-
-    // Two mat4s plus a padded vec4: fixed storage avoids a per-object heap allocation.
-    let mut bytes = [0_u8; 144];
-    let mut offset = 0;
-    let flatten_mat4 = |m: Matrix4<f32>, buf: &mut [u8; 144], offset: &mut usize| {
-        let cols = m.transpose();
-        for row in 0..4 {
-            for col in 0..4 {
-                buf[*offset..*offset + 4].copy_from_slice(&cols[col][row].to_ne_bytes());
-                *offset += 4;
-            }
-        }
-    };
-
-    flatten_mat4(mvp, &mut bytes, &mut offset);
-    flatten_mat4(mv, &mut bytes, &mut offset);
-
-    // Append uv_tiling as a vec4 (xy used, zw padding) for alignment
-    for value in [uv_tiling[0], uv_tiling[1], 0.0, 0.0] {
-        bytes[offset..offset + 4].copy_from_slice(&value.to_ne_bytes());
-        offset += 4;
-    }
-
-    debug_assert_eq!(offset, bytes.len());
-
-    bytes
 }

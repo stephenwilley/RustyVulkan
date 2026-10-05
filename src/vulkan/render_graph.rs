@@ -11,14 +11,14 @@
 use crate::app::app::{App, MAX_LIGHTS, WorldControls};
 use crate::app::scene::Scene;
 use crate::graphics::camera::Camera;
+use crate::graphics::gpu_data::{GlobalUbo, GpuDirLight, GpuLight};
 use crate::graphics::grass::GrassRenderer;
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::meshmanager::MeshManager;
 use crate::graphics::shadow_math::{SHADOW_CASCADE_COUNT, compute_shadow_cascades};
 use crate::graphics::sky::SkyRenderer;
 use crate::vulkan::attachments::{AttachmentHandle, AttachmentKind, AttachmentRequest};
-use crate::vulkan::base::{FrameCtx, ImageTransition, VulkanBase};
-use crate::vulkan::base::{GlobalUbo, GpuDirLight, GpuLight, GpuPassTimings};
+use crate::vulkan::base::{FrameCtx, GpuPassTimings, ImageTransition, VulkanBase};
 use crate::vulkan::imgui_renderer::ImGuiRenderer;
 use crate::vulkan::main_pass::MainPass;
 use crate::vulkan::shadow_pass::ShadowPass;

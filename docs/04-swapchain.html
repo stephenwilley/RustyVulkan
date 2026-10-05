@@ -374,7 +374,7 @@ if let Some(vulkan_base) = &amp;mut app.vulkan_base {
         vb.recreate_swapchain(app.window.as_ref().unwrap())?;
         device_is_idle = true;
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/render_graph.rs#L214-L220">src/vulkan/render_graph.rs:214-220</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L214-L220">src/vulkan/render_graph.rs:214-220</a></figcaption></figure><!--/x-->
     <p>The same request is raised if acquiring or presenting reports <code>ERROR_OUT_OF_DATE_KHR</code> or
     "suboptimal" (<a href="02-rust-meets-c.html#rust-result">Chapter 2</a> showed the acquire side). Inside the
     swapchain, recreation is short:</p>

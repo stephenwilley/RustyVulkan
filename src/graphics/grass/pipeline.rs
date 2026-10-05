@@ -3,10 +3,9 @@
 //! GrassShaders keeps each stage's SPIR-V so pipelines can be rebuilt later.
 
 use super::{GrassInstance, GrassVertex};
+use crate::graphics::gpu_data::GrassPushConstants;
 use crate::graphics::shaders::ShaderStageInfo;
-use crate::vulkan::main_pass::compute_push_constant_per_obj;
 use ash::vk;
-use cgmath::{Matrix4, SquareMatrix};
 use std::error::Error;
 use std::mem::offset_of;
 pub(super) struct GrassShaders {
@@ -85,14 +84,11 @@ pub(super) fn vertex_input_descriptions() -> (
     (bindings, attributes)
 }
 
-/// Reuses the application's standard push-constant packing and fills the grass-only LOD slot.
+/// Supplies the named grass parameters using the same matrix convention as scene objects.
 pub(super) fn grass_push_constants(
     camera: &crate::graphics::camera::Camera,
     time_seconds: f32,
     lod: f32,
-) -> [u8; 144] {
-    let mut bytes =
-        compute_push_constant_per_obj(camera, &Matrix4::identity(), [time_seconds, 0.16]);
-    bytes[136..140].copy_from_slice(&lod.to_ne_bytes());
-    bytes
+) -> GrassPushConstants {
+    GrassPushConstants::new(camera, time_seconds, 0.16, lod)
 }

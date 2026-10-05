@@ -11,6 +11,7 @@
 
 pub mod assimp_loader;
 pub mod camera;
+pub mod gpu_data;
 pub mod grass;
 pub mod import;
 pub mod material;

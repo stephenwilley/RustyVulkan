@@ -4,13 +4,13 @@
 //! Renders the scene into four camera-depth slices of a directional shadow map.
 //! --------------------------------------------------------------------------------------
 
+use crate::graphics::gpu_data::ShadowPushConstants;
 use crate::graphics::mesh::Vertex;
 use crate::graphics::shaders::ShaderStageInfo;
 use crate::graphics::shadow_math::compute_shadow_cascades;
 use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use ash::vk;
-use cgmath::{Matrix, Matrix4};
 
 /// Depth-only pass that renders from the sun’s point of view into a shadow map.
 pub struct ShadowPass {
@@ -188,18 +188,6 @@ impl ShadowPass {
         self.pipeline = pipelines[0];
         Ok(())
     }
-
-    fn flatten_mat4(m: Matrix4<f32>) -> Vec<u8> {
-        // Match main pass packing: write in column-major order explicitly.
-        let mut bytes = Vec::with_capacity(16 * 4);
-        let cols = m.transpose();
-        for row in 0..4 {
-            for col in 0..4 {
-                bytes.extend_from_slice(&cols[col][row].to_ne_bytes());
-            }
-        }
-        bytes
-    }
 }
 
 impl RenderPass for ShadowPass {
@@ -274,13 +262,15 @@ impl RenderPass for ShadowPass {
                     let object_model = object.transform.model_matrix();
                     for part in &object.parts {
                         let model = object_model * part.transform.model_matrix();
-                        let push = Self::flatten_mat4(cascade.world_to_light_clip * model);
+                        let push = ShadowPushConstants {
+                            mvp: (cascade.world_to_light_clip * model).into(),
+                        };
                         device.cmd_push_constants(
                             cmd,
                             self.pipeline_layout,
                             vk::ShaderStageFlags::VERTEX,
                             0,
-                            &push,
+                            bytemuck::bytes_of(&push),
                         );
                         ctx.mesh_manager.meshes[part.mesh_id].record(device, cmd);
                     }

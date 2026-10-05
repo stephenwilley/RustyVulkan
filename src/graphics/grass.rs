@@ -279,7 +279,7 @@ impl GrassRenderer {
         uploads.finish(vb, allocator)?;
         let wind_map = create_wind_map_resources(&vb.device, wind_image, wind_allocation)?;
 
-        let shaders = GrassShaders::load(&vb.device)?;
+        let shaders = GrassShaders::load()?;
         let set_layouts = [vb.set0_global_layout, wind_map.descriptor_set_layout];
         // Grass and reed fragments are fully opaque, so both pipelines skip blending.
         let mut near_pipeline = Pipeline::new_opaque(&vb.device, &set_layouts, true)?;

@@ -31,9 +31,7 @@ use super::shaders::ShaderStageInfo;
 /// Shared scene/grass push-constant ABI: two mat4s and one vec4.
 pub(crate) const PUSH_CONSTANT_BYTES: u32 = 144;
 
-/// Represents the Vulkan graphics pipeline, including shader modules and layout.
-/// It encapsulates the shader modules used for vertex and fragment stages,
-/// and the pipeline layout used for rendering.
+/// Represents the Vulkan graphics pipeline and its layout.
 /// It is responsible for creating the graphics pipeline and managing its resources.
 /// This struct is used by the `VulkanBase` to set up the rendering pipeline.
 pub struct Pipeline {
@@ -255,8 +253,15 @@ impl Pipeline {
             ..Default::default()
         };
 
-        let shader_stage_create_infos: Vec<_> =
-            shader_infos.iter().map(|s| s.to_create_info()).collect();
+        let mut shader_modules: Vec<_> = shader_infos
+            .iter()
+            .map(|s| s.module_create_info())
+            .collect();
+        let shader_stage_create_infos: Vec<_> = shader_infos
+            .iter()
+            .zip(&mut shader_modules)
+            .map(|(s, module)| s.to_create_info(module))
+            .collect();
 
         let depth_stencil = vk::PipelineDepthStencilStateCreateInfo {
             depth_test_enable: if self.depth_test { vk::TRUE } else { vk::FALSE },
@@ -387,7 +392,7 @@ impl Pipeline {
         Ok(())
     }
 
-    /// Cleans up the pipeline resources, destroying the shader modules and pipeline layout.
+    /// Cleans up the pipeline resources, destroying the pipeline and its layout.
     /// # Arguments
     /// * `device` - The Vulkan logical device to use for destroying the resources.
     /// # Notes

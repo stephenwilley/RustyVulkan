@@ -119,7 +119,7 @@
   <section id="deep-dive">
     <h2 id="descriptor-sets">The global set: layout, pool, sets</h2>
     <p><code>VulkanBase::new</code> defines the shape of set 0:</p>
-    <!--x src/vulkan/base/setup.rs 531-554--><figure class="code"><pre><code class="language-rust">// Binding 1 contains one sampled 2D-array view of all shadow cascades.
+    <!--x src/vulkan/base/setup.rs 543-566--><figure class="code"><pre><code class="language-rust">// Binding 1 contains one sampled 2D-array view of all shadow cascades.
 let ubo_binding = vk::DescriptorSetLayoutBinding {
     binding: 0,
     descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
@@ -142,12 +142,12 @@ let set0_info = vk::DescriptorSetLayoutCreateInfo {
     p_bindings: bindings.as_ptr(),
     ..Default::default()
 };
-let set0_global_layout = unsafe { device.create_descriptor_set_layout(&amp;set0_info, None)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L531-L554">src/vulkan/base/setup.rs:531-554</a></figcaption></figure><!--/x-->
+let set0_global_layout = unsafe { device.create_descriptor_set_layout(&amp;set0_info, None)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L543-L566">src/vulkan/base/setup.rs:543-566</a></figcaption></figure><!--/x-->
     <p>Each binding states its number, its type, how many descriptors it holds (1; arrays of textures are
     possible), and which shader stages may use it. (<code>p_immutable_samplers</code> could bake a sampler into
     the layout itself; it's unused here.) Then <code>create_set0_descriptor_pool_and_sets</code> makes
     a pool with room for one set per swapchain image and allocates them:</p>
-    <!--x src/vulkan/base/setup.rs 373-389,392-398--><figure class="code"><pre><code class="language-rust">let pool_sizes = [
+    <!--x src/vulkan/base/setup.rs 385-401,404-410--><figure class="code"><pre><code class="language-rust">let pool_sizes = [
     vk::DescriptorPoolSize {
         ty: vk::DescriptorType::UNIFORM_BUFFER,
         descriptor_count: count,
@@ -171,12 +171,12 @@ let alloc_info = vk::DescriptorSetAllocateInfo {
     descriptor_set_count: count,
     p_set_layouts: layouts.as_ptr(),
     ..Default::default()
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L373-L398">src/vulkan/base/setup.rs:373-398</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L385-L410">src/vulkan/base/setup.rs:385-410</a></figcaption></figure><!--/x-->
     <p>The pool is sized precisely: <code>count</code> uniform-buffer descriptors, <code>count</code>
     image-sampler descriptors, and at most <code>count</code> sets. <code>vec![layout; count]</code> repeats
     the layout once per set to allocate. Finally, binding 0 of each set is pointed at that image's uniform
     buffer:</p>
-    <!--x src/vulkan/base/setup.rs 418-432--><figure class="code"><pre><code class="language-rust">let mut writes: Vec&lt;vk::WriteDescriptorSet&gt; = Vec::with_capacity(count as usize);
+    <!--x src/vulkan/base/setup.rs 430-444--><figure class="code"><pre><code class="language-rust">let mut writes: Vec&lt;vk::WriteDescriptorSet&gt; = Vec::with_capacity(count as usize);
 for i in 0..(count as usize) {
     writes.push(vk::WriteDescriptorSet {
         dst_set: sets[i],
@@ -190,7 +190,7 @@ for i in 0..(count as usize) {
 }
 unsafe {
     device.update_descriptor_sets(&amp;writes, &amp;[]);
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L418-L432">src/vulkan/base/setup.rs:418-432</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L430-L444">src/vulkan/base/setup.rs:430-444</a></figcaption></figure><!--/x-->
     <p>A <code>WriteDescriptorSet</code> says "in this set, at this binding, put this resource". Nothing is
     copied: the descriptor records where the buffer is. When the CPU later writes new lighting values into the
     buffer (<a href="05-gpu-memory.html">Chapter 5</a>), the shader sees them without the descriptor changing.</p>
@@ -441,7 +441,7 @@ device.cmd_push_constants(
 self.materials.clear();
 self.texture_cache.cleanup(device, allocator, command_pool);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/materialmanager.rs#L123-L130">src/graphics/materialmanager.rs:123-130</a></figcaption></figure><!--/x-->
     <p>Materials go first: each destroys its layout and pipeline, and
-    <code>clear()</code> then drops them, which frees their <code>ShaderModule</code>s. Only then does the cache
+    <code>clear()</code> then drops them, freeing their SPIR-V. Only then does the cache
     destroy the images the materials pointed at, and the material sampler. (The shadow sampler belongs to
     <code>VulkanBase</code>.) That's the rule from
     <code>DEVELOPMENT.md</code>: materials must be destroyed before cache teardown.</p>

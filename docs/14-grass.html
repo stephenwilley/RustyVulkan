@@ -140,7 +140,7 @@ struct GrassInstance {
     instance buffer compared with 32-bit floats: about 59 MB instead of 117.</p>
     <p>The pipeline describes two bindings, one stepped per vertex and one per instance, and tells Vulkan the
     instance attributes are <code>R16G16B16A16_UNORM</code>:</p>
-    <!--x src/graphics/grass/pipeline.rs 55-66,86-97--><figure class="code"><pre><code class="language-rust">let bindings = [
+    <!--x src/graphics/grass/pipeline.rs 41-52,72-83--><figure class="code"><pre><code class="language-rust">let bindings = [
     vk::VertexInputBindingDescription {
         binding: 0,
         stride: std::mem::size_of::&lt;GrassVertex&gt;() as u32,
@@ -164,7 +164,7 @@ struct GrassInstance {
         location: 4,
         format: vk::Format::R16G16B16A16_UNORM,
         offset: offset_of!(GrassInstance, rotation_width_tint_phase) as u32,
-    },</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass/pipeline.rs#L55-L97">src/graphics/grass/pipeline.rs:55-97</a></figcaption></figure><!--/x-->
+    },</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass/pipeline.rs#L41-L83">src/graphics/grass/pipeline.rs:41-83</a></figcaption></figure><!--/x-->
 
     <h2>Generating the field</h2>
     <p>The field is a 1792 × 1792 grid with two candidate roots per cell, nudged by a hash so the rows don't show.

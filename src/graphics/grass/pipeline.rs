@@ -1,10 +1,9 @@
 //! Grass shader ownership, vertex layout, and pipeline push constants.
 //!
-//! GrassShaders owns its ShaderModules through ShaderStageInfo, ensuring every
-//! module outlives pipeline creation and is released automatically afterwards.
+//! GrassShaders keeps each stage's SPIR-V so pipelines can be rebuilt later.
 
 use super::{GrassInstance, GrassVertex};
-use crate::graphics::shaders::{ShaderModule, ShaderStageInfo};
+use crate::graphics::shaders::ShaderStageInfo;
 use crate::vulkan::main_pass::compute_push_constant_per_obj;
 use ash::vk;
 use cgmath::{Matrix4, SquareMatrix};
@@ -17,33 +16,20 @@ pub(super) struct GrassShaders {
 }
 
 impl GrassShaders {
-    pub(super) fn load(device: &ash::Device) -> Result<Self, Box<dyn Error>> {
-        let entry = c"main";
+    pub(super) fn load() -> Result<Self, Box<dyn Error>> {
         Ok(Self {
-            vertex: ShaderStageInfo {
-                stage: vk::ShaderStageFlags::VERTEX,
-                shader_module: ShaderModule::from_spv_file(
-                    device,
-                    "assets/shaders/spv/grass.vert.spv",
-                )?,
-                entry_name: entry,
-            },
-            fragment: ShaderStageInfo {
-                stage: vk::ShaderStageFlags::FRAGMENT,
-                shader_module: ShaderModule::from_spv_file(
-                    device,
-                    "assets/shaders/spv/grass.frag.spv",
-                )?,
-                entry_name: entry,
-            },
-            mid_fragment: ShaderStageInfo {
-                stage: vk::ShaderStageFlags::FRAGMENT,
-                shader_module: ShaderModule::from_spv_file(
-                    device,
-                    "assets/shaders/spv/grass_mid.frag.spv",
-                )?,
-                entry_name: entry,
-            },
+            vertex: ShaderStageInfo::load(
+                vk::ShaderStageFlags::VERTEX,
+                "assets/shaders/spv/grass.vert.spv",
+            )?,
+            fragment: ShaderStageInfo::load(
+                vk::ShaderStageFlags::FRAGMENT,
+                "assets/shaders/spv/grass.frag.spv",
+            )?,
+            mid_fragment: ShaderStageInfo::load(
+                vk::ShaderStageFlags::FRAGMENT,
+                "assets/shaders/spv/grass_mid.frag.spv",
+            )?,
         })
     }
 }

@@ -3,7 +3,7 @@
 //!
 //! Draws an equirectangular photograph behind the scene with one fullscreen triangle.
 //! The panorama image remains owned by `MaterialManager`'s texture cache; this renderer
-//! owns only its sampler, descriptor set layout, shader modules, and pipeline.
+//! owns only its sampler, descriptor set layout, shader code, and pipeline.
 //!
 //! --------------------------------------------------------------------------------------
 
@@ -15,7 +15,7 @@ use cgmath::{Matrix4, SquareMatrix, Vector4};
 use crate::graphics::camera::Camera;
 use crate::graphics::materialmanager::MaterialManager;
 use crate::graphics::pipeline::Pipeline;
-use crate::graphics::shaders::{ShaderModule, ShaderStageInfo};
+use crate::graphics::shaders::ShaderStageInfo;
 use crate::vulkan::base::VulkanBase;
 
 const SKY_TEXTURE_PATH: &str = "assets/textures/sky/kloppenheim_05_puresky.jpg";
@@ -48,7 +48,7 @@ impl SkyRenderer {
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         };
 
-        let shaders = SkyShaders::load(&vb.device)?;
+        let shaders = SkyShaders::load()?;
         let mut pipeline = Pipeline::new_background(&vb.device, &[descriptor_set_layout])?;
         pipeline.create_graphics_pipeline_with_vertex_input(
             &vb.device,
@@ -188,32 +188,23 @@ fn sky_push_constants(camera: &Camera) -> [u8; 80] {
     bytes
 }
 
-/// Shader modules stay alive because pipelines may be recreated after a swapchain change.
+/// SPIR-V kept for rebuilding the pipeline after a swapchain change.
 struct SkyShaders {
     vertex: ShaderStageInfo,
     fragment: ShaderStageInfo,
 }
 
 impl SkyShaders {
-    fn load(device: &ash::Device) -> Result<Self, Box<dyn Error>> {
-        let entry = c"main";
+    fn load() -> Result<Self, Box<dyn Error>> {
         Ok(Self {
-            vertex: ShaderStageInfo {
-                stage: vk::ShaderStageFlags::VERTEX,
-                shader_module: ShaderModule::from_spv_file(
-                    device,
-                    "assets/shaders/spv/sky.vert.spv",
-                )?,
-                entry_name: entry,
-            },
-            fragment: ShaderStageInfo {
-                stage: vk::ShaderStageFlags::FRAGMENT,
-                shader_module: ShaderModule::from_spv_file(
-                    device,
-                    "assets/shaders/spv/sky.frag.spv",
-                )?,
-                entry_name: entry,
-            },
+            vertex: ShaderStageInfo::load(
+                vk::ShaderStageFlags::VERTEX,
+                "assets/shaders/spv/sky.vert.spv",
+            )?,
+            fragment: ShaderStageInfo::load(
+                vk::ShaderStageFlags::FRAGMENT,
+                "assets/shaders/spv/sky.frag.spv",
+            )?,
         })
     }
 }

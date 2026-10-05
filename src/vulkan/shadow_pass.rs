@@ -5,7 +5,7 @@
 //! --------------------------------------------------------------------------------------
 
 use crate::graphics::mesh::Vertex;
-use crate::graphics::shaders::{ShaderModule, ShaderStageInfo};
+use crate::graphics::shaders::ShaderStageInfo;
 use crate::graphics::shadow_math::compute_shadow_cascades;
 use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
@@ -62,14 +62,12 @@ impl ShadowPass {
         self.pipeline_layout = unsafe { device.create_pipeline_layout(&layout_info, None)? };
 
         // Load vertex shader (no fragment stage)
-        let vs = ShaderModule::from_spv_file(device, "assets/shaders/spv/shadow_depth.vert.spv")?;
-        let entry = c"main";
-        let vs_stage = ShaderStageInfo {
-            stage: vk::ShaderStageFlags::VERTEX,
-            shader_module: vs,
-            entry_name: entry,
-        };
-        let stages = [vs_stage.to_create_info()];
+        let vs_stage = ShaderStageInfo::load(
+            vk::ShaderStageFlags::VERTEX,
+            "assets/shaders/spv/shadow_depth.vert.spv",
+        )?;
+        let mut vs_module = vs_stage.module_create_info();
+        let stages = [vs_stage.to_create_info(&mut vs_module)];
 
         // Vertex input: just position
         let binding_descs = [Vertex::binding_description()];
@@ -188,9 +186,6 @@ impl ShadowPass {
                 .map_err(|(_, e)| e)?
         };
         self.pipeline = pipelines[0];
-
-        // `vs_stage` drops here automatically. The completed Vulkan pipeline
-        // no longer needs the temporary shader module.
         Ok(())
     }
 

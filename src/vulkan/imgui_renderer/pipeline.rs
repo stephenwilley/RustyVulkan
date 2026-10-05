@@ -1,10 +1,6 @@
-//! ImGui shader-module and graphics-pipeline creation.
-//!
-//! ShaderStageInfo owns each temporary ShaderModule. The renderer retains those
-//! stage values for exactly as long as Vulkan may use the resulting pipeline.
+//! ImGui graphics-pipeline creation.
 
 use super::{ImGuiRenderer, ShaderStageInfo, VulkanBase};
-use crate::graphics::shaders::ShaderModule;
 use ash::vk;
 use imgui::DrawVert;
 use std::{error::Error, mem::offset_of};
@@ -15,35 +11,6 @@ impl ImGuiRenderer {
     // create_buffer
     // update_buffers
     // ----------------------------------------------------------
-    /// Load the ImGui shaders
-    /// # Arguments
-    /// * `base` - The VulkanBase instance.
-    /// # Returns
-    /// * `(ShaderStageInfo, ShaderStageInfo)` - A tuple containing the vertex and fragment shader stage info.
-    fn load_shaders(&mut self, base: &mut VulkanBase) -> (ShaderStageInfo, ShaderStageInfo) {
-        let entry_name = c"main";
-        // Load vertex shader
-        let vert_module =
-            ShaderModule::from_spv_file(&base.device, "assets/shaders/spv/imgui.vert.spv")
-                .expect("Failed to load imgui.vert.spv");
-        // Load fragment shader
-        let frag_module =
-            ShaderModule::from_spv_file(&base.device, "assets/shaders/spv/imgui.frag.spv")
-                .expect("Failed to load imgui.frag.spv");
-        let vert_stage = ShaderStageInfo {
-            stage: vk::ShaderStageFlags::VERTEX,
-            shader_module: vert_module,
-            entry_name,
-        };
-        let frag_stage = ShaderStageInfo {
-            stage: vk::ShaderStageFlags::FRAGMENT,
-            shader_module: frag_module,
-            entry_name,
-        };
-
-        (vert_stage, frag_stage)
-    }
-
     /// Creates the ImGui graphics pipeline with blending and the UI vertex layout.
     /// # Arguments
     /// * `base` - The VulkanBase instance.
@@ -232,25 +199,29 @@ impl ImGuiRenderer {
     /// # Returns
     /// * `Result<(), Box<dyn Error>>` - Returns Ok on success, or an error on failure.
     pub fn rebuild_pipeline(&mut self, base: &mut VulkanBase) -> Result<(), Box<dyn Error>> {
+        let vert_stage = ShaderStageInfo::load(
+            vk::ShaderStageFlags::VERTEX,
+            "assets/shaders/spv/imgui.vert.spv",
+        )?;
+        let frag_stage = ShaderStageInfo::load(
+            vk::ShaderStageFlags::FRAGMENT,
+            "assets/shaders/spv/imgui.frag.spv",
+        )?;
         unsafe {
             base.device.destroy_pipeline(self.vk_pipeline, None);
             base.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
         }
-        // Taking an Option moves its old value out; dropping that value invokes
-        // ShaderModule::drop before the new pipeline stages replace it.
-        drop(self.vert_stage.take());
-        drop(self.frag_stage.take());
-        let (vert_stage, frag_stage) = Self::load_shaders(self, base);
-        let shader_stages = [vert_stage.to_create_info(), frag_stage.to_create_info()];
+        let mut vert_module = vert_stage.module_create_info();
+        let mut frag_module = frag_stage.module_create_info();
+        let shader_stages = [
+            vert_stage.to_create_info(&mut vert_module),
+            frag_stage.to_create_info(&mut frag_module),
+        ];
 
         let extent = base.swapchain.extent;
         let color = base.swapchain.color_format;
         self.create_pipeline(base, extent, color, &shader_stages)?;
-
-        // 5) Store stages for potential future reload
-        self.vert_stage = Some(vert_stage);
-        self.frag_stage = Some(frag_stage);
         Ok(())
     }
 }

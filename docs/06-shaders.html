@@ -67,8 +67,8 @@
           <text x="245" y="170" text-anchor="middle" font-weight="700" class="mono" font-size="13">main.vert.spv</text>
           <text x="245" y="192" text-anchor="middle" class="muted">SPIR-V binary</text>
           <rect class="box-accent" x="350" y="140" width="130" height="70" rx="8"/>
-          <text x="415" y="170" text-anchor="middle" font-weight="700">ShaderModule</text>
-          <text x="415" y="192" text-anchor="middle" class="muted">loaded by Vulkan</text>
+          <text x="415" y="170" text-anchor="middle" font-weight="700" font-size="13">ShaderStageInfo</text>
+          <text x="415" y="192" text-anchor="middle" class="muted">read at start-up</text>
           <rect class="box-accent" x="500" y="140" width="120" height="70" rx="8"/>
           <text x="560" y="170" text-anchor="middle" font-weight="700">Pipeline</text>
           <text x="560" y="192" text-anchor="middle" class="muted">Chapter 7</text>
@@ -196,71 +196,71 @@ println!("cargo:rustc-link-arg=-Wl,-rpath,{}", library_dir.display());</code></p
     program can find it again at run time.</p>
 
     <h2>Loading SPIR-V</h2>
-    <p>At run time, <code>ShaderModule::from_spv_file</code> reads a <code>.spv</code> file and hands it to
-    Vulkan:</p>
-    <!--x src/graphics/shaders.rs 49-62--><figure class="code"><pre><code class="language-rust">pub fn from_spv_file(device: &amp;Device, path: impl AsRef&lt;Path&gt;) -&gt; Result&lt;Self, Box&lt;dyn Error&gt;&gt; {
-    let mut file = std::fs::File::open(path)?;
-    // A byte buffer need not be u32-aligned. Ash also validates the magic
-    // number and handles byte-swapped SPIR-V, returning an I/O error for
-    // malformed input instead of panicking during a slice cast.
-    let code = ash::util::read_spv(&amp;mut file)?;
-    let create_info = vk::ShaderModuleCreateInfo::default().code(&amp;code);
-
-    let vk_shader_module = unsafe { device.create_shader_module(&amp;create_info, None)? };
-    Ok(Self {
-        device: device.clone(),
-        vk_shader_module,
-    })
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shaders.rs#L49-L62">src/graphics/shaders.rs:49-62</a></figcaption></figure><!--/x-->
-    <p>SPIR-V is a sequence of 32-bit words, and Vulkan wants it as a pointer to <code>u32</code>s.
-    <code>ash::util::read_spv</code> reads the file into a properly aligned <code>Vec&lt;u32&gt;</code> and
-    checks the SPIR-V header, which is safer than reinterpreting raw bytes. The resulting
-    <code>ShaderModule</code> destroys itself in <code>Drop</code>, as shown in
-    <a href="02-rust-meets-c.html#rust-drop">Chapter 2</a>.</p>
-    <p>A module on its own isn't a shader stage yet. <code>ShaderStageInfo</code> pairs it with a stage (vertex
-    or fragment) and the name of its entry function:</p>
-    <!--x src/graphics/shaders.rs 77-81,88-95--><figure class="code"><pre><code class="language-rust">pub struct ShaderStageInfo {
+    <p>At run time, <code>ShaderStageInfo::load</code> reads a <code>.spv</code> file and records which stage
+    (vertex or fragment) it's for:</p>
+    <!--x src/graphics/shaders.rs 26-30,39-49--><figure class="code"><pre><code class="language-rust">/// One programmable stage (vertex or fragment) and its SPIR-V.
+pub struct ShaderStageInfo {
     pub stage: vk::ShaderStageFlags,
-    pub shader_module: ShaderModule,
-    pub entry_name: &amp;'static CStr,
+    code: Vec&lt;u32&gt;,
 }
 // ...
-    pub fn to_create_info(&amp;self) -&gt; vk::PipelineShaderStageCreateInfo&lt;'_&gt; {
-        vk::PipelineShaderStageCreateInfo {
-            stage: self.stage,
-            module: self.shader_module.vk_shader_module,
-            p_name: self.entry_name.as_ptr(),
-            ..Default::default()
-        }
-    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shaders.rs#L77-L95">src/graphics/shaders.rs:77-95</a></figcaption></figure><!--/x-->
-    <aside class="callout rust"><p class="callout-title">Rust note · 'static</p>
-      <p><code>&amp;'static CStr</code> is a reference that's valid for the whole run of the program, such as a
-      string literal compiled into the binary. Requiring it here means the entry-point name can never dangle
-      while a pipeline is being built. The <code>&lt;'_&gt;</code> on the return type is the lifetime carried by
-      <code>ash</code> structs (<a href="02-rust-meets-c.html#rust-builders">Chapter 2</a>), left for the
-      compiler to infer.</p>
-    </aside>
-    <p>Materials load their vertex/fragment pair together, both using the conventional entry point
-    <code>main</code>:</p>
-    <!--x src/graphics/material.rs 216-231--><figure class="code"><pre><code class="language-rust">let vs = ShaderModule::from_spv_file(device, vs_path)?;
-let fs = ShaderModule::from_spv_file(device, fs_path)?;
-let entry = c"main";
+    pub fn load(
+        stage: vk::ShaderStageFlags,
+        path: impl AsRef&lt;Path&gt;,
+    ) -&gt; Result&lt;Self, Box&lt;dyn Error&gt;&gt; {
+        let mut file = std::fs::File::open(path)?;
+        // A byte buffer need not be u32-aligned. Ash also validates the magic
+        // number and handles byte-swapped SPIR-V, returning an I/O error for
+        // malformed input instead of panicking during a slice cast.
+        let code = ash::util::read_spv(&amp;mut file)?;
+        Ok(Self { stage, code })
+    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shaders.rs#L26-L49">src/graphics/shaders.rs:26-49</a></figcaption></figure><!--/x-->
+    <p>SPIR-V is a sequence of 32-bit words, and Vulkan wants it as a pointer to <code>u32</code>s.
+    <code>ash::util::read_spv</code> reads the file into a properly aligned <code>Vec&lt;u32&gt;</code> and
+    checks the SPIR-V header, which is safer than reinterpreting raw bytes. Nothing has been given to Vulkan
+    yet: the words just sit in memory.</p>
+    <p>They reach the driver when a pipeline is created (<a href="07-pipelines.html">Chapter 7</a>). Each
+    pipeline stage is described by a <code>PipelineShaderStageCreateInfo</code>, and with the
+    <code>VK_KHR_maintenance5</code> extension (<a href="03-instance-devices.html">Chapter 3</a>) the SPIR-V can
+    be chained straight onto it as a <code>ShaderModuleCreateInfo</code>, using <code>push_next</code> from
+    <a href="02-rust-meets-c.html#rust-builders">Chapter 2</a>:</p>
+    <!--x src/graphics/shaders.rs 51-65--><figure class="code"><pre><code class="language-rust">/// Describes this stage's SPIR-V, ready to chain into its pipeline stage info.
+pub fn module_create_info(&amp;self) -&gt; vk::ShaderModuleCreateInfo&lt;'_&gt; {
+    vk::ShaderModuleCreateInfo::default().code(&amp;self.code)
+}
 
-Ok(LoadedShaders {
-    vertex: ShaderStageInfo {
-        stage: vk::ShaderStageFlags::VERTEX,
-        shader_module: vs,
-        entry_name: entry,
-    },
-    fragment: ShaderStageInfo {
-        stage: vk::ShaderStageFlags::FRAGMENT,
-        shader_module: fs,
-        entry_name: entry,
-    },
-})</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/material.rs#L216-L231">src/graphics/material.rs:216-231</a></figcaption></figure><!--/x-->
+/// Builds the pipeline stage info, chaining the SPIR-V from [`Self::module_create_info`].
+pub fn to_create_info&lt;'a&gt;(
+    &amp;self,
+    module_info: &amp;'a mut vk::ShaderModuleCreateInfo&lt;'_&gt;,
+) -&gt; vk::PipelineShaderStageCreateInfo&lt;'a&gt; {
+    vk::PipelineShaderStageCreateInfo::default()
+        .stage(self.stage)
+        .name(ENTRY_POINT)
+        .push_next(module_info)
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shaders.rs#L51-L65">src/graphics/shaders.rs:51-65</a></figcaption></figure><!--/x-->
+    <p>The driver compiles the stage as part of building the pipeline, so there's no separate shader object to
+    create first and destroy afterwards. Both structs only borrow: the stage info points at the module info,
+    which points at the words, so a pipeline builder keeps all three alive until
+    <code>create_graphics_pipelines</code> returns.</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · lifetimes in signatures</p>
+      <p>The <code>'a</code> in <code>to_create_info</code> ties the returned struct to the
+      <code>&amp;'a mut</code> module info it chains, so the compiler rejects any use of the stage info after
+      the module info has gone. <code>&lt;'_&gt;</code> is the same lifetime parameter carried by
+      <code>ash</code> structs (<a href="02-rust-meets-c.html#rust-builders">Chapter 2</a>), left for the
+      compiler to infer. The entry-point name, <code>c"main"</code>, is a <code>&amp;'static CStr</code>: a C
+      string literal compiled into the binary, valid for the whole run.</p>
+    </aside>
+    <p>Materials load their vertex/fragment pair together:</p>
+    <!--x src/graphics/material.rs 208-213--><figure class="code"><pre><code class="language-rust">pub fn load(vs_path: String, fs_path: String) -&gt; Result&lt;Self, Box&lt;dyn std::error::Error&gt;&gt; {
+    Ok(LoadedShaders {
+        vertex: ShaderStageInfo::load(vk::ShaderStageFlags::VERTEX, vs_path)?,
+        fragment: ShaderStageInfo::load(vk::ShaderStageFlags::FRAGMENT, fs_path)?,
+    })
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/material.rs#L208-L213">src/graphics/material.rs:208-213</a></figcaption></figure><!--/x-->
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
-      <p>A <code>ShaderModule</code> is not a linked program. In OpenGL, <code>glLinkProgram</code> joined the
-      stages and checked their interfaces. In Vulkan, that joining happens when a pipeline is created
+      <p>There's no equivalent of <code>glLinkProgram</code> here. In OpenGL, linking joined the stages and
+      checked their interfaces. In Vulkan, that joining happens when a pipeline is created
       (<a href="07-pipelines.html">Chapter 7</a>). OpenGL 4.6 can also load SPIR-V, through
       <code>GL_ARB_gl_spirv</code>; in Vulkan it's the only way. (macOS's OpenGL stops at 4.1, so never
       had it.)</p>
@@ -403,8 +403,8 @@ outColor = vec4(clamp(lighting, 0.0, 1.0), 1.0);</code></pre><figcaption><a href
     <ul>
       <li>Vulkan consumes SPIR-V, not GLSL. <code>build.rs</code> compiles every listed shader with
       <code>shaderc</code> during <code>cargo build</code>, so shader errors are build errors.</li>
-      <li><code>ShaderModule</code> loads a <code>.spv</code> file. Stages are paired into pipelines later,
-      not linked into programs.</li>
+      <li><code>ShaderStageInfo</code> loads a <code>.spv</code> file. Its SPIR-V is chained into pipeline
+      creation, and stages are joined there rather than linked into programs.</li>
       <li>Shaders get data through vertex attributes (<code>location</code>), descriptors (<code>set</code>,
       <code>binding</code>) and push constants, and the Rust side must match each one by hand.</li>
       <li>Uniform buffer layouts follow <code>std140</code>, mirrored in Rust with <code>repr(C)</code>,

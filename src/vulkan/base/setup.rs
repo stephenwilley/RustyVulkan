@@ -5,8 +5,11 @@
 
 use super::*;
 
-const REQUIRED_DEVICE_EXTENSIONS: [&CStr; 2] =
-    [vk::KHR_SWAPCHAIN_NAME, vk::KHR_PUSH_DESCRIPTOR_NAME];
+const REQUIRED_DEVICE_EXTENSIONS: [&CStr; 3] = [
+    vk::KHR_SWAPCHAIN_NAME,
+    vk::KHR_PUSH_DESCRIPTOR_NAME,
+    vk::KHR_MAINTENANCE5_NAME,
+];
 
 impl VulkanBase {
     fn create_instance(
@@ -128,14 +131,18 @@ impl VulkanBase {
                 if props.api_version < vk::API_VERSION_1_3 {
                     continue;
                 }
-                let supports_vulkan13_features = unsafe {
-                    let mut features = vk::PhysicalDeviceVulkan13Features::default();
-                    let mut features2 =
-                        vk::PhysicalDeviceFeatures2::default().push_next(&mut features);
+                let supports_required_features = unsafe {
+                    let mut vulkan13 = vk::PhysicalDeviceVulkan13Features::default();
+                    let mut maintenance5 = vk::PhysicalDeviceMaintenance5FeaturesKHR::default();
+                    let mut features2 = vk::PhysicalDeviceFeatures2::default()
+                        .push_next(&mut vulkan13)
+                        .push_next(&mut maintenance5);
                     instance.get_physical_device_features2(physical_device, &mut features2);
-                    features.dynamic_rendering == vk::TRUE && features.synchronization2 == vk::TRUE
+                    vulkan13.dynamic_rendering == vk::TRUE
+                        && vulkan13.synchronization2 == vk::TRUE
+                        && maintenance5.maintenance5 == vk::TRUE
                 };
-                if !supports_vulkan13_features {
+                if !supports_required_features {
                     continue;
                 }
 
@@ -160,7 +167,7 @@ impl VulkanBase {
             }
         }
 
-        Err("No Vulkan 1.3 device supports graphics, presentation, dynamic rendering, synchronization2, push descriptors, and at least 144 bytes of push constants".into())
+        Err("No Vulkan 1.3 device supports graphics, presentation, dynamic rendering, synchronization2, push descriptors, maintenance5, and at least 144 bytes of push constants".into())
     }
 
     /// Creates a logical device and retrieves the graphics queue.
@@ -232,16 +239,21 @@ impl VulkanBase {
             synchronization2: vk::TRUE,
             ..Default::default()
         };
+        let mut maintenance5_features = vk::PhysicalDeviceMaintenance5FeaturesKHR {
+            maintenance5: vk::TRUE,
+            ..Default::default()
+        };
 
         let device_create_info = vk::DeviceCreateInfo {
-            p_next: &mut vulkan13_features as *mut _ as *const _,
             p_queue_create_infos: &queue_info,
             queue_create_info_count: 1,
             pp_enabled_extension_names: device_extensions.as_ptr(),
             enabled_extension_count: device_extensions.len() as u32,
             p_enabled_features: &device_features,
             ..Default::default()
-        };
+        }
+        .push_next(&mut vulkan13_features)
+        .push_next(&mut maintenance5_features);
 
         let device = unsafe { instance.create_device(physical_device, &device_create_info, None)? };
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };

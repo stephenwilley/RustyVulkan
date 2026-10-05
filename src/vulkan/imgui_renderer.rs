@@ -57,8 +57,6 @@ pub struct ImGuiRenderer {
     frame_buffers: Vec<UiFrameBuffers>,
     device: ash::Device,
     push_descriptor: push_descriptor::Device,
-    vert_stage: Option<ShaderStageInfo>,
-    frag_stage: Option<ShaderStageInfo>,
     /// Images that draw commands can show, indexed by `imgui::TextureId`; 0 is the font atlas.
     textures: Vec<vk::DescriptorImageInfo>,
     shadow_tex_ids: [Option<imgui::TextureId>; SHADOW_CASCADE_COUNT],
@@ -238,9 +236,6 @@ impl ImGuiRenderer {
                     .destroy_pipeline_layout(self.pipeline_layout, None);
             }
         }
-        // Keep the Vulkan dependency order visible even though the modules are RAII.
-        drop(self.vert_stage.take());
-        drop(self.frag_stage.take());
     }
 
     /// Records ImGui draw commands: bind pipeline, push textures and constants, and draw.

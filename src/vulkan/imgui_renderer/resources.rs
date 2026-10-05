@@ -400,8 +400,6 @@ impl ImGuiRenderer {
             frame_buffers: Vec::new(),
             device,
             push_descriptor: base.push_descriptor.clone(),
-            vert_stage: None,
-            frag_stage: None,
             textures: vec![font_image_info],
             shadow_tex_ids: [None; SHADOW_CASCADE_COUNT],
         };

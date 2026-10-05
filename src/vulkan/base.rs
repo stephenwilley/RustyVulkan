@@ -207,10 +207,10 @@ pub struct ImageTransition {
     pub image: vk::Image,
     pub old_layout: vk::ImageLayout,
     pub new_layout: vk::ImageLayout,
-    pub src_access_mask: vk::AccessFlags,
-    pub dst_access_mask: vk::AccessFlags,
-    pub src_stage_mask: vk::PipelineStageFlags,
-    pub dst_stage_mask: vk::PipelineStageFlags,
+    pub src_access_mask: vk::AccessFlags2,
+    pub dst_access_mask: vk::AccessFlags2,
+    pub src_stage_mask: vk::PipelineStageFlags2,
+    pub dst_stage_mask: vk::PipelineStageFlags2,
     pub aspect_mask: vk::ImageAspectFlags,
     pub layer_count: u32,
 }
@@ -302,9 +302,9 @@ impl VulkanBase {
 
     /// Insert image memory barriers for a set of attachment transitions.
     ///
-    /// Each [`ImageTransition`] describes how a single image's layout and
-    /// access masks change. The command buffer must be in the recording state
-    /// and will receive a single `vkCmdPipelineBarrier` covering all
+    /// Each [`ImageTransition`] describes how a single image's layout, stages
+    /// and access masks change. The command buffer must be in the recording
+    /// state and will receive a single `vkCmdPipelineBarrier2` covering all
     /// transitions.
     pub fn insert_attachment_barriers(
         &self,
@@ -314,12 +314,12 @@ impl VulkanBase {
         if transitions.is_empty() {
             return;
         }
-        let mut barriers: Vec<vk::ImageMemoryBarrier> = Vec::new();
-        let mut src_stage = vk::PipelineStageFlags::empty();
-        let mut dst_stage = vk::PipelineStageFlags::empty();
+        let mut barriers: Vec<vk::ImageMemoryBarrier2> = Vec::new();
         for t in transitions {
-            barriers.push(vk::ImageMemoryBarrier {
+            barriers.push(vk::ImageMemoryBarrier2 {
+                src_stage_mask: t.src_stage_mask,
                 src_access_mask: t.src_access_mask,
+                dst_stage_mask: t.dst_stage_mask,
                 dst_access_mask: t.dst_access_mask,
                 old_layout: t.old_layout,
                 new_layout: t.new_layout,
@@ -335,20 +335,9 @@ impl VulkanBase {
                 },
                 ..Default::default()
             });
-            src_stage |= t.src_stage_mask;
-            dst_stage |= t.dst_stage_mask;
         }
-        unsafe {
-            self.device.cmd_pipeline_barrier(
-                cmd,
-                src_stage,
-                dst_stage,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &barriers,
-            );
-        }
+        let dependency = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+        unsafe { self.device.cmd_pipeline_barrier2(cmd, &dependency) };
     }
 
     /// End a frame: end the command buffer, submit, present, and advance the slot.
@@ -360,24 +349,21 @@ impl VulkanBase {
     /// 4. Advance to the next CPU frame-in-flight slot.
     pub fn end_frame(&mut self, frame: FrameCtx) -> Result<(), Box<dyn Error>> {
         unsafe {
-            // Command buffer was already closed by the passes.
             self.device.end_command_buffer(frame.cmd_buf)?;
 
-            // Submit: wait for image-available (slot), signal render-finished (per-image)
-            let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-            let wait_sems = [self.image_available_semaphores[frame.frame_slot]];
-            let signal_sems = [self.render_finished_semaphores[frame.image_index as usize]];
-            let submit_info = vk::SubmitInfo {
-                wait_semaphore_count: 1,
-                p_wait_semaphores: wait_sems.as_ptr(),
-                p_wait_dst_stage_mask: wait_stages.as_ptr(),
-                command_buffer_count: 1,
-                p_command_buffers: &frame.cmd_buf,
-                signal_semaphore_count: 1,
-                p_signal_semaphores: signal_sems.as_ptr(),
-                ..Default::default()
-            };
-            self.device.queue_submit(
+            let wait = [vk::SemaphoreSubmitInfo::default()
+                .semaphore(self.image_available_semaphores[frame.frame_slot])
+                .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)];
+            let command_buffers =
+                [vk::CommandBufferSubmitInfo::default().command_buffer(frame.cmd_buf)];
+            let signal = [vk::SemaphoreSubmitInfo::default()
+                .semaphore(self.render_finished_semaphores[frame.image_index as usize])
+                .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)];
+            let submit_info = vk::SubmitInfo2::default()
+                .wait_semaphore_infos(&wait)
+                .command_buffer_infos(&command_buffers)
+                .signal_semaphore_infos(&signal);
+            self.device.queue_submit2(
                 self.graphics_queue,
                 &[submit_info],
                 self.in_flight_fences[frame.frame_slot],
@@ -441,9 +427,9 @@ impl VulkanBase {
                 base,
                 TIMESTAMPS_PER_IMAGE,
             );
-            self.device.cmd_write_timestamp(
+            self.device.cmd_write_timestamp2(
                 cmd,
-                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags2::NONE,
                 self.timestamp_query_pool,
                 base + GpuTimestamp::FrameStart as u32,
             );
@@ -472,9 +458,9 @@ impl VulkanBase {
 
     fn write_gpu_timestamp(&self, cmd: vk::CommandBuffer, image_index: u32, point: GpuTimestamp) {
         unsafe {
-            self.device.cmd_write_timestamp(
+            self.device.cmd_write_timestamp2(
                 cmd,
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                vk::PipelineStageFlags2::ALL_COMMANDS,
                 self.timestamp_query_pool,
                 self.image_query_base(image_index) + point as u32,
             );

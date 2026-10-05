@@ -122,7 +122,7 @@
         // unsignalled. Retrying could hang the next frame.
         event_loop.exit();
     }
-    app.render_graph = graph;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/app/input.rs#L165-L227">src/app/input.rs:165-227</a></figcaption></figure><!--/x-->
+    app.render_graph = graph;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/input.rs#L165-L227">src/app/input.rs:165-227</a></figcaption></figure><!--/x-->
     <aside class="callout rust"><p class="callout-title">Rust note · std::mem::take to satisfy the borrow checker</p>
       <p><code>graph.execute(app)</code> needs <code>&amp;mut app</code> (exclusive access to the whole
       application) while the graph is itself a field of <code>app</code>. Rust won't allow two exclusive
@@ -136,7 +136,21 @@
 
     <h2>The synchronisation objects</h2>
     <p>Created in <code>VulkanBase::new</code>:</p>
-    <!--x src/vulkan/base/setup.rs 598-620--><figure class="code"><pre><code class="language-rust">let mut image_available_semaphores = Vec::with_capacity(INFLIGHT_FRAMES);
+    <!--x src/vulkan/base/setup.rs 568-590--><figure class="code"><pre><code class="language-rust">
+// Shadow sampler (no compare; better compatibility with portability subset on macOS)
+let sampler_info = vk::SamplerCreateInfo {
+    mag_filter: vk::Filter::LINEAR,
+    min_filter: vk::Filter::LINEAR,
+    address_mode_u: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+    address_mode_v: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+    address_mode_w: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+    border_color: vk::BorderColor::FLOAT_OPAQUE_WHITE,
+    unnormalized_coordinates: vk::FALSE,
+    compare_enable: vk::FALSE,
+    ..Default::default()
+};
+let shadow_sampler = unsafe { device.create_sampler(&amp;sampler_info, None)? };
+let mut image_available_semaphores = Vec::with_capacity(INFLIGHT_FRAMES);
 let mut in_flight_fences = Vec::with_capacity(INFLIGHT_FRAMES);
 let semaphore_info = vk::SemaphoreCreateInfo::default();
 let fence_info = vk::FenceCreateInfo {
@@ -144,21 +158,7 @@ let fence_info = vk::FenceCreateInfo {
     ..Default::default()
 };
 for _ in 0..INFLIGHT_FRAMES {
-    unsafe {
-        image_available_semaphores.push(device.create_semaphore(&amp;semaphore_info, None)?);
-        in_flight_fences.push(device.create_fence(&amp;fence_info, None)?);
-    }
-}
-
-let mut render_finished_semaphores = Vec::with_capacity(image_count);
-for _ in 0..image_count {
-    unsafe {
-        render_finished_semaphores.push(device.create_semaphore(&amp;semaphore_info, None)?);
-    }
-}
-
-// Per-swapchain-image tracker: which fence currently owns each image (or null)
-let image_owner_fence = vec![vk::Fence::null(); image_count];</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L598">src/vulkan/base/setup.rs:598-620</a> · revised source snapshot</figcaption></figure><!--/x-->
+    unsafe {</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L568-L590">src/vulkan/base/setup.rs:568-590</a></figcaption></figure><!--/x-->
     <p>Two of each per-slot object (<code>INFLIGHT_FRAMES</code> is 2), but one "render finished" semaphore per
     swapchain image, and an owner-fence entry per image, initially empty. The fences start
     <code>SIGNALED</code>: the first frame on each slot waits on its fence, and with nothing yet submitted,
@@ -206,7 +206,7 @@ let image_owner_fence = vec![vk::Fence::null(); image_count];</code></pre><figca
         let cmd_buf = self.command_buffers[idx];
 
         let begin_info = vk::CommandBufferBeginInfo::default();
-        self.device.begin_command_buffer(cmd_buf, &amp;begin_info)?;</code></pre><figcaption><a href="source/src--vulkan--base.rs.html#L229">src/vulkan/base.rs:229-235</a> · <a href="source/src--vulkan--base.rs.html#L260">260-293</a> · revised source snapshot</figcaption></figure><!--/x-->
+        self.device.begin_command_buffer(cmd_buf, &amp;begin_info)?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L229-L293">src/vulkan/base.rs:229-293</a></figcaption></figure><!--/x-->
     <p>In order:</p>
     <ol>
       <li><strong>Wait for this slot's fence.</strong> <code>u64::MAX</code> means no timeout. If the GPU has
@@ -245,23 +245,21 @@ let image_owner_fence = vec![vk::Fence::null(); image_count];</code></pre><figca
     <p>Steps 3–5 are the subject of <a href="10-render-graph.html">Chapter 10</a>.</p>
 
     <h2><code>end_frame</code>: submit and present</h2>
-    <!--x src/vulkan/base.rs 364-384,397-409--><figure class="code"><pre><code class="language-rust">self.device.end_command_buffer(frame.cmd_buf)?;
+    <!--x src/vulkan/base.rs 352-370,383-395--><figure class="code"><pre><code class="language-rust">self.device.end_command_buffer(frame.cmd_buf)?;
 
-// Submit: wait for image-available (slot), signal render-finished (per-image)
-let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-let wait_sems = [self.image_available_semaphores[frame.frame_slot]];
-let signal_sems = [self.render_finished_semaphores[frame.image_index as usize]];
-let submit_info = vk::SubmitInfo {
-    wait_semaphore_count: 1,
-    p_wait_semaphores: wait_sems.as_ptr(),
-    p_wait_dst_stage_mask: wait_stages.as_ptr(),
-    command_buffer_count: 1,
-    p_command_buffers: &amp;frame.cmd_buf,
-    signal_semaphore_count: 1,
-    p_signal_semaphores: signal_sems.as_ptr(),
-    ..Default::default()
-};
-self.device.queue_submit(
+let wait = [vk::SemaphoreSubmitInfo::default()
+    .semaphore(self.image_available_semaphores[frame.frame_slot])
+    .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)];
+let command_buffers =
+    [vk::CommandBufferSubmitInfo::default().command_buffer(frame.cmd_buf)];
+let signal = [vk::SemaphoreSubmitInfo::default()
+    .semaphore(self.render_finished_semaphores[frame.image_index as usize])
+    .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)];
+let submit_info = vk::SubmitInfo2::default()
+    .wait_semaphore_infos(&amp;wait)
+    .command_buffer_infos(&amp;command_buffers)
+    .signal_semaphore_infos(&amp;signal);
+self.device.queue_submit2(
     self.graphics_queue,
     &amp;[submit_info],
     self.in_flight_fences[frame.frame_slot],
@@ -279,7 +277,7 @@ match self
 }
 
 // Advance to next CPU slot
-self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len();</code></pre><figcaption><a href="source/src--vulkan--base.rs.html#L364">src/vulkan/base.rs:364-384</a> · <a href="source/src--vulkan--base.rs.html#L397">397-409</a> · revised source snapshot</figcaption></figure><!--/x-->
+self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len();</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L352-L395">src/vulkan/base.rs:352-395</a></figcaption></figure><!--/x-->
     <p>The submit ties the three hazards together:</p>
     <ul>
       <li><strong>Wait</strong> on the slot's image-available semaphore, but only at the
@@ -290,6 +288,8 @@ self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len()
       <li><strong>Signal the slot's fence</strong> at the same moment, so a later <code>begin_frame</code> knows
       the slot is free.</li>
     </ul>
+    <p><code>queue_submit2</code>, from synchronization2, describes each semaphore with its own stage, which
+    keeps the wait and signal points next to the semaphores they belong to.</p>
     <p>Presentation then waits on that render-finished semaphore, so the image is shown only after drawing
     completes. All of this ordering happens on the GPU, without the CPU waiting. (One queue does both drawing
     and presenting, which is why this simple pair of semaphores is enough.) Present reports
@@ -330,7 +330,7 @@ self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len()
             scene_ms: self.timestamp_delta_ms(data[1], data[2]),
             vegetation_ms: self.timestamp_delta_ms(data[2], data[3]),
         };
-    }</code></pre><figcaption><a href="source/src--vulkan--base.rs.html#L239">src/vulkan/base.rs:239-255</a> · revised source snapshot</figcaption></figure><!--/x-->
+    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L239-L255">src/vulkan/base.rs:239-255</a></figcaption></figure><!--/x-->
     <p>Results are read without asking Vulkan to wait for them; that's safe only because the fence has already
     been waited on. Raw ticks are converted to milliseconds using the device's <code>timestamp_period</code>
     (nanoseconds per tick). The reported numbers therefore describe the frame from two frames ago, which is

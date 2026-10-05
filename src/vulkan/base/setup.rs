@@ -80,8 +80,7 @@ impl VulkanBase {
 
     /// Selects a device and queue family that can both render and present to
     /// this window.  A discrete GPU is preferred, but only when it meets all
-    /// requirements; the old code picked the first discrete GPU before
-    /// checking presentation support.
+    /// requirements.
     fn choose_device_and_queue_family(
         instance: &Instance,
         physical_devices: &[vk::PhysicalDevice],
@@ -120,24 +119,17 @@ impl VulkanBase {
                     continue;
                 }
 
-                // Dynamic rendering was promoted to Vulkan 1.3.  Drivers are
-                // not required to advertise the older KHR extension once they
-                // expose the core API, so accept either form.
-                let supports_dynamic_rendering_extension =
-                    has_extension(vk::KHR_DYNAMIC_RENDERING_NAME);
-                if props.api_version < vk::API_VERSION_1_3 && !supports_dynamic_rendering_extension
-                {
+                if props.api_version < vk::API_VERSION_1_3 {
                     continue;
                 }
-
-                let supports_dynamic_rendering = unsafe {
-                    let mut features = vk::PhysicalDeviceDynamicRenderingFeatures::default();
+                let supports_vulkan13_features = unsafe {
+                    let mut features = vk::PhysicalDeviceVulkan13Features::default();
                     let mut features2 =
                         vk::PhysicalDeviceFeatures2::default().push_next(&mut features);
                     instance.get_physical_device_features2(physical_device, &mut features2);
-                    features.dynamic_rendering == vk::TRUE
+                    features.dynamic_rendering == vk::TRUE && features.synchronization2 == vk::TRUE
                 };
-                if !supports_dynamic_rendering {
+                if !supports_vulkan13_features {
                     continue;
                 }
 
@@ -162,7 +154,7 @@ impl VulkanBase {
             }
         }
 
-        Err("No Vulkan device supports graphics, presentation, dynamic rendering, and at least 144 bytes of push constants".into())
+        Err("No Vulkan 1.3 device supports graphics, presentation, dynamic rendering, synchronization2, and at least 144 bytes of push constants".into())
     }
 
     /// Creates a logical device and retrieves the graphics queue.
@@ -182,9 +174,7 @@ impl VulkanBase {
     ) -> Result<(ash::Device, vk::Queue), vk::Result> {
         let queue_priority = [1.0_f32];
 
-        // Enable only the features the renderer actually requires.  Copying
-        // all advertised features and forcing anisotropy on made device
-        // creation fail on otherwise usable Vulkan implementations.
+        // Enable only the features the renderer uses.
         let device_features = vk::PhysicalDeviceFeatures {
             // LINE polygon mode requires this feature to be enabled, not just supported.
             fill_mode_non_solid: if enable_wireframe {
@@ -224,25 +214,19 @@ impl VulkanBase {
 
         let mut device_extensions: Vec<*const i8> = Vec::new();
         device_extensions.push(vk::KHR_SWAPCHAIN_NAME.as_ptr());
-        let has_dynamic_rendering_extension = supported_dev_exts.iter().any(|e| {
-            let name = unsafe { std::ffi::CStr::from_ptr(e.extension_name.as_ptr()) };
-            name == vk::KHR_DYNAMIC_RENDERING_NAME
-        });
-        if has_dynamic_rendering_extension {
-            device_extensions.push(vk::KHR_DYNAMIC_RENDERING_NAME.as_ptr());
-        }
         if has_portability_subset {
             // Required by portability drivers such as MoltenVK; absent on KosmicKrisp.
             device_extensions.push(vk::KHR_PORTABILITY_SUBSET_NAME.as_ptr());
         }
 
-        let mut dynamic_rendering_features = vk::PhysicalDeviceDynamicRenderingFeatures {
+        let mut vulkan13_features = vk::PhysicalDeviceVulkan13Features {
             dynamic_rendering: vk::TRUE,
+            synchronization2: vk::TRUE,
             ..Default::default()
         };
 
         let device_create_info = vk::DeviceCreateInfo {
-            p_next: &mut dynamic_rendering_features as *mut _ as *const _,
+            p_next: &mut vulkan13_features as *mut _ as *const _,
             p_queue_create_infos: &queue_info,
             queue_create_info_count: 1,
             pp_enabled_extension_names: device_extensions.as_ptr(),

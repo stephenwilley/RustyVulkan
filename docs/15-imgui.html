@@ -119,7 +119,7 @@ if ui_ctx.show_ui
             self.show_ground_window = true;
         }
         _world_menu.end();
-    }</code></pre><figcaption><a href="source/src--vulkan--ui_pass.rs.html#L52">src/vulkan/ui_pass.rs:52-79</a> · revised source snapshot</figcaption></figure><!--/x-->
+    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/ui_pass.rs#L52-L79">src/vulkan/ui_pass.rs:52-79</a></figcaption></figure><!--/x-->
     <p><code>menu_item</code> returns <code>true</code> on the frame it's clicked, so the UI code reacts in the
     same place it's declared. The values handed to sliders are fields of the app's world controls, which the
     render graph copies into the uniform buffer each frame (<a href="09-frame-loop.html">Chapter 9</a>), so
@@ -160,7 +160,7 @@ let attribute_descs = [
         format: vk::Format::R8G8B8A8_UNORM,
         offset: offset_of!(DrawVert, col) as u32,
     },
-];</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/imgui_renderer/pipeline.rs#L64-L88">src/vulkan/imgui_renderer/pipeline.rs:64-88</a></figcaption></figure><!--/x-->
+];</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/imgui_renderer/pipeline.rs#L64-L88">src/vulkan/imgui_renderer/pipeline.rs:64-88</a></figcaption></figure><!--/x-->
     <p>The rest is the simplest pipeline in the project: no culling, no depth test, a single sample (the UI draws
     after the anti-aliasing resolve), no depth attachment format at all, and "over" blending:</p>
     <!--x src/vulkan/imgui_renderer/pipeline.rs 156-168--><figure class="code"><pre><code class="language-rust">let color_blend_attachment = vk::PipelineColorBlendAttachmentState {
@@ -175,7 +175,7 @@ let attribute_descs = [
         | vk::ColorComponentFlags::G
         | vk::ColorComponentFlags::B
         | vk::ColorComponentFlags::A,
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/imgui_renderer/pipeline.rs#L156-L168">src/vulkan/imgui_renderer/pipeline.rs:156-168</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/imgui_renderer/pipeline.rs#L156-L168">src/vulkan/imgui_renderer/pipeline.rs:156-168</a></figcaption></figure><!--/x-->
     <p>The only per-draw data is a projection matrix, sent as a 64-byte push constant to the vertex shader. ImGui
     works in window coordinates (pixels from the top-left corner), and this matrix maps them to Vulkan's −1..1
     clip space. Because Vulkan's Y already points down, like screen pixels, no flip is needed:</p>
@@ -200,7 +200,7 @@ unsafe {
         0,
         bytemuck::cast_slice(&amp;proj),
     );
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/imgui_renderer.rs#L309-L330">src/vulkan/imgui_renderer.rs:309-330</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/imgui_renderer.rs#L309-L330">src/vulkan/imgui_renderer.rs:309-330</a></figcaption></figure><!--/x-->
     <p><code>bytemuck::cast_slice</code> views the 4 × 4 array of floats as bytes without copying, the safe
     reinterpretation that <code>Pod</code> types allow (<a href="05-gpu-memory.html#rust-repr-c">Chapter 5</a>).
     The shaders are tiny: the vertex shader, <code>imgui.vert</code>, applies the matrix, and the fragment shader multiplies the vertex
@@ -210,7 +210,7 @@ unsafe {
     // Replicate red channel to RGB so single-channel textures (e.g., depth) show as grayscale
     vec4 gray = vec4(tex.rrr, tex.a);
     out_color = frag_color * gray;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/assets/shaders/imgui.frag#L14-L19">assets/shaders/imgui.frag:14-19</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/assets/shaders/imgui.frag#L14-L19">assets/shaders/imgui.frag:14-19</a></figcaption></figure><!--/x-->
     <p>Copying the red channel into all three colour channels shows a one-channel image, like a depth map, as
     grey. That's harmless for the font, whose texture is white with the shapes in its alpha channel.</p>
 
@@ -240,7 +240,7 @@ struct UiFrameBuffers {
 // ...
     /// One buffer pair per swapchain image: rewriting a single pair each frame would race
     /// with the previous frame, which may still be drawing from it.
-    frame_buffers: Vec&lt;UiFrameBuffers&gt;,</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/imgui_renderer.rs#L34-L57">src/vulkan/imgui_renderer.rs:34-57</a></figcaption></figure><!--/x-->
+    frame_buffers: Vec&lt;UiFrameBuffers&gt;,</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/imgui_renderer.rs#L34-L57">src/vulkan/imgui_renderer.rs:34-57</a></figcaption></figure><!--/x-->
     <!--x src/vulkan/imgui_renderer.rs 84-94--><figure class="code"><pre><code class="language-rust">let index_size =
     (draw_data.total_idx_count as usize * std::mem::size_of::&lt;DrawIdx&gt;()) as vk::DeviceSize;
 if self.frame_buffers.len() &lt;= image_index {
@@ -251,7 +251,7 @@ if self.frame_buffers.len() &lt;= image_index {
 // are idle and may be replaced or rewritten. Capacity grows geometrically to avoid
 // reallocating for small UI changes.
 let buffers = &amp;mut self.frame_buffers[image_index];
-let grow_vertex_buffer = vertex_size &gt; buffers.vertex_buffer_size;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/imgui_renderer.rs#L84-L94">src/vulkan/imgui_renderer.rs:84-94</a></figcaption></figure><!--/x-->
+let grow_vertex_buffer = vertex_size &gt; buffers.vertex_buffer_size;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/imgui_renderer.rs#L84-L94">src/vulkan/imgui_renderer.rs:84-94</a></figcaption></figure><!--/x-->
     <p>Why one pair per image? With two frames in flight (<a href="09-frame-loop.html#frames-in-flight">Chapter
     9</a>), the GPU may still be drawing the previous frame's UI while the CPU prepares this one. A single shared
     buffer would be overwritten while it's being read. This is a classic mistake when coming from OpenGL, and
@@ -313,7 +313,7 @@ let grow_vertex_buffer = vertex_size &gt; buffers.vertex_buffer_size;</code></pr
     }
     index_offset += draw_list.idx_buffer().len() as u32;
     vertex_offset += draw_list.vtx_buffer().len() as i32;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/imgui_renderer.rs#L345-L396">src/vulkan/imgui_renderer.rs:345-396</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/imgui_renderer.rs#L345-L396">src/vulkan/imgui_renderer.rs:345-396</a></figcaption></figure><!--/x-->
     <p>Three things happen per command:</p>
     <ul>
       <li><strong>Texture.</strong> Id 0 is the font; ids 1 and up are extra images registered with the renderer.
@@ -359,7 +359,7 @@ ui.window("Shadow Cascades")
                     imgui::Image::new(texture_id, [224.0, 224.0])
                         .uv0([0.0, 1.0])
                         .uv1([1.0, 0.0])
-                        .build(ui);</code></pre><figcaption><a href="source/src--vulkan--ui_pass.rs.html#L223">src/vulkan/ui_pass.rs:223-248</a> · revised source snapshot</figcaption></figure><!--/x-->
+                        .build(ui);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/ui_pass.rs#L223-L248">src/vulkan/ui_pass.rs:223-248</a></figcaption></figure><!--/x-->
     <p>Each cascade uses its own single-layer view of the shadow array (<a href="10-render-graph.html">Chapter
     10</a>), sampled with the shadow sampler. The shadow map is a per-swapchain-image attachment, so
     <code>shadow_texture_id</code> keeps a separate descriptor set for every image and cascade pair, again so

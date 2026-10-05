@@ -133,7 +133,9 @@ impl ImGuiRenderer {
         unsafe { device.begin_command_buffer(cmd_buffer, &cmd_begin).unwrap() };
 
         // Transition to TRANSFER_DST_OPTIMAL
-        let barrier1 = vk::ImageMemoryBarrier {
+        let barrier1 = vk::ImageMemoryBarrier2 {
+            dst_stage_mask: vk::PipelineStageFlags2::COPY,
+            dst_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
             old_layout: vk::ImageLayout::UNDEFINED,
             new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
@@ -146,19 +148,12 @@ impl ImGuiRenderer {
                 base_array_layer: 0,
                 layer_count: 1,
             },
-            src_access_mask: vk::AccessFlags::empty(),
-            dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
             ..Default::default()
         };
         unsafe {
-            device.cmd_pipeline_barrier(
+            device.cmd_pipeline_barrier2(
                 cmd_buffer,
-                vk::PipelineStageFlags::TOP_OF_PIPE,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[barrier1],
+                &vk::DependencyInfo::default().image_memory_barriers(&[barrier1]),
             );
         }
 
@@ -191,7 +186,11 @@ impl ImGuiRenderer {
         }
 
         // Transition to SHADER_READ_ONLY_OPTIMAL
-        let barrier2 = vk::ImageMemoryBarrier {
+        let barrier2 = vk::ImageMemoryBarrier2 {
+            src_stage_mask: vk::PipelineStageFlags2::COPY,
+            src_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
+            dst_stage_mask: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+            dst_access_mask: vk::AccessFlags2::SHADER_SAMPLED_READ,
             old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
@@ -204,33 +203,23 @@ impl ImGuiRenderer {
                 base_array_layer: 0,
                 layer_count: 1,
             },
-            src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-            dst_access_mask: vk::AccessFlags::SHADER_READ,
             ..Default::default()
         };
         unsafe {
-            device.cmd_pipeline_barrier(
+            device.cmd_pipeline_barrier2(
                 cmd_buffer,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[barrier2],
+                &vk::DependencyInfo::default().image_memory_barriers(&[barrier2]),
             );
         }
 
         unsafe { device.end_command_buffer(cmd_buffer).unwrap() };
 
         // Submit and wait
-        let submit = vk::SubmitInfo {
-            command_buffer_count: 1,
-            p_command_buffers: &cmd_buffer,
-            ..Default::default()
-        };
+        let command_buffers = [vk::CommandBufferSubmitInfo::default().command_buffer(cmd_buffer)];
+        let submit = vk::SubmitInfo2::default().command_buffer_infos(&command_buffers);
         unsafe {
             device
-                .queue_submit(base.graphics_queue, &[submit], vk::Fence::null())
+                .queue_submit2(base.graphics_queue, &[submit], vk::Fence::null())
                 .unwrap();
             device.queue_wait_idle(base.graphics_queue).unwrap();
         }

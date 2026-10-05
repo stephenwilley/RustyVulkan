@@ -136,10 +136,11 @@ impl TextureUploadBatch {
             base_array_layer: 0,
             layer_count: 1,
         };
-        let to_transfer = vk::ImageMemoryBarrier {
+        let to_transfer = vk::ImageMemoryBarrier2 {
+            dst_stage_mask: vk::PipelineStageFlags2::COPY,
+            dst_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
             old_layout: vk::ImageLayout::UNDEFINED,
             new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
             image,
             subresource_range,
             ..Default::default()
@@ -158,25 +159,22 @@ impl TextureUploadBatch {
             },
             ..Default::default()
         };
-        let to_shader_read = vk::ImageMemoryBarrier {
+        let to_shader_read = vk::ImageMemoryBarrier2 {
+            src_stage_mask: vk::PipelineStageFlags2::COPY,
+            src_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
+            dst_stage_mask: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+            dst_access_mask: vk::AccessFlags2::SHADER_SAMPLED_READ,
             old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-            dst_access_mask: vk::AccessFlags::SHADER_READ,
             image,
             subresource_range,
             ..Default::default()
         };
         unsafe {
             // undefined -> transfer destination -> shader-readable
-            device.cmd_pipeline_barrier(
+            device.cmd_pipeline_barrier2(
                 self.command_buffer,
-                vk::PipelineStageFlags::TOP_OF_PIPE,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[to_transfer],
+                &vk::DependencyInfo::default().image_memory_barriers(&[to_transfer]),
             );
             device.cmd_copy_buffer_to_image(
                 self.command_buffer,
@@ -185,14 +183,9 @@ impl TextureUploadBatch {
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 &[region],
             );
-            device.cmd_pipeline_barrier(
+            device.cmd_pipeline_barrier2(
                 self.command_buffer,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[to_shader_read],
+                &vk::DependencyInfo::default().image_memory_barriers(&[to_shader_read]),
             );
         }
 
@@ -235,12 +228,10 @@ impl TextureUploadBatch {
             // Submit all recorded copies together, then wait once before rendering begins.
             device.end_command_buffer(self.command_buffer)?;
             let fence = device.create_fence(&vk::FenceCreateInfo::default(), None)?;
-            let submit_info = vk::SubmitInfo {
-                command_buffer_count: 1,
-                p_command_buffers: &self.command_buffer,
-                ..Default::default()
-            };
-            device.queue_submit(queue, &[submit_info], fence)?;
+            let command_buffers =
+                [vk::CommandBufferSubmitInfo::default().command_buffer(self.command_buffer)];
+            let submit_info = vk::SubmitInfo2::default().command_buffer_infos(&command_buffers);
+            device.queue_submit2(queue, &[submit_info], fence)?;
             device.wait_for_fences(&[fence], true, u64::MAX)?;
             // The fence guarantees the GPU no longer reads the staging buffers.
             device.destroy_fence(fence, None);
@@ -301,7 +292,7 @@ impl TextureCache {
         if self.sampler != vk::Sampler::null() {
             return Ok(());
         }
-        // These settings were previously duplicated in every Texture.
+        // One sampler shared by every Texture.
         let sampler_info = vk::SamplerCreateInfo {
             mag_filter: vk::Filter::LINEAR,
             min_filter: vk::Filter::LINEAR,

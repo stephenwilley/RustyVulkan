@@ -233,7 +233,7 @@ mod vulkan;
 use app::app::App;
 use std::path::Path;
 #[cfg(target_os = "macos")]
-use std::path::PathBuf;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/main.rs#L11-L18">src/main.rs:11-18</a></figcaption></figure><!--/x-->
+use std::path::PathBuf;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/main.rs#L11-L18">src/main.rs:11-18</a></figcaption></figure><!--/x-->
     <aside class="callout rust" id="rust-modules"><p class="callout-title">Rust note · modules</p>
       <p>C has no module system; a program is just a pile of <code>.c</code> files that the linker stitches
       together, with headers to share declarations. In Rust, <code>mod app;</code> says "there is a module
@@ -266,7 +266,7 @@ use std::path::PathBuf;</code></pre><figcaption><a href="https://github.com/step
         return std::process::ExitCode::FAILURE;
     }
     std::process::ExitCode::SUCCESS
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/main.rs#L84-L94">src/main.rs:84-94</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/main.rs#L84-L94">src/main.rs:84-94</a></figcaption></figure><!--/x-->
     <p><code>configure_runtime</code> fixes up the process environment, then <code>App::new().run()</code> runs
     the application until the window closes. If either fails, the error is printed and the process exits with a
     failure status.</p>
@@ -305,7 +305,7 @@ use std::path::PathBuf;</code></pre><figcaption><a href="https://github.com/step
 
     configure_kosmickrisp(bundle_resources.as_deref())?;
     Ok(())
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/main.rs#L23-L37">src/main.rs:23-37</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/main.rs#L23-L37">src/main.rs:23-37</a></figcaption></figure><!--/x-->
     <aside class="callout rust" id="rust-option"><p class="callout-title">Rust note · Option, and chaining on it</p>
       <p>Rust references cannot be null; raw pointers used at the C boundary can be. A value that might be absent
       normally has type <code>Option&lt;T&gt;</code>, which is
@@ -368,7 +368,7 @@ fn configure_kosmickrisp(bundle_resources: Option&lt;&amp;Path&gt;) -&gt; std::i
         driver_manifest.display()
     );
     Ok(())
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/main.rs#L39-L77">src/main.rs:39-77</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/main.rs#L39-L77">src/main.rs:39-77</a></figcaption></figure><!--/x-->
     <p>The search order is: the app bundle; otherwise the SDK named by <code>$VULKAN_SDK</code>; otherwise the
     SDK's system-wide install under <code>/usr/local</code>. If none exists, it fails early with
     instructions rather than letting Vulkan fail mysteriously later.</p>
@@ -389,7 +389,7 @@ fn configure_kosmickrisp(bundle_resources: Option&lt;&amp;Path&gt;) -&gt; std::i
     <!--x src/main.rs 79-82--><figure class="code"><pre><code class="language-rust">#[cfg(not(target_os = "macos"))]
 fn configure_kosmickrisp(_bundle_resources: Option&lt;&amp;Path&gt;) -&gt; std::io::Result&lt;()&gt; {
     Ok(())
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/main.rs#L79-L82">src/main.rs:79-82</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/main.rs#L79-L82">src/main.rs:79-82</a></figcaption></figure><!--/x-->
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
       <p>In OpenGL you never chose a driver; the windowing system handed you a context. Vulkan's loader-and-ICD
       design makes the choice explicit and lets several drivers coexist, which is how a Vulkan-on-Metal driver

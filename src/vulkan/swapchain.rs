@@ -470,10 +470,6 @@ impl Swapchain {
         }
         Ok(views)
     }
-
-    // Render passes are no longer needed with dynamic rendering.
-
-    // Framebuffers are no longer needed with dynamic rendering.
 }
 
 /// Represents the details of swapchain support for a physical device.

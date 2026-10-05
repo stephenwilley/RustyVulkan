@@ -125,11 +125,11 @@
   <section id="deep-dive">
     <h2>The allocator</h2>
     <p>VMA is created once, straight after the device, in <code>VulkanBase::new</code>:</p>
-    <!--x src/vulkan/base/setup.rs 533-537--><figure class="code"><pre><code class="language-rust">// Create a Vulkan Memory Allocator (VMA) instance.
-let mut allocator_info =
-    vk_mem::AllocatorCreateInfo::new(&amp;instance, &amp;device, physical_device);
-allocator_info.flags |= vk_mem::AllocatorCreateFlags::EXT_MEMORY_BUDGET;
-let allocator = unsafe { Allocator::new(allocator_info)? };</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L533">src/vulkan/base/setup.rs:533-537</a> · revised source snapshot</figcaption></figure><!--/x-->
+    <!--x src/vulkan/base/setup.rs 503-507--><figure class="code"><pre><code class="language-rust">let (device, graphics_queue) = Self::create_logical_device_and_queue(
+    &amp;instance,
+    physical_device,
+    graphics_queue_family_index,
+    supports_multi_draw_indirect,</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L503-L507">src/vulkan/base/setup.rs:503-507</a></figcaption></figure><!--/x-->
     <p>The <code>EXT_MEMORY_BUDGET</code> flag lets VMA track how much memory the system is willing to give
     this process. The allocator is stored as an <code>Option</code> so it can be destroyed at a chosen moment
     during teardown (<a href="02-rust-meets-c.html#rust-drop">Chapter 2</a>). That's why later code reaches
@@ -147,7 +147,7 @@ pub struct Vertex {
     pub uv: [f32; 2],
     pub tangent: [f32; 3],
     pub bitangent: [f32; 3],
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/mesh.rs#L19-L29">src/graphics/mesh.rs:19-29</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/mesh.rs#L19-L29">src/graphics/mesh.rs:19-29</a></figcaption></figure><!--/x-->
     <aside class="callout rust" id="rust-repr-c"><p class="callout-title">Rust note · repr(C), derive, and bytemuck</p>
       <p>By default, Rust may reorder a struct's fields to save space. <code>#[repr(C)]</code> forbids that:
       fields are laid out in declaration order with C's padding rules, so the GPU can be told exactly where
@@ -191,7 +191,7 @@ pub struct Vertex {
     }
 
     Ok(VertexBuffer { buffer, allocation })
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/mesh.rs#L99-L126">src/graphics/mesh.rs:99-126</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/mesh.rs#L99-L126">src/graphics/mesh.rs:99-126</a></figcaption></figure><!--/x-->
     <p>Step by step:</p>
     <ul>
       <li>The buffer is described: its size in bytes, and that it'll be used as a vertex buffer.</li>
@@ -230,24 +230,24 @@ pub struct Vertex {
     <p>The per-frame block of settings (sun direction, shadow matrices, lights) also lives in host-visible
     buffers, one per swapchain image, created with VMA's <code>MAPPED</code> flag so they stay mapped for their
     whole life. Updating one is just a copy and a flush:</p>
-    <!--x src/vulkan/base.rs 505-522--><figure class="code"><pre><code class="language-rust">pub fn update_global_ubo(&amp;mut self, image_index: usize, ubo: &amp;GlobalUbo) {
+    <!--x src/vulkan/base.rs 477-494--><figure class="code"><pre><code class="language-rust">    image_index * TIMESTAMPS_PER_IMAGE
+}
+
+/// Converts a monotonic timestamp pair into milliseconds.  An unavailable or invalid pair
+/// remains `None` instead of producing a misleading profiler value.
+fn timestamp_delta_ms(&amp;self, start: u64, end: u64) -&gt; Option&lt;f32&gt; {
+    (end &gt; start).then(|| {
+        let delta_ticks = end - start;
+        let ns = (delta_ticks as f64) * (self.timestamp_period_ns as f64);
+        (ns / 1_000_000.0) as f32
+    })
+}
+
+/// Update the global UBO with lighting data
+pub fn update_global_ubo(&amp;mut self, image_index: usize, ubo: &amp;GlobalUbo) {
     let allocator = self.allocator.as_ref().expect("allocator");
     let allocation = &amp;self.ubo_allocations[image_index];
-    unsafe {
-        // These allocations were created with MAPPED, so VMA keeps the pointer valid
-        // for their lifetime and the per-frame path does not need map/unmap calls.
-        let ptr = allocator.get_allocation_info(allocation).mapped_data as *mut u8;
-        debug_assert!(!ptr.is_null());
-        std::ptr::copy_nonoverlapping(
-            ubo as *const GlobalUbo as *const u8,
-            ptr,
-            std::mem::size_of::&lt;GlobalUbo&gt;(),
-        );
-        allocator
-            .flush_allocation(allocation, 0, std::mem::size_of::&lt;GlobalUbo&gt;() as u64)
-            .expect("flush UBO");
-    }
-}</code></pre><figcaption><a href="source/src--vulkan--base.rs.html#L505">src/vulkan/base.rs:505-522</a> · revised source snapshot</figcaption></figure><!--/x-->
+    unsafe {</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L477-L494">src/vulkan/base.rs:477-494</a></figcaption></figure><!--/x-->
     <p>There's one buffer per swapchain image so that the CPU never overwrites data the GPU is still reading
     for an earlier frame. <a href="09-frame-loop.html">Chapter 9</a> shows how the frame loop guarantees that,
     and <a href="08-descriptors-materials.html">Chapter 8</a> how shaders find these buffers.</p>
@@ -280,7 +280,7 @@ unsafe {
     std::ptr::copy_nonoverlapping(pixels.as_ptr(), data_ptr, pixels.len());
     allocator.flush_allocation(&amp;staging_allocation, 0, pixels.len() as u64)?;
     allocator.unmap_memory(&amp;mut staging_allocation);
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/texture.rs#L81-L105">src/graphics/texture.rs:81-105</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/texture.rs#L81-L105">src/graphics/texture.rs:81-105</a></figcaption></figure><!--/x-->
     <p>The <code>image</code> crate decodes PNG or JPEG and converts it to 8-bit RGBA. The staging buffer's
     usage is <code>TRANSFER_SRC</code>: it will only ever be copied from. Next, the real image:</p>
     <!--x src/graphics/texture.rs 108-130--><figure class="code"><pre><code class="language-rust">let image_info = vk::ImageCreateInfo {
@@ -305,7 +305,7 @@ let image_alloc_info = vk_mem::AllocationCreateInfo {
     ..Default::default()
 };
 let (image, allocation) =
-    unsafe { allocator.create_image(&amp;image_info, &amp;image_alloc_info)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/texture.rs#L108-L130">src/graphics/texture.rs:108-130</a></figcaption></figure><!--/x-->
+    unsafe { allocator.create_image(&amp;image_info, &amp;image_alloc_info)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/texture.rs#L108-L130">src/graphics/texture.rs:108-130</a></figcaption></figure><!--/x-->
     <p><code>OPTIMAL</code> tiling is the GPU's own arrangement. The usage flags say it will be copied into
     (<code>TRANSFER_DST</code>) and read by shaders (<code>SAMPLED</code>). <code>AutoPreferDevice</code> asks
     for device-local memory. It has one mip level only: this renderer doesn't generate smaller mipmap
@@ -313,16 +313,11 @@ let (image, allocation) =
     <a href="04-swapchain.html">Chapter 4</a>'s note about gamma.</p>
     <p>Then three commands are recorded: a barrier to move the image into the transfer layout, the copy, and a
     barrier to make it shader-readable. The two barrier structs are built just above (elided):</p>
-    <!--x src/graphics/texture.rs 170-197--><figure class="code"><pre><code class="language-rust">unsafe {
+    <!--x src/graphics/texture.rs 173-190--><figure class="code"><pre><code class="language-rust">unsafe {
     // undefined -&gt; transfer destination -&gt; shader-readable
-    device.cmd_pipeline_barrier(
+    device.cmd_pipeline_barrier2(
         self.command_buffer,
-        vk::PipelineStageFlags::TOP_OF_PIPE,
-        vk::PipelineStageFlags::TRANSFER,
-        vk::DependencyFlags::empty(),
-        &amp;[],
-        &amp;[],
-        &amp;[to_transfer],
+        &amp;vk::DependencyInfo::default().image_memory_barriers(&amp;[to_transfer]),
     );
     device.cmd_copy_buffer_to_image(
         self.command_buffer,
@@ -331,37 +326,32 @@ let (image, allocation) =
         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         &amp;[region],
     );
-    device.cmd_pipeline_barrier(
+    device.cmd_pipeline_barrier2(
         self.command_buffer,
-        vk::PipelineStageFlags::TRANSFER,
-        vk::PipelineStageFlags::FRAGMENT_SHADER,
-        vk::DependencyFlags::empty(),
-        &amp;[],
-        &amp;[],
-        &amp;[to_shader_read],
+        &amp;vk::DependencyInfo::default().image_memory_barriers(&amp;[to_shader_read]),
     );
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/texture.rs#L170-L197">src/graphics/texture.rs:170-197</a></figcaption></figure><!--/x-->
-    <p>Each barrier names two pipeline stages: "work at the first stage must finish before work at the second
-    may start". The first waits on nothing earlier (<code>TOP_OF_PIPE</code>), but the transfer stage may not
-    start until the layout change is done. The second makes fragment shaders wait for the copy to complete.</p>
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/texture.rs#L173-L190">src/graphics/texture.rs:173-190</a></figcaption></figure><!--/x-->
+    <p>Each barrier carries its own pair of pipeline stages: "work at the source stage must finish before work
+    at the destination stage may start". The first has no source stage, since nothing has touched the new image
+    yet, but the copy may not start until the layout change is done. The second makes fragment shaders wait for
+    the copy to complete. These are <em>synchronization2</em> barriers, explained in
+    <a href="10-render-graph.html#barriers">Chapter 10</a>.</p>
     <p>Nothing has actually happened yet. These are only <em>recorded</em> commands. So the staging buffer
     can't be freed here; it's handed to the batch to keep:</p>
-    <!--x src/graphics/texture.rs 208-212--><figure class="code"><pre><code class="language-rust">// The copy has not run yet, so keep the staging allocation alive until `finish`.
-self.staging_buffers.push(StagingBuffer {
-    buffer: staging_buffer,
-    allocation: staging_allocation,
-});</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/texture.rs#L208-L212">src/graphics/texture.rs:208-212</a></figcaption></figure><!--/x-->
+    <!--x src/graphics/texture.rs 194-198--><figure class="code"><pre><code class="language-rust">view_type: vk::ImageViewType::TYPE_2D,
+format: vk::Format::R8G8B8A8_UNORM,
+components: vk::ComponentMapping::default(),
+subresource_range,
+..Default::default()</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/texture.rs#L194-L198">src/graphics/texture.rs:194-198</a></figcaption></figure><!--/x-->
     <p>When scene construction is done, <code>TextureCache::flush</code> calls <code>finish</code>:</p>
-    <!--x src/graphics/texture.rs 234-252--><figure class="code"><pre><code class="language-rust">unsafe {
+    <!--x src/graphics/texture.rs 227-243--><figure class="code"><pre><code class="language-rust">unsafe {
     // Submit all recorded copies together, then wait once before rendering begins.
     device.end_command_buffer(self.command_buffer)?;
     let fence = device.create_fence(&amp;vk::FenceCreateInfo::default(), None)?;
-    let submit_info = vk::SubmitInfo {
-        command_buffer_count: 1,
-        p_command_buffers: &amp;self.command_buffer,
-        ..Default::default()
-    };
-    device.queue_submit(queue, &amp;[submit_info], fence)?;
+    let command_buffers =
+        [vk::CommandBufferSubmitInfo::default().command_buffer(self.command_buffer)];
+    let submit_info = vk::SubmitInfo2::default().command_buffer_infos(&amp;command_buffers);
+    device.queue_submit2(queue, &amp;[submit_info], fence)?;
     device.wait_for_fences(&amp;[fence], true, u64::MAX)?;
     // The fence guarantees the GPU no longer reads the staging buffers.
     device.destroy_fence(fence, None);
@@ -370,7 +360,7 @@ self.staging_buffers.push(StagingBuffer {
         let mut allocation = staging.allocation;
         allocator.destroy_buffer(staging.buffer, &amp;mut allocation);
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/graphics/texture.rs#L234-L252">src/graphics/texture.rs:234-252</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/texture.rs#L227-L243">src/graphics/texture.rs:227-243</a></figcaption></figure><!--/x-->
     <p>Submit, then wait on a <dfn>fence</dfn> (a CPU-visible "done" signal) until the GPU finishes, and only
     then destroy the staging buffers. Stalling like this is fine at start-up, once. The frame loop, in
     <a href="09-frame-loop.html">Chapter 9</a>, uses the same fence idea but avoids waiting.</p>

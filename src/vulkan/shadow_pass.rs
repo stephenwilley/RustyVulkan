@@ -301,13 +301,13 @@ impl RenderPass for ShadowPass {
         &self.attachments
     }
 
-    fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags) {
+    fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags2) {
         match kind {
             AttachmentKind::Shadow => (
                 vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
             ),
-            _ => (vk::ImageLayout::UNDEFINED, vk::AccessFlags::empty()),
+            _ => (vk::ImageLayout::UNDEFINED, vk::AccessFlags2::empty()),
         }
     }
 

@@ -120,12 +120,12 @@ pub trait RenderPass {
     }
 
     /// Provides the graph with the required layout and access mask for a given attachment.
-    fn attachment_info(&amp;self, kind: AttachmentKind) -&gt; (vk::ImageLayout, vk::AccessFlags);
+    fn attachment_info(&amp;self, kind: AttachmentKind) -&gt; (vk::ImageLayout, vk::AccessFlags2);
 
     /// Optional cleanup hook for passes that own GPU objects (pipelines, layouts, etc.).
     /// Default is no-op.
     fn cleanup(&amp;mut self, _device: &amp;ash::Device) {}
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/render_graph.rs#L102-L122">src/vulkan/render_graph.rs:102-122</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L102-L122">src/vulkan/render_graph.rs:102-122</a></figcaption></figure><!--/x-->
     <aside class="callout rust"><p class="callout-title">Rust note · traits and trait objects</p>
       <p>A <em>trait</em> is a set of methods a type promises to provide, like an interface. Methods with a body,
       such as <code>uses_attachment</code> and <code>cleanup</code>, are defaults a type may override. The graph
@@ -143,7 +143,7 @@ pub trait RenderPass {
         RenderPassNode::Main =&gt; 100,
         RenderPassNode::UI =&gt; 200,
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/render_graph.rs#L48-L54">src/vulkan/render_graph.rs:48-54</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L48-L54">src/vulkan/render_graph.rs:48-54</a></figcaption></figure><!--/x-->
 
     <h2>Declaring attachments</h2>
     <p>The main pass asks for five images, and states how it uses each:</p>
@@ -166,20 +166,20 @@ fn uses_attachment(&amp;self, kind: AttachmentKind, msaa_samples: u32) -&gt; boo
     }
 }
 
-fn attachment_info(&amp;self, kind: AttachmentKind) -&gt; (vk::ImageLayout, vk::AccessFlags) {
+fn attachment_info(&amp;self, kind: AttachmentKind) -&gt; (vk::ImageLayout, vk::AccessFlags2) {
     match kind {
         AttachmentKind::MsaaColor | AttachmentKind::SwapchainColor | AttachmentKind::Color =&gt; (
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
         ),
         AttachmentKind::MsaaDepth | AttachmentKind::Depth =&gt; (
             vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
         ),
         AttachmentKind::Shadow =&gt; (
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::AccessFlags::SHADER_READ,
-        ),</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/main_pass.rs#L25-L260">src/vulkan/main_pass.rs:25-260</a></figcaption></figure><!--/x-->
+            vk::AccessFlags2::SHADER_READ,
+        ),</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/main_pass.rs#L25-L260">src/vulkan/main_pass.rs:25-260</a></figcaption></figure><!--/x-->
     <p>Not all five are used at once. With MSAA on, it draws into the two multisampled images and resolves into
     the swapchain image; at 1×, it draws straight into the swapchain image and a single-sample depth buffer.
     <code>uses_attachment</code> tells the graph which set is live. <code>attachment_info</code> gives the
@@ -209,7 +209,7 @@ fn attachment_info(&amp;self, kind: AttachmentKind) -&gt; (vk::ImageLayout, vk::
         depth_req.extent = vb.swapchain.extent; // match swapchain size
         depth_req.samples = vk::SampleCountFlags::TYPE_1; // single-sampled
         vb.get_attachment(depth_req)
-    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/render_graph.rs#L321-L344">src/vulkan/render_graph.rs:321-344</a></figcaption></figure><!--/x-->
+    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L321-L344">src/vulkan/render_graph.rs:321-344</a></figcaption></figure><!--/x-->
     <p>The swapchain image is the one just acquired. The MSAA images live in the <code>Swapchain</code>
     struct, because they share its size (<a href="04-swapchain.html">Chapter 4</a>), so there's one pair for
     everything. Depth and shadow images come from the manager, which creates them on first request and keeps
@@ -227,7 +227,7 @@ pub fn get_attachment(
         self.create_attachments(device, allocator, &amp;key);
     }
     self.attachments[&amp;key][image_index].handle
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/attachments.rs#L96-L109">src/vulkan/attachments.rs:96-109</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/attachments.rs#L96-L109">src/vulkan/attachments.rs:96-109</a></figcaption></figure><!--/x-->
     <p>The key is the full description (kind, format, size, sample count), so a request with a new size, after
     a resize or a shadow-resolution change, simply produces new images. (Old ones stay cached until the next
     swapchain recreation clears the manager.) The shadow map is a four-layer image
@@ -251,7 +251,7 @@ if key.kind == AttachmentKind::Shadow {
                 .expect("create shadow cascade view")
         };
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/attachments.rs#L201-L219">src/vulkan/attachments.rs:201-219</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/attachments.rs#L201-L219">src/vulkan/attachments.rs:201-219</a></figcaption></figure><!--/x-->
     <aside class="callout rust"><p class="callout-title">Rust note · struct update from another value</p>
       <p><code>..view_info</code> and <code>..view_info.subresource_range</code> are the same struct update syntax
       as <code>..Default::default()</code> (<a href="02-rust-meets-c.html#rust-builders">Chapter 2</a>), but
@@ -276,7 +276,7 @@ attachment_states.insert(
         access,
         stage,
     },
-);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/render_graph.rs#L359-L371">src/vulkan/render_graph.rs:359-371</a></figcaption></figure><!--/x-->
+);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L359-L371">src/vulkan/render_graph.rs:359-371</a></figcaption></figure><!--/x-->
     <p>A small function, <code>previous_frame_use</code>, supplies the stage and access of that earlier use for
     each kind of image.</p>
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
@@ -321,46 +321,41 @@ for req in pass.attachments() {
 
 if !transitions.is_empty() {
     vb.insert_attachment_barriers(cmd, &amp;transitions);
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/render_graph.rs#L385-L419">src/vulkan/render_graph.rs:385-419</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L385-L419">src/vulkan/render_graph.rs:385-419</a></figcaption></figure><!--/x-->
     <p>If the layout or access differs, it records a transition from the current state to the new one, deriving
     the destination stage from the access type, and updates its record. All the transitions for one pass go into
-    a single <code>vkCmdPipelineBarrier</code> call, with the stage masks combined, so the barrier can be a
-    little broader than any one image needs:</p>
-    <!--x src/vulkan/base.rs 317-351--><figure class="code"><pre><code class="language-rust">let mut barriers: Vec&lt;vk::ImageMemoryBarrier&gt; = Vec::new();
-let mut src_stage = vk::PipelineStageFlags::empty();
-let mut dst_stage = vk::PipelineStageFlags::empty();
-for t in transitions {
-    barriers.push(vk::ImageMemoryBarrier {
-        src_access_mask: t.src_access_mask,
-        dst_access_mask: t.dst_access_mask,
-        old_layout: t.old_layout,
-        new_layout: t.new_layout,
-        src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-        dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-        image: t.image,
-        subresource_range: vk::ImageSubresourceRange {
-            aspect_mask: t.aspect_mask,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: t.layer_count,
-        },
-        ..Default::default()
-    });
-    src_stage |= t.src_stage_mask;
-    dst_stage |= t.dst_stage_mask;
-}
-unsafe {
-    self.device.cmd_pipeline_barrier(
-        cmd,
-        src_stage,
-        dst_stage,
-        vk::DependencyFlags::empty(),
-        &amp;[],
-        &amp;[],
-        &amp;barriers,
-    );
-}</code></pre><figcaption><a href="source/src--vulkan--base.rs.html#L317">src/vulkan/base.rs:317-351</a> · revised source snapshot</figcaption></figure><!--/x-->
+    a single <code>vkCmdPipelineBarrier2</code> call, with each image's barrier carrying its own stages:</p>
+    <!--x src/vulkan/base.rs 317-341--><figure class="code"><pre><code class="language-rust">    let mut barriers: Vec&lt;vk::ImageMemoryBarrier2&gt; = Vec::new();
+    for t in transitions {
+        barriers.push(vk::ImageMemoryBarrier2 {
+            src_stage_mask: t.src_stage_mask,
+            src_access_mask: t.src_access_mask,
+            dst_stage_mask: t.dst_stage_mask,
+            dst_access_mask: t.dst_access_mask,
+            old_layout: t.old_layout,
+            new_layout: t.new_layout,
+            src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+            dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+            image: t.image,
+            subresource_range: vk::ImageSubresourceRange {
+                aspect_mask: t.aspect_mask,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: t.layer_count,
+            },
+            ..Default::default()
+        });
+    }
+    let dependency = vk::DependencyInfo::default().image_memory_barriers(&amp;barriers);
+    unsafe { self.device.cmd_pipeline_barrier2(cmd, &amp;dependency) };
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L317-L341">src/vulkan/base.rs:317-341</a></figcaption></figure><!--/x-->
+    <aside class="callout aside"><p class="callout-title">synchronization2</p>
+      <p><code>vkCmdPipelineBarrier2</code> takes a <code>DependencyInfo</code> listing barriers that each pair
+      their own source and destination stage and access masks, and <code>queue_submit2</code> does the same for
+      semaphores. Each barrier reads as one self-contained statement of what waits for what, which makes
+      mistakes easier to spot.</p>
+    </aside>
     <p>Following the shadow map through a frame shows it working. Before the shadow pass: <code>UNDEFINED</code>
     → depth attachment, writing. Before the main pass: depth attachment → shader-read-only, so the main pass's
     fragment shaders wait for the shadow pass's depth writes to finish and be visible. The UI pass also declares
@@ -388,7 +383,7 @@ unsafe {
         .clear_value(clear_color)
         .resolve_mode(vk::ResolveModeFlags::AVERAGE)
         .resolve_image_view(resolve_att.view)
-        .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/main_pass.rs#L59-L73">src/vulkan/main_pass.rs:59-73</a></figcaption></figure><!--/x-->
+        .resolve_image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/main_pass.rs#L59-L73">src/vulkan/main_pass.rs:59-73</a></figcaption></figure><!--/x-->
     <p><code>load_op: CLEAR</code> clears the image at the start of rendering. <code>store_op:
     DONT_CARE</code> says the multisampled samples needn't be written back to memory afterwards. Instead, the
     resolve averages them (<code>AVERAGE</code>) into the swapchain image's view. Apple's GPUs render the screen in
@@ -406,7 +401,7 @@ let rendering_info = vk::RenderingInfo::default()
     .depth_attachment(&amp;depth_attachment_info);
 
 unsafe {
-    device.cmd_begin_rendering(cmd, &amp;rendering_info);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/main_pass.rs#L107-L118">src/vulkan/main_pass.rs:107-118</a></figcaption></figure><!--/x-->
+    device.cmd_begin_rendering(cmd, &amp;rendering_info);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/main_pass.rs#L107-L118">src/vulkan/main_pass.rs:107-118</a></figcaption></figure><!--/x-->
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
       <p>The OpenGL version was a multisampled FBO, a <code>glBlitFramebuffer</code> to resolve it, and
       <code>glInvalidateFramebuffer</code> to hint that the samples could be dropped. Here all three are fields
@@ -427,15 +422,15 @@ if swapchain_state.layout != vk::ImageLayout::PRESENT_SRC_KHR {
             old_layout: swapchain_state.layout,
             new_layout: vk::ImageLayout::PRESENT_SRC_KHR,
             src_access_mask: swapchain_state.access,
-            dst_access_mask: vk::AccessFlags::empty(), // No access needed for present
+            dst_access_mask: vk::AccessFlags2::empty(), // No access needed for present
             src_stage_mask: swapchain_state.stage,
-            dst_stage_mask: vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+            dst_stage_mask: vk::PipelineStageFlags2::NONE,
             aspect_mask: vk::ImageAspectFlags::COLOR,
             layer_count: 1,
         }],
     );
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/79546db/src/vulkan/render_graph.rs#L464-L483">src/vulkan/render_graph.rs:464-483</a></figcaption></figure><!--/x-->
-    <p>The destination is "bottom of pipe, no access": nothing later in this command buffer touches the image.
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L464-L483">src/vulkan/render_graph.rs:464-483</a></figcaption></figure><!--/x-->
+    <p>The destination stage and access are both empty: nothing later in this command buffer touches the image.
     Ordering against the presentation engine is handled by the render-finished semaphore, not by this barrier
     (<a href="09-frame-loop.html">Chapter 9</a>).</p>
   </section>

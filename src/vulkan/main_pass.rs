@@ -164,7 +164,7 @@ impl RenderPass for MainPass {
                             material.pipeline.vk_pipeline,
                         );
                         let set0 = ctx.vulkan_base.set0_descriptor_sets[image_index];
-                        // Use stack arrays here: this hot path no longer allocates a Vec per draw.
+                        // Stack arrays keep this per-draw path free of allocation.
                         if material.textures.is_some() {
                             let sets_to_bind = [set0, material.texture_descriptor_set];
                             device.cmd_bind_descriptor_sets(
@@ -244,23 +244,23 @@ impl RenderPass for MainPass {
         }
     }
 
-    fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags) {
+    fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags2) {
         match kind {
             AttachmentKind::MsaaColor | AttachmentKind::SwapchainColor | AttachmentKind::Color => (
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
             ),
             AttachmentKind::MsaaDepth | AttachmentKind::Depth => (
                 vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
             ),
             AttachmentKind::Shadow => (
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                vk::AccessFlags::SHADER_READ,
+                vk::AccessFlags2::SHADER_READ,
             ),
             /*_ => (
                 vk::ImageLayout::UNDEFINED,
-                vk::AccessFlags::empty(),
+                vk::AccessFlags2::empty(),
             ),*/
         }
     }

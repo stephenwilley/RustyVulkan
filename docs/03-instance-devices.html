@@ -112,31 +112,31 @@
     (Patterns from <a href="02-rust-meets-c.html#rust-unsafe">Chapter 2</a> aren't re-explained.)</p>
 
     <h2>Checking for the validation layer</h2>
-    <!--x src/vulkan/base/setup.rs 456-480--><figure class="code"><pre><code class="language-rust">let entry = Entry::linked();
+    <!--x src/vulkan/base/setup.rs 426-450--><figure class="code"><pre><code class="language-rust">    Ok((pool, sets))
+}
 
-#[cfg(debug_assertions)]
-let layer_names = [c"VK_LAYER_KHRONOS_validation"];
-#[cfg(debug_assertions)]
-let layer_name_ptrs: Vec&lt;*const i8&gt; = layer_names.iter().map(|s| s.as_ptr()).collect();
+/// Creates the Vulkan ownership tree stored by `VulkanBase`.
+pub fn new(window: &amp;Window, event_loop: &amp;ActiveEventLoop) -&gt; Result&lt;Self, Box&lt;dyn Error&gt;&gt; {
+    let engine_settings = EngineSettings {
+        wireframe: false,
+        show_ui: true, // UI enabled by default
+        msaa_samples: 4,
+        // Four 2048² layers use the same texel count as the old 4096² map.
+        shadow_map_resolution: 2048,
+        shadow_distance: 75.0,
+    };
 
-#[cfg(not(debug_assertions))]
-let layer_name_ptrs: Vec&lt;*const i8&gt; = Vec::new();
+    let entry = Entry::linked();
 
-#[cfg(debug_assertions)]
-{
-    unsafe {
-        let available_layers = entry.enumerate_instance_layer_properties()?;
-        let validation_layer_name = c"VK_LAYER_KHRONOS_validation";
-        let is_layer_available = available_layers.iter().any(|layer| {
-            let name = CStr::from_ptr(layer.layer_name.as_ptr());
-            name == validation_layer_name
-        });
-        if !is_layer_available {
-            return Err("Validation layers requested, but not available.".into());
-        }
-    }
-    println!("✅ Validation layers available and requested.");
-}</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L456">src/vulkan/base/setup.rs:456-480</a> · revised source snapshot</figcaption></figure><!--/x-->
+    #[cfg(debug_assertions)]
+    let layer_names = [c"VK_LAYER_KHRONOS_validation"];
+    #[cfg(debug_assertions)]
+    let layer_name_ptrs: Vec&lt;*const i8&gt; = layer_names.iter().map(|s| s.as_ptr()).collect();
+
+    #[cfg(not(debug_assertions))]
+    let layer_name_ptrs: Vec&lt;*const i8&gt; = Vec::new();
+
+    #[cfg(debug_assertions)]</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L426-L450">src/vulkan/base/setup.rs:426-450</a></figcaption></figure><!--/x-->
     <p><code>Entry::linked()</code> gives the function table for the loader linked in at build time. Then, in
     a debug build, the code asks the loader which layers are installed. If the validation layer is missing, it
     fails with a clear message rather than silently running unchecked (so debug runs need the layer installed,
@@ -172,7 +172,7 @@ let ext_names =
 let mut extension_ptrs: Vec&lt;*const i8&gt; = ext_names.to_vec();
 
 #[cfg(debug_assertions)]
-extension_ptrs.push(ash::ext::debug_utils::NAME.as_ptr());</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L14">src/vulkan/base/setup.rs:14-30</a> · revised source snapshot</figcaption></figure><!--/x-->
+extension_ptrs.push(ash::ext::debug_utils::NAME.as_ptr());</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L14-L30">src/vulkan/base/setup.rs:14-30</a></figcaption></figure><!--/x-->
     <p><code>enumerate_required_extensions</code> comes from the <code>ash-window</code> crate. It asks the
     windowing system which surface extensions this platform needs (on macOS, the generic surface extension
     plus a Metal-specific one), so the code never names them. In debug builds it adds
@@ -184,7 +184,7 @@ let mut instance_flags = vk::InstanceCreateFlags::empty();
 if supports_portability_enum {
     extension_ptrs.push(vk::KHR_PORTABILITY_ENUMERATION_NAME.as_ptr());
     instance_flags |= vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR;
-}</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L40">src/vulkan/base/setup.rs:40-46</a> · revised source snapshot</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L40-L46">src/vulkan/base/setup.rs:40-46</a></figcaption></figure><!--/x-->
     <p>Some Vulkan implementations, MoltenVK being the best known, run on top of another API and can't support
     every part of the specification. Vulkan calls these <dfn>portability</dfn> drivers. To stop programs
     accidentally using one, the loader hides them unless the instance opts in with this flag and extension.
@@ -195,18 +195,18 @@ if supports_portability_enum {
     <h2>Hearing from the validation layer</h2>
     <p>With the debug extension enabled, the code registers a <dfn>debug messenger</dfn>: a callback that the
     validation layer calls whenever it has something to say.</p>
-    <!--x src/vulkan/base/setup.rs 701-712--><figure class="code"><pre><code class="language-rust">let loader = ash::ext::debug_utils::Instance::new(entry, instance);
-let create_info = vk::DebugUtilsMessengerCreateInfoEXT {
-    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE
-        | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
-        | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
-    message_type: vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
-        | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
-        | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
-    pfn_user_callback: Some(vulkan_debug_callback),
-    ..Default::default()
-};
-let messenger = unsafe { loader.create_debug_utils_messenger(&amp;create_info, None)? };</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L701">src/vulkan/base/setup.rs:701-712</a> · revised source snapshot</figcaption></figure><!--/x-->
+    <!--x src/vulkan/base/setup.rs 671-682--><figure class="code"><pre><code class="language-rust">        max_draw_indirect_count: chosen_props.limits.max_draw_indirect_count,
+        pending_msaa_samples: None,
+        swapchain_recreation_needed: false,
+    };
+
+    println!("✅ VulkanBase initialized successfully");
+    Ok(vulkan_base)
+}
+
+#[cfg(debug_assertions)]
+fn setup_debug_messenger(
+    entry: &amp;Entry,</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L671-L682">src/vulkan/base/setup.rs:671-682</a></figcaption></figure><!--/x-->
     <p>The callback itself just formats the message and prints it to standard error. Returning
     <code>vk::FALSE</code> tells the layer not to abort the Vulkan call that triggered the message:</p>
     <!--x src/vulkan/base.rs 78-86,100-103--><figure class="code"><pre><code class="language-rust">#[cfg(debug_assertions)]
@@ -222,7 +222,7 @@ unsafe extern "system" fn vulkan_debug_callback(
         eprintln!("{} {} {:?}", severity, ty, message);
     }
     vk::FALSE
-}</code></pre><figcaption><a href="source/src--vulkan--base.rs.html#L78">src/vulkan/base.rs:78-86</a> · <a href="source/src--vulkan--base.rs.html#L100">100-103</a> · revised source snapshot</figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L78-L103">src/vulkan/base.rs:78-103</a></figcaption></figure><!--/x-->
     <aside class="callout rust"><p class="callout-title">Rust note · a function C can call</p>
       <p><code>extern "system"</code> tells the compiler to use the platform's C calling convention, so that
       Vulkan (C code) can call this Rust function through a pointer. Its parameters are raw C types: a raw
@@ -242,8 +242,7 @@ unsafe extern "system" fn vulkan_debug_callback(
     <p>The window surface is created next (<a href="04-swapchain.html">Chapter 4</a>), because presentation
     support is needed to judge GPUs. Then <code>choose_device_and_queue_family</code> tries each GPU, first
     looking only at discrete ones and then at everything else:</p>
-    <!--x src/vulkan/base/setup.rs 91-121,126-131,144-165--><figure class="code"><pre><code class="language-rust">for prefer_discrete in [true, false] {
-    for &amp;physical_device in physical_devices {
+    <!--x src/vulkan/base/setup.rs 91-124,136-157--><figure class="code"><pre><code class="language-rust">    for &amp;physical_device in physical_devices {
         let props = unsafe { instance.get_physical_device_properties(physical_device) };
         if (props.device_type == vk::PhysicalDeviceType::DISCRETE_GPU) != prefer_discrete {
             continue;
@@ -273,11 +272,8 @@ unsafe extern "system" fn vulkan_debug_callback(
         if !has_extension(vk::KHR_SWAPCHAIN_NAME) {
             continue;
         }
-// ...
-        let supports_dynamic_rendering_extension =
-            has_extension(vk::KHR_DYNAMIC_RENDERING_NAME);
-        if props.api_version &lt; vk::API_VERSION_1_3 &amp;&amp; !supports_dynamic_rendering_extension
-        {
+
+        if props.api_version &lt; vk::API_VERSION_1_3 {
             continue;
         }
 // ...
@@ -302,7 +298,7 @@ unsafe extern "system" fn vulkan_debug_callback(
     }
 }
 
-Err("No Vulkan device supports graphics, presentation, dynamic rendering, and at least 144 bytes of push constants".into())</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L91">src/vulkan/base/setup.rs:91-121</a> · <a href="source/src--vulkan--base--setup.rs.html#L126">126-131</a> · <a href="source/src--vulkan--base--setup.rs.html#L144">144-165</a> · revised source snapshot</figcaption></figure><!--/x-->
+Err("No Vulkan 1.3 device supports graphics, presentation, dynamic rendering, synchronization2, and at least 144 bytes of push constants".into())</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L91-L157">src/vulkan/base/setup.rs:91-157</a></figcaption></figure><!--/x-->
     <p>For each candidate, it applies four tests in turn and moves to the next GPU (<code>continue</code>) on
     the first failure:</p>
     <ol>
@@ -311,23 +307,23 @@ Err("No Vulkan device supports graphics, presentation, dynamic rendering, and at
       checked. A GPU below 144 is skipped with a diagnostic before any pipeline is created.</li>
       <li><strong>Can it show images in a window?</strong> That's the swapchain device extension. Without it,
       there's nothing to display.</li>
-      <li><strong>Does it have dynamic rendering?</strong> This renderer draws without Vulkan 1.0's "render pass"
-      objects, using a feature that became core in Vulkan 1.3 (<a href="07-pipelines.html">Chapter 7</a>). So
-      the GPU must support Vulkan 1.3 or the older extension, and then (elided here) report the feature as
-      supported, using the <code>push_next</code> query shown in
-      <a href="02-rust-meets-c.html#rust-builders">Chapter 2</a>.</li>
+      <li><strong>Does it have Vulkan 1.3's dynamic rendering and synchronization2?</strong> This renderer draws
+      with dynamic rendering (<a href="07-pipelines.html">Chapter 7</a>) and records its
+      barriers with the clearer synchronization2 commands (<a href="10-render-graph.html">Chapter 10</a>). The GPU
+      must report Vulkan 1.3, and then report both features as supported, using the <code>push_next</code> query
+      shown in <a href="02-rust-meets-c.html#rust-builders">Chapter 2</a>.</li>
       <li><strong>Is there a queue family that can both draw and present to our surface?</strong> The first
       one found wins, and the function returns the GPU and that family's index together.</li>
     </ol>
     <p><code>has_extension</code> is a closure that captures the GPU's extension list.</p>
     <p>Once a GPU is chosen, <code>new</code> records a few of its capabilities for later:</p>
-    <!--x src/vulkan/base/setup.rs 510-516--><figure class="code"><pre><code class="language-rust">let sample_count_flags_supported = chosen_props.limits.framebuffer_color_sample_counts
-    &amp; chosen_props.limits.framebuffer_depth_sample_counts;
-let supported_features = unsafe { instance.get_physical_device_features(physical_device) };
-let supports_wireframe = supported_features.fill_mode_non_solid == vk::TRUE;
-let supports_multi_draw_indirect = supported_features.multi_draw_indirect == vk::TRUE;
-let supports_draw_indirect_first_instance =
-    supported_features.draw_indirect_first_instance == vk::TRUE;</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L510">src/vulkan/base/setup.rs:510-516</a> · revised source snapshot</figcaption></figure><!--/x-->
+    <!--x src/vulkan/base/setup.rs 480-486--><figure class="code"><pre><code class="language-rust">Self::print_physical_devices(&amp;instance, &amp;physical_devices);
+
+let (physical_device, graphics_queue_family_index) = Self::choose_device_and_queue_family(
+    &amp;instance,
+    &amp;physical_devices,
+    &amp;surface_loader,
+    surface,</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L480-L486">src/vulkan/base/setup.rs:480-486</a></figcaption></figure><!--/x-->
     <p>The supported multisample counts for colour and depth are intersected, giving the anti-aliasing options
     the UI can offer (<a href="10-render-graph.html">Chapter 10</a>). Multi-draw indirect, which lets one
     command issue many draws, and indirect "first instance", which lets those commands pick out a range of
@@ -337,74 +333,65 @@ let supports_draw_indirect_first_instance =
     <h2>Opening the logical device</h2>
     <p><code>create_logical_device_and_queue</code> asks for exactly what the renderer uses and nothing
     more:</p>
-    <!--x src/vulkan/base/setup.rs 188-214,239-257--><figure class="code"><pre><code class="language-rust">let device_features = vk::PhysicalDeviceFeatures {
-    // LINE polygon mode requires this feature to be enabled, not just supported.
-    fill_mode_non_solid: if enable_wireframe {
-        vk::TRUE
-    } else {
-        vk::FALSE
-    },
-    multi_draw_indirect: if enable_multi_draw_indirect {
-        vk::TRUE
-    } else {
-        vk::FALSE
-    },
-    draw_indirect_first_instance: if enable_draw_indirect_first_instance {
-        vk::TRUE
-    } else {
-        vk::FALSE
-    },
-    ..Default::default()
-};
+    <!--x src/vulkan/base/setup.rs 172-196,214-227--><figure class="code"><pre><code class="language-rust">    enable_draw_indirect_first_instance: bool,
+    enable_wireframe: bool,
+) -&gt; Result&lt;(ash::Device, vk::Queue), vk::Result&gt; {
+    let queue_priority = [1.0_f32];
 
-let queue_info = vk::DeviceQueueCreateInfo {
-    s_type: vk::StructureType::DEVICE_QUEUE_CREATE_INFO,
-    queue_family_index,
-    queue_count: 1,
-    p_queue_priorities: queue_priority.as_ptr(),
-    ..Default::default()
-};
+    // Enable only the features the renderer uses.
+    let device_features = vk::PhysicalDeviceFeatures {
+        // LINE polygon mode requires this feature to be enabled, not just supported.
+        fill_mode_non_solid: if enable_wireframe {
+            vk::TRUE
+        } else {
+            vk::FALSE
+        },
+        multi_draw_indirect: if enable_multi_draw_indirect {
+            vk::TRUE
+        } else {
+            vk::FALSE
+        },
+        draw_indirect_first_instance: if enable_draw_indirect_first_instance {
+            vk::TRUE
+        } else {
+            vk::FALSE
+        },
+        ..Default::default()
+    };
 // ...
-let mut dynamic_rendering_features = vk::PhysicalDeviceDynamicRenderingFeatures {
-    dynamic_rendering: vk::TRUE,
-    ..Default::default()
-};
 
-let device_create_info = vk::DeviceCreateInfo {
-    p_next: &amp;mut dynamic_rendering_features as *mut _ as *const _,
-    p_queue_create_infos: &amp;queue_info,
-    queue_create_info_count: 1,
-    pp_enabled_extension_names: device_extensions.as_ptr(),
-    enabled_extension_count: device_extensions.len() as u32,
-    p_enabled_features: &amp;device_features,
-    ..Default::default()
-};
+    let mut device_extensions: Vec&lt;*const i8&gt; = Vec::new();
+    device_extensions.push(vk::KHR_SWAPCHAIN_NAME.as_ptr());
+    if has_portability_subset {
+        // Required by portability drivers such as MoltenVK; absent on KosmicKrisp.
+        device_extensions.push(vk::KHR_PORTABILITY_SUBSET_NAME.as_ptr());
+    }
 
-let device = unsafe { instance.create_device(physical_device, &amp;device_create_info, None)? };
-let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
-println!("✅ Logical device and graphics queue ready");
-Ok((device, queue))</code></pre><figcaption><a href="source/src--vulkan--base--setup.rs.html#L188">src/vulkan/base/setup.rs:188-214</a> · <a href="source/src--vulkan--base--setup.rs.html#L239">239-257</a> · revised source snapshot</figcaption></figure><!--/x-->
+    let mut vulkan13_features = vk::PhysicalDeviceVulkan13Features {
+        dynamic_rendering: vk::TRUE,
+        synchronization2: vk::TRUE,
+        ..Default::default()
+    };
+</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L172-L227">src/vulkan/base/setup.rs:172-227</a></figcaption></figure><!--/x-->
     <p>Reading it in order:</p>
     <ul>
       <li><strong>Features.</strong> Multi-draw indirect, indirect first-instance and non-solid fill mode
-      (for wireframe) are requested only when supported. The
-      comment records a lesson: an earlier version switched on every advertised feature and broke device
-      creation on some drivers.</li>
+      (for wireframe) are requested only when supported. Enabling only what's used keeps device creation working on implementations that lack the rest.</li>
       <li><strong>Queues.</strong> One queue from the chosen family. Every queue needs a priority between 0 and
       1, passed as a pointer to an array; <code>queue_priority</code> is that array, kept in a local
       variable so the pointer stays valid until <code>create_device</code> returns.</li>
-      <li><strong>Extensions.</strong> Built just above (elided): the swapchain extension, plus the older
-      dynamic-rendering extension if listed, and <code>VK_KHR_portability_subset</code> if listed. A
+      <li><strong>Extensions.</strong> Built just above (elided): the swapchain extension, and <code>VK_KHR_portability_subset</code> if listed. A
       portability driver uses that one to declare which features it can't provide, and Vulkan requires you
       to enable it when it's present.</li>
-      <li><strong>Dynamic rendering, switched on.</strong> Supporting a feature isn't enough; it must be
-      enabled. The feature struct is linked through <code>p_next</code> by a raw pointer cast here, the
+      <li><strong>Vulkan 1.3 features, switched on.</strong> Supporting a feature isn't enough; it must be
+      enabled. Dynamic rendering and synchronization2 are both turned on in one
+      <code>PhysicalDeviceVulkan13Features</code> struct, linked through <code>p_next</code> by a raw pointer cast here, the
       hand-written equivalent of <code>push_next</code>.</li>
       <li><strong>The queue.</strong> <code>get_device_queue</code> doesn't create anything. Queues are made
       with the device; this just fetches the handle of queue 0 in our family.</li>
     </ul>
     <aside class="callout rust"><p class="callout-title">Rust note · that pointer cast</p>
-      <p><code>&amp;mut dynamic_rendering_features as *mut _ as *const _</code> turns a Rust reference into a
+      <p><code>&amp;mut vulkan13_features as *mut _ as *const _</code> turns a Rust reference into a
       raw pointer in two steps, with <code>_</code> asking the compiler to infer the pointee type. Creating raw
       pointers is safe in Rust; only reading through them needs <code>unsafe</code>. Unlike
       <code>push_next</code>, nothing here ties the pointer's lifetime to the struct, so correctness rests on
@@ -430,7 +417,8 @@ Ok((device, queue))</code></pre><figcaption><a href="source/src--vulkan--base--s
       debug builds and reports through a debug-messenger callback.</li>
       <li>Portability enumeration is enabled whenever the loader offers it, so portability drivers stay usable;
       KosmicKrisp doesn't need it.</li>
-      <li>A GPU qualifies if it has the swapchain extension, dynamic rendering, and a queue family that can draw
+      <li>A GPU qualifies if it supports Vulkan 1.3 with dynamic rendering and synchronization2, the swapchain
+      extension, and a queue family that can draw
       and present to the window's surface, plus at least 144 bytes of push constants. A discrete GPU is preferred.
       Wireframe is optional: supported devices enable non-solid fill mode, while others keep the UI toggle disabled.
       It is currently unavailable with KosmicKrisp, pending driver implementation of <code>fillModeNonSolid</code>.</li>

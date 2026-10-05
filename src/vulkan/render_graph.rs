@@ -95,8 +95,8 @@ pub struct RenderCtx<'a> {
 pub struct AttachmentState {
     pub handle: AttachmentHandle,
     pub layout: vk::ImageLayout,
-    pub access: vk::AccessFlags,
-    pub stage: vk::PipelineStageFlags,
+    pub access: vk::AccessFlags2,
+    pub stage: vk::PipelineStageFlags2,
 }
 
 /// Trait implemented by all render passes.
@@ -114,7 +114,7 @@ pub trait RenderPass {
     }
 
     /// Provides the graph with the required layout and access mask for a given attachment.
-    fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags);
+    fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags2);
 
     /// Optional cleanup hook for passes that own GPU objects (pipelines, layouts, etc.).
     /// Default is no-op.
@@ -473,9 +473,9 @@ impl RenderGraph {
                     old_layout: swapchain_state.layout,
                     new_layout: vk::ImageLayout::PRESENT_SRC_KHR,
                     src_access_mask: swapchain_state.access,
-                    dst_access_mask: vk::AccessFlags::empty(), // No access needed for present
+                    dst_access_mask: vk::AccessFlags2::empty(), // No access needed for present
                     src_stage_mask: swapchain_state.stage,
-                    dst_stage_mask: vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                    dst_stage_mask: vk::PipelineStageFlags2::NONE,
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     layer_count: 1,
                 }],
@@ -556,37 +556,37 @@ impl Default for RenderGraph {
 ///   attachment writes may still be running on the queue.
 /// * Per-image color, depth and shadow attachments were last used by a frame whose
 ///   fence `begin_frame` has already waited on, so their entries are only conservative.
-fn previous_frame_use(kind: AttachmentKind) -> (vk::AccessFlags, vk::PipelineStageFlags) {
+fn previous_frame_use(kind: AttachmentKind) -> (vk::AccessFlags2, vk::PipelineStageFlags2) {
     match kind {
         AttachmentKind::SwapchainColor => (
-            vk::AccessFlags::empty(),
-            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            vk::AccessFlags2::empty(),
+            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
         ),
         AttachmentKind::MsaaColor | AttachmentKind::Color => (
-            vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
         ),
         AttachmentKind::MsaaDepth | AttachmentKind::Depth => (
-            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-            vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
-                | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+                | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
         ),
         AttachmentKind::Shadow => (
-            vk::AccessFlags::empty(),
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::AccessFlags2::empty(),
+            vk::PipelineStageFlags2::FRAGMENT_SHADER,
         ),
     }
 }
 
-fn pipeline_stage_for_access(access: vk::AccessFlags) -> vk::PipelineStageFlags {
-    if access.contains(vk::AccessFlags::COLOR_ATTACHMENT_WRITE) {
-        vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
-    } else if access.contains(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE) {
-        vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS
-    } else if access.contains(vk::AccessFlags::SHADER_READ) {
-        vk::PipelineStageFlags::FRAGMENT_SHADER
+fn pipeline_stage_for_access(access: vk::AccessFlags2) -> vk::PipelineStageFlags2 {
+    if access.contains(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE) {
+        vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT
+    } else if access.contains(vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE) {
+        vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS
+    } else if access.contains(vk::AccessFlags2::SHADER_READ) {
+        vk::PipelineStageFlags2::FRAGMENT_SHADER
     } else {
-        vk::PipelineStageFlags::TOP_OF_PIPE
+        vk::PipelineStageFlags2::NONE
     }
 }
 

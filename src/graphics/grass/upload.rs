@@ -142,19 +142,22 @@ impl GrassUploadBatch {
             base_array_layer: 0,
             layer_count: 1,
         };
-        let to_transfer = vk::ImageMemoryBarrier {
+        let to_transfer = vk::ImageMemoryBarrier2 {
+            dst_stage_mask: vk::PipelineStageFlags2::COPY,
+            dst_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
             old_layout: vk::ImageLayout::UNDEFINED,
             new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            dst_access_mask: vk::AccessFlags::TRANSFER_WRITE,
             image,
             subresource_range: range,
             ..Default::default()
         };
-        let to_shader = vk::ImageMemoryBarrier {
+        let to_shader = vk::ImageMemoryBarrier2 {
+            src_stage_mask: vk::PipelineStageFlags2::COPY,
+            src_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
+            dst_stage_mask: vk::PipelineStageFlags2::VERTEX_SHADER,
+            dst_access_mask: vk::AccessFlags2::SHADER_SAMPLED_READ,
             old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-            dst_access_mask: vk::AccessFlags::SHADER_READ,
             image,
             subresource_range: range,
             ..Default::default()
@@ -174,14 +177,9 @@ impl GrassUploadBatch {
             ..Default::default()
         };
         unsafe {
-            device.cmd_pipeline_barrier(
+            device.cmd_pipeline_barrier2(
                 self.command_buffer,
-                vk::PipelineStageFlags::TOP_OF_PIPE,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[to_transfer],
+                &vk::DependencyInfo::default().image_memory_barriers(&[to_transfer]),
             );
             device.cmd_copy_buffer_to_image(
                 self.command_buffer,
@@ -190,14 +188,9 @@ impl GrassUploadBatch {
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 &[copy],
             );
-            device.cmd_pipeline_barrier(
+            device.cmd_pipeline_barrier2(
                 self.command_buffer,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::VERTEX_SHADER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[to_shader],
+                &vk::DependencyInfo::default().image_memory_barriers(&[to_shader]),
             );
         }
         self.staging_buffers.push((staging, staging_allocation));
@@ -212,32 +205,28 @@ impl GrassUploadBatch {
         unsafe {
             // Make every transfer write visible to later vertex/index fetches. Queue order alone
             // orders execution, but this barrier supplies the required memory dependency.
-            let barrier = vk::MemoryBarrier {
-                src_access_mask: vk::AccessFlags::TRANSFER_WRITE,
-                dst_access_mask: vk::AccessFlags::VERTEX_ATTRIBUTE_READ
-                    | vk::AccessFlags::INDEX_READ,
+            let barrier = vk::MemoryBarrier2 {
+                src_stage_mask: vk::PipelineStageFlags2::COPY,
+                src_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
+                dst_stage_mask: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT
+                    | vk::PipelineStageFlags2::INDEX_INPUT,
+                dst_access_mask: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ
+                    | vk::AccessFlags2::INDEX_READ,
                 ..Default::default()
             };
-            vb.device.cmd_pipeline_barrier(
+            vb.device.cmd_pipeline_barrier2(
                 self.command_buffer,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::VERTEX_INPUT,
-                vk::DependencyFlags::empty(),
-                &[barrier],
-                &[],
-                &[],
+                &vk::DependencyInfo::default().memory_barriers(&[barrier]),
             );
             vb.device.end_command_buffer(self.command_buffer)?;
             let fence = vb
                 .device
                 .create_fence(&vk::FenceCreateInfo::default(), None)?;
-            let submit = vk::SubmitInfo {
-                command_buffer_count: 1,
-                p_command_buffers: &self.command_buffer,
-                ..Default::default()
-            };
+            let command_buffers =
+                [vk::CommandBufferSubmitInfo::default().command_buffer(self.command_buffer)];
+            let submit = vk::SubmitInfo2::default().command_buffer_infos(&command_buffers);
             vb.device
-                .queue_submit(vb.graphics_queue, &[submit], fence)?;
+                .queue_submit2(vb.graphics_queue, &[submit], fence)?;
             vb.device.wait_for_fences(&[fence], true, u64::MAX)?;
             vb.device.destroy_fence(fence, None);
             vb.device

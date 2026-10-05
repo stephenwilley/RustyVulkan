@@ -402,19 +402,19 @@ impl RenderPass for UiPass {
         &self.attachments
     }
 
-    fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags) {
+    fn attachment_info(&self, kind: AttachmentKind) -> (vk::ImageLayout, vk::AccessFlags2) {
         match kind {
             // LOAD and blending read the main pass's output, so declaring the read makes
             // the graph insert a barrier after the main pass's writes.
             AttachmentKind::SwapchainColor => (
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                vk::AccessFlags2::COLOR_ATTACHMENT_READ | vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
             ),
             AttachmentKind::Shadow => (
                 vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                vk::AccessFlags::SHADER_READ,
+                vk::AccessFlags2::SHADER_READ,
             ),
-            _ => (vk::ImageLayout::UNDEFINED, vk::AccessFlags::empty()),
+            _ => (vk::ImageLayout::UNDEFINED, vk::AccessFlags2::empty()),
         }
     }
 }

@@ -127,7 +127,7 @@
     <p>VMA is created once, straight after the device, in <code>VulkanBase::new</code>:</p>
     <!--x src/vulkan/base/setup.rs 537-539--><figure class="code"><pre><code class="language-rust">// Create a Vulkan Memory Allocator (VMA) instance.
 let allocator_info = vk_mem::AllocatorCreateInfo::new(&amp;instance, &amp;device, physical_device);
-let allocator = unsafe { Allocator::new(allocator_info)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L537-L539">src/vulkan/base/setup.rs:537-539</a></figcaption></figure><!--/x-->
+let allocator = unsafe { Allocator::new(allocator_info)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/vulkan/base/setup.rs#L537-L539">src/vulkan/base/setup.rs:537-539</a></figcaption></figure><!--/x-->
     <p>VMA estimates the memory budget by default. Its <code>EXT_MEMORY_BUDGET</code> flag would also
     require enabling <code>VK_EXT_memory_budget</code> on the device, so it is left unset here.
     The allocator is stored as an <code>Option</code> so it can be destroyed at a chosen moment
@@ -147,7 +147,7 @@ pub struct Vertex {
     pub uv: [f32; 2],
     pub tangent: [f32; 3],
     pub bitangent: [f32; 3],
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/mesh.rs#L19-L29">src/graphics/mesh.rs:19-29</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/mesh.rs#L19-L29">src/graphics/mesh.rs:19-29</a></figcaption></figure><!--/x-->
     <aside class="callout rust" id="rust-repr-c"><p class="callout-title">Rust note · repr(C), derive, and bytemuck</p>
       <p>By default, Rust may reorder a struct's fields to save space. <code>#[repr(C)]</code> forbids that:
       fields are laid out in declaration order with C's padding rules, so the GPU can be told exactly where
@@ -193,7 +193,7 @@ pub struct Vertex {
     }
 
     Ok(VertexBuffer { buffer, allocation })
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/mesh.rs#L99-L128">src/graphics/mesh.rs:99-128</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/mesh.rs#L99-L128">src/graphics/mesh.rs:99-128</a></figcaption></figure><!--/x-->
     <p>Step by step:</p>
     <ul>
       <li>The buffer is described: its size in bytes, and that it'll be used as a vertex buffer.</li>
@@ -249,7 +249,7 @@ pub struct Vertex {
             .flush_allocation(allocation, 0, std::mem::size_of::&lt;GlobalUbo&gt;() as u64)
             .expect("flush UBO");
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L501-L518">src/vulkan/base.rs:501-518</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/vulkan/base.rs#L501-L518">src/vulkan/base.rs:501-518</a></figcaption></figure><!--/x-->
     <p>There's one buffer per swapchain image so that the CPU never overwrites data the GPU is still reading
     for an earlier frame. <a href="09-frame-loop.html">Chapter 9</a> shows how the frame loop guarantees that,
     and <a href="08-descriptors-materials.html">Chapter 8</a> how shaders find these buffers.</p>
@@ -292,7 +292,7 @@ if let Err(error) = write_result {
         allocator.destroy_buffer(staging_buffer, &amp;mut staging_allocation);
     }
     return Err(error.into());
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/texture.rs#L88-L122">src/graphics/texture.rs:88-122</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/texture.rs#L88-L122">src/graphics/texture.rs:88-122</a></figcaption></figure><!--/x-->
     <p>The <code>image</code> crate decodes PNG or JPEG and converts it to 8-bit RGBA. The staging buffer's
     usage is <code>TRANSFER_SRC</code>: it will only ever be copied from. Next, the real image:</p>
     <!--x src/graphics/texture.rs 130-152--><figure class="code"><pre><code class="language-rust">let image_info = vk::ImageCreateInfo {
@@ -317,7 +317,7 @@ let image_alloc_info = vk_mem::AllocationCreateInfo {
     ..Default::default()
 };
 let (image, mut allocation) =
-    unsafe { allocator.create_image(&amp;image_info, &amp;image_alloc_info)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/texture.rs#L130-L152">src/graphics/texture.rs:130-152</a></figcaption></figure><!--/x-->
+    unsafe { allocator.create_image(&amp;image_info, &amp;image_alloc_info)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/texture.rs#L130-L152">src/graphics/texture.rs:130-152</a></figcaption></figure><!--/x-->
     <p><code>OPTIMAL</code> tiling is the GPU's own arrangement. The usage flags say it will be copied into
     (<code>TRANSFER_DST</code>) and read by shaders (<code>SAMPLED</code>). <code>AutoPreferDevice</code> asks
     for device-local memory. It has one mip level only: this renderer doesn't generate smaller mipmap
@@ -342,7 +342,7 @@ let (image, mut allocation) =
         self.command_buffer,
         &amp;vk::DependencyInfo::default().image_memory_barriers(&amp;[to_shader_read]),
     );
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/texture.rs#L213-L230">src/graphics/texture.rs:213-230</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/texture.rs#L213-L230">src/graphics/texture.rs:213-230</a></figcaption></figure><!--/x-->
     <p>Each barrier carries its own pair of pipeline stages: "work at the source stage must finish before work
     at the destination stage may start". The first has no source stage, since nothing has touched the new image
     yet, but the copy may not start until the layout change is done. The second makes fragment shaders wait for
@@ -354,7 +354,7 @@ let (image, mut allocation) =
 self.staging_buffers.push(StagingBuffer {
     buffer: staging_buffer,
     allocation: staging_allocation,
-});</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/texture.rs#L123-L127">src/graphics/texture.rs:123-127</a></figcaption></figure><!--/x-->
+});</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/texture.rs#L123-L127">src/graphics/texture.rs:123-127</a></figcaption></figure><!--/x-->
     <p>When scene construction is done, <code>TextureCache::flush</code> calls <code>finish</code>:</p>
     <!--x src/graphics/texture.rs 246-256--><figure class="code"><pre><code class="language-rust">unsafe {
     device.end_command_buffer(self.command_buffer)?;
@@ -366,7 +366,7 @@ self.staging_buffers.push(StagingBuffer {
     // On failure the cache retains the batch, fence, and staging allocations.
     // App teardown waits for the device before cache cleanup.
     device.wait_for_fences(&amp;[self.fence], true, u64::MAX)?;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/texture.rs#L246-L256">src/graphics/texture.rs:246-256</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/texture.rs#L246-L256">src/graphics/texture.rs:246-256</a></figcaption></figure><!--/x-->
     <p>Submit, then wait on a <dfn>fence</dfn> (a CPU-visible "done" signal) until the GPU finishes, and only
     then <code>flush</code> releases the completed batch through <code>discard</code>, destroying its staging buffers and fence. Stalling like this is fine at start-up, once. The frame loop, in
     <a href="09-frame-loop.html">Chapter 9</a>, uses the same fence idea but avoids waiting.</p>

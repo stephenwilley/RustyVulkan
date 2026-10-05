@@ -113,7 +113,7 @@
             seed: 0x5EED_C0DE,
         }
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/terrain.rs#L165-L185">src/graphics/terrain.rs:165-185</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/terrain.rs#L165-L185">src/graphics/terrain.rs:165-185</a></figcaption></figure><!--/x-->
     <p><code>TerrainSettings</code> is a small <code>Copy</code> struct, passed by value everywhere. The
     natural height combines three noise octaves into a landform, then adds the valley wall:</p>
     <!--x src/graphics/terrain.rs 357-382--><figure class="code"><pre><code class="language-rust">fn natural_terrain_height(x: f32, z: f32, settings: TerrainSettings) -&gt; f32 {
@@ -141,7 +141,7 @@
     let valley_wall = settings.valley_wall_height * climb * outer_slope;
 
     noisy_height + valley_wall
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/terrain.rs#L357-L382">src/graphics/terrain.rs:357-382</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/terrain.rs#L357-L382">src/graphics/terrain.rs:357-382</a></figcaption></figure><!--/x-->
     <p>The "ridge" term folds the medium octave around its midpoint, which turns soft bumps into occasional
     shoulders and gullies. The wall is the product of a rising and a falling smooth step, which gives a rounded
     crest. Its distance uses x⁴ + z⁴ rather than x² + z², which bends the circle towards the square shape of the
@@ -158,7 +158,7 @@ let blend_to_terrain = smoothstep(
     distance_from_pad,
 );
 
-lerp(pad_height, natural_height, blend_to_terrain)</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/terrain.rs#L341-L353">src/graphics/terrain.rs:341-353</a></figcaption></figure><!--/x-->
+lerp(pad_height, natural_height, blend_to_terrain)</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/terrain.rs#L341-L353">src/graphics/terrain.rs:341-353</a></figcaption></figure><!--/x-->
     <p>Inside the pad radius, the height is fixed at whatever the natural ground would be at the pad's centre,
     rather than zero, so the hut sits on a gentle shelf instead of in a dug-out bowl.</p>
 
@@ -174,7 +174,7 @@ fn hash_2d(x: i32, z: i32, seed: u32) -&gt; f32 {
     bits = bits.wrapping_mul(0x846C_A68B);
     bits ^= bits &gt;&gt; 16;
     bits as f32 / u32::MAX as f32
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/terrain.rs#L404-L414">src/graphics/terrain.rs:404-414</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/terrain.rs#L404-L414">src/graphics/terrain.rs:404-414</a></figcaption></figure><!--/x-->
     <p><code>value_noise</code> looks up the four grid points around a position and blends them with a smooth
     step in each direction, giving hills with no visible grid. (A <em>smooth step</em> is an S-shaped curve from 0 to 1 that eases in
     and out, used throughout this file for soft transitions.)</p>
@@ -208,7 +208,7 @@ fn hash_2d(x: i32, z: i32, seed: u32) -&gt; f32 {
         // The mesh UVs increase in +X and -Z, matching the original unit plane.
         let tangent = normalise([1.0, slope_x, 0.0]);
         let bitangent = normalise(cross(normal, tangent));
-        let slope = (slope_x * slope_x + slope_z * slope_z).sqrt();</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/terrain.rs#L280-L301">src/graphics/terrain.rs:280-301</a></figcaption></figure><!--/x-->
+        let slope = (slope_x * slope_x + slope_z * slope_z).sqrt();</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/terrain.rs#L280-L301">src/graphics/terrain.rs:280-301</a></figcaption></figure><!--/x-->
     <p>Each vertex samples the height function, then samples it again one cell either side in x and in z. Those
     <dfn>central differences</dfn> give the slope, and from the slope come a smooth normal, a tangent along +X
     and a bitangent from their cross product (the surface's local axes, which normal-mapped shading needs). So the
@@ -246,7 +246,7 @@ fn ground_color_at(&amp;self, x: f32, z: f32, slope: f32) -&gt; [f32; 3] {
         color[1] * variation,
         color[2] * variation,
     ]
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/terrain.rs#L196-L225">src/graphics/terrain.rs:196-225</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/terrain.rs#L196-L225">src/graphics/terrain.rs:196-225</a></figcaption></figure><!--/x-->
     <p><code>grass_density_at</code> is public because the grass generator (<a href="14-grass.html">Chapter 14</a>) samples the same
     function into a coarse map, so dense grass always stands on dark soil. The rock clearing is the minimum, over all sixteen clusters, of a
     smooth step around each cluster's <code>clearing_radius</code>.</p>
@@ -271,7 +271,7 @@ float pebble = step(0.70, pebble_seed)
                         pebble_distance));
 vec3 pebble_colour = mix(vec3(0.075, 0.065, 0.050), vec3(0.29, 0.27, 0.22),
                          hash21(pebble_cell + 131.2));
-albedo = mix(albedo, pebble_colour, pebble * 0.58);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/assets/shaders/terrain.frag#L72-L87">assets/shaders/terrain.frag:72-87</a></figcaption></figure><!--/x-->
+albedo = mix(albedo, pebble_colour, pebble * 0.58);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/assets/shaders/terrain.frag#L72-L87">assets/shaders/terrain.frag:72-87</a></figcaption></figure><!--/x-->
     <p>The ground is divided into 20 cm cells. A hash decides whether each cell has a pebble (30% do), where in
     the cell it sits, how big it is and what shade. <code>fwidth</code> measures how much the distance changes
     from one pixel to the next and widens the pebble's edge to match, so pebbles soften rather than shimmer as
@@ -291,7 +291,7 @@ albedo = mix(albedo, pebble_colour, pebble * 0.58);</code></pre><figcaption><a h
             offset: [0.0, 0.0],
             rotation_degrees: placement.rotation_degrees,
             size: placement.scale * 1.95,
-        },</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/rocks.rs#L36-L48">src/graphics/rocks.rs:36-48</a></figcaption></figure><!--/x-->
+        },</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/rocks.rs#L36-L48">src/graphics/rocks.rs:36-48</a></figcaption></figure><!--/x-->
     <p>Each anchor in <code>ROCK_CLUSTERS</code> (a constant array in <code>terrain.rs</code>) has a position,
     rotation, scale and starting variant. <code>cluster_members</code> derives three stones from it: a main
     stone at the anchor, and two smaller ones placed at angles nudged by <code>sin</code> and <code>cos</code>
@@ -308,7 +308,7 @@ float atlas_value = dot(atlas, vec3(0.2126, 0.7152, 0.0722));
 vec3 neutral_grey = vec3(mix(0.30, 0.48, atlas_value));
 // Four percent of the atlas chroma is enough to retain slight warm/cool identity
 // without allowing one source model to become visibly brown, green, or blue.
-vec3 albedo = neutral_grey + (atlas - vec3(atlas_value)) * 0.04;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/assets/shaders/rock.frag#L41-L46">assets/shaders/rock.frag:41-46</a></figcaption></figure><!--/x-->
+vec3 albedo = neutral_grey + (atlas - vec3(atlas_value)) * 0.04;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/assets/shaders/rock.frag#L41-L46">assets/shaders/rock.frag:41-46</a></figcaption></figure><!--/x-->
 
     <h2>The sky</h2>
     <p><code>SkyRenderer</code> borrows its panorama from the material manager's texture cache, so the image
@@ -324,7 +324,7 @@ let image_info = vk::DescriptorImageInfo {
     sampler,
     image_view,
     image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/sky.rs#L39-L49">src/graphics/sky.rs:39-49</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/sky.rs#L39-L49">src/graphics/sky.rs:39-49</a></figcaption></figure><!--/x-->
     <p>The sampler and view go into a <code>DescriptorImageInfo</code>, which <code>draw</code> pushes as set 0
     each frame, the same way materials push their textures (<a href="08-descriptors-materials.html">Chapter 8</a>).
     Its pipeline is the <code>new_background</code> variant from <a href="07-pipelines.html">Chapter 7</a>: no
@@ -344,7 +344,7 @@ let image_info = vk::DescriptorImageInfo {
     // inverse projection and rotation-only view matrix.
     vec4 world_position = pc.inverse_view_projection * vec4(screen_position, 1.0, 1.0);
     world_direction = world_position.xyz / world_position.w;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/assets/shaders/sky.vert#L17-L31">assets/shaders/sky.vert:17-31</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/assets/shaders/sky.vert#L17-L31">assets/shaders/sky.vert:17-31</a></figcaption></figure><!--/x-->
     <p>The triangle's corners at (−1, −1), (3, −1) and (−1, 3) cover the whole −1..1 screen with one triangle,
     which is a little cheaper than two triangles meeting along a diagonal. For each corner, the inverse of
     projection × view turns a point on the far plane back into a world-space direction. The view has its
@@ -354,7 +354,7 @@ let image_info = vk::DescriptorImageInfo {
     rotation_only_view.w = Vector4::new(0.0, 0.0, 0.0, 1.0);
     let inverse_view_projection = (*camera.get_projection() * rotation_only_view)
         .invert()
-        .unwrap_or_else(Matrix4::identity);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/sky.rs#L162-L167">src/graphics/sky.rs:162-167</a></figcaption></figure><!--/x-->
+        .unwrap_or_else(Matrix4::identity);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/sky.rs#L162-L167">src/graphics/sky.rs:162-167</a></figcaption></figure><!--/x-->
     <p>The fragment shader converts the interpolated direction to longitude and latitude, the panorama's two
     texture coordinates:</p>
     <!--x assets/shaders/sky.frag 22-28--><figure class="code"><pre><code class="language-glsl">void main() {
@@ -363,7 +363,7 @@ let image_info = vk::DescriptorImageInfo {
     float latitude = acos(clamp(direction.y, -1.0, 1.0)) / PI;
     vec2 uv = vec2(fract(longitude + pc.settings.x / TAU), latitude);
     out_color = texture(sky_panorama, uv);
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/assets/shaders/sky.frag#L22-L28">assets/shaders/sky.frag:22-28</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/assets/shaders/sky.frag#L22-L28">assets/shaders/sky.frag:22-28</a></figcaption></figure><!--/x-->
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
       <p>The OpenGL classic was a cube map drawn on a cube around the camera with depth writes off. The idea
       here is the same, with a panorama instead of six faces and a fullscreen triangle instead of a cube. A

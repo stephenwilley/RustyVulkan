@@ -137,7 +137,7 @@
     };
 
     // 3 - Create the layout as before
-    let vk_layout = unsafe { device.create_pipeline_layout(&amp;layout_info, None)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/pipeline.rs#L87-L113">src/graphics/pipeline.rs:87-94,97-113</a></figcaption></figure><!--/x-->
+    let vk_layout = unsafe { device.create_pipeline_layout(&amp;layout_info, None)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/pipeline.rs#L87-L113">src/graphics/pipeline.rs:87-94,97-113</a></figcaption></figure><!--/x-->
     <p>The push-constant range is 144 bytes: two 4×4 matrices and a <code>vec4</code>, exactly the
     <code>Push</code> block of <code>main.vert</code>, visible to both shader stages. This is a renderer requirement,
     not a universal Vulkan allowance: Vulkan 1.3 guarantees only 128 bytes. Device selection checks
@@ -170,7 +170,7 @@ pub fn attribute_descriptions() -&gt; [vk::VertexInputAttributeDescription; 6] {
             location: 0,
             format: vk::Format::R32G32B32_SFLOAT,
             offset: offset_of!(Vertex, pos) as u32,
-        },</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/mesh.rs#L33-L50">src/graphics/mesh.rs:33-50</a></figcaption></figure><!--/x-->
+        },</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/mesh.rs#L33-L50">src/graphics/mesh.rs:33-50</a></figcaption></figure><!--/x-->
     <p>The remaining five attributes follow the same pattern for <code>normal</code>, <code>color</code>,
     <code>uv</code>, <code>tangent</code> and <code>bitangent</code>, at locations 1–5 in that order, matching
     <code>main.vert</code>. <code>offset_of!</code> computes each field's offset from
@@ -189,7 +189,7 @@ let input_assembly = vk::PipelineInputAssemblyStateCreateInfo {
     topology: vk::PrimitiveTopology::TRIANGLE_LIST,
     primitive_restart_enable: vk::FALSE,
     ..Default::default()
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/pipeline.rs#L184-L196">src/graphics/pipeline.rs:184-196</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/pipeline.rs#L184-L196">src/graphics/pipeline.rs:184-196</a></figcaption></figure><!--/x-->
     <p>The grass passes in a second, per-instance binding through the same function
     (<a href="14-grass.html">Chapter 14</a>), which is why the descriptions are parameters.</p>
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
@@ -211,7 +211,7 @@ let dynamic_state = vk::PipelineDynamicStateCreateInfo {
     dynamic_state_count: dynamic_states.len() as u32,
     p_dynamic_states: dynamic_states.as_ptr(),
     ..Default::default()
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/pipeline.rs#L197-L209">src/graphics/pipeline.rs:197-209</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/pipeline.rs#L197-L209">src/graphics/pipeline.rs:197-209</a></figcaption></figure><!--/x-->
     <p>The pipeline promises one viewport and one scissor rectangle but leaves their values open. The main
     pass supplies them each frame from the current swapchain size:</p>
     <!--x src/vulkan/main_pass.rs 130-135--><figure class="code"><pre><code class="language-rust">let scissor = vk::Rect2D {
@@ -219,7 +219,7 @@ let dynamic_state = vk::PipelineDynamicStateCreateInfo {
     extent,
 };
 device.cmd_set_viewport(cmd, 0, &amp;[viewport]);
-device.cmd_set_scissor(cmd, 0, &amp;[scissor]);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/main_pass.rs#L130-L135">src/vulkan/main_pass.rs:130-135</a></figcaption></figure><!--/x-->
+device.cmd_set_scissor(cmd, 0, &amp;[scissor]);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/vulkan/main_pass.rs#L130-L135">src/vulkan/main_pass.rs:130-135</a></figcaption></figure><!--/x-->
     <p>Without this, every pipeline would bake in a window size and need rebuilding on every resize.</p>
 
     <h2>Rasterizer and multisampling</h2>
@@ -241,7 +241,7 @@ let multisampling = vk::PipelineMultisampleStateCreateInfo {
     rasterization_samples: vk::SampleCountFlags::from_raw(engine_settings.msaa_samples),
     sample_shading_enable: vk::FALSE,
     ..Default::default()
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/pipeline.rs#L211-L229">src/graphics/pipeline.rs:211-229</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/pipeline.rs#L211-L229">src/graphics/pipeline.rs:211-229</a></figcaption></figure><!--/x-->
     <ul>
       <li><code>polygon_mode</code> switches to lines when the UI's wireframe toggle is on, unless this pipeline
       opted out (the sky would otherwise become a single outlined triangle). Vulkan requires
@@ -278,7 +278,7 @@ let multisampling = vk::PipelineMultisampleStateCreateInfo {
     src_alpha_blend_factor: vk::BlendFactor::ONE,
     dst_alpha_blend_factor: vk::BlendFactor::ZERO,
     alpha_blend_op: vk::BlendOp::ADD,
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/pipeline.rs#L232-L248">src/graphics/pipeline.rs:232-248</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/pipeline.rs#L232-L248">src/graphics/pipeline.rs:232-248</a></figcaption></figure><!--/x-->
     <p>When blending is enabled, this is classic "over" compositing: new colour × its alpha, plus existing
     colour × (1 − alpha). The colour write mask lets all four channels through either way.</p>
     <!--x src/graphics/pipeline.rs 267-274,276-280--><figure class="code"><pre><code class="language-rust">let depth_stencil = vk::PipelineDepthStencilStateCreateInfo {
@@ -294,7 +294,7 @@ let multisampling = vk::PipelineMultisampleStateCreateInfo {
     front: Default::default(),
     back: Default::default(),
     ..Default::default()
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/pipeline.rs#L267-L280">src/graphics/pipeline.rs:267-274,276-280</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/pipeline.rs#L267-L280">src/graphics/pipeline.rs:267-274,276-280</a></figcaption></figure><!--/x-->
     <p>Depth testing keeps the fragment nearest the camera (<code>LESS</code>). Depth runs from 0 at the near
     plane to 1 at the far: the viewport above sets <code>min_depth</code> 0 and <code>max_depth</code> 1, and
     the projection matrix must produce clip-space depth in 0..1, not OpenGL's −1..1
@@ -338,7 +338,7 @@ let pipelines = unsafe {
     device
         .create_graphics_pipelines(pipeline_cache, &amp;[pipeline_info], None)
         .map_err(|(_, e)| e)?
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/pipeline.rs#L282-L312">src/graphics/pipeline.rs:282-312</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/pipeline.rs#L282-L312">src/graphics/pipeline.rs:282-312</a></figcaption></figure><!--/x-->
     <p><code>PipelineRenderingCreateInfo</code> is the dynamic-rendering piece: one colour attachment in the
     swapchain's format, and a depth attachment in <code>D32_SFLOAT</code>. It's chained on through
     <code>p_next</code> by a raw pointer cast, the hand-written equivalent of <code>push_next</code>
@@ -358,7 +358,7 @@ let shader_stage_create_infos: Vec&lt;_&gt; = shader_infos
     .iter()
     .zip(&amp;mut shader_modules)
     .map(|(s, module)| s.to_create_info(module))
-    .collect();</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/pipeline.rs#L257-L265">src/graphics/pipeline.rs:257-265</a></figcaption></figure><!--/x-->
+    .collect();</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/pipeline.rs#L257-L265">src/graphics/pipeline.rs:257-265</a></figcaption></figure><!--/x-->
     <aside class="callout rust"><p class="callout-title">Rust note · two small idioms</p>
       <p><code>iter().map(…).collect()</code> transforms each element and gathers the results. The
       <code>Vec&lt;_&gt;</code> annotation on the variable tells <code>collect</code> what to build, and
@@ -384,7 +384,7 @@ let shader_stage_create_infos: Vec&lt;_&gt; = shader_infos
         // Wireframe affects pipelines; ensure rebuild next frame
         self.pipeline_generation = self.pipeline_generation.saturating_add(1);
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L714-L724">src/vulkan/base.rs:714-724</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/vulkan/base.rs#L714-L724">src/vulkan/base.rs:714-724</a></figcaption></figure><!--/x-->
     <p>At the start of each frame, the render graph compares that counter with the last one it saw. If it has
     changed, the graph waits for the GPU once and asks every owner to rebuild:</p>
     <!--x src/vulkan/render_graph.rs 219-230,240-241--><figure class="code"><pre><code class="language-rust">// Rebuild pipelines only when engine-signaled generation changes (swapchain/MSAA/wireframe)
@@ -401,7 +401,7 @@ if swap_gen != self.swap_gen_seen {
     app.material_manager.recreate_pipelines(vb)?;
 // ...
     self.swap_gen_seen = swap_gen;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L219-L241">src/vulkan/render_graph.rs:219-230,240-241</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/vulkan/render_graph.rs#L219-L241">src/vulkan/render_graph.rs:219-230,240-241</a></figcaption></figure><!--/x-->
     <p>Each material's rebuild goes through <code>Pipeline::recreate</code>:</p>
     <!--x src/graphics/pipeline.rs 344-359--><figure class="code"><pre><code class="language-rust">let old_pipeline = self.vk_pipeline;
 self.create_graphics_pipeline(
@@ -418,7 +418,7 @@ self.create_graphics_pipeline(
 unsafe {
     device.destroy_pipeline(old_pipeline, None);
 }
-Ok(())</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/pipeline.rs#L344-L359">src/graphics/pipeline.rs:344-359</a></figcaption></figure><!--/x-->
+Ok(())</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/pipeline.rs#L344-L359">src/graphics/pipeline.rs:344-359</a></figcaption></figure><!--/x-->
     <p>The old pipeline is destroyed only after its replacement exists. If creation fails, <code>?</code>
     returns early and <code>self</code> still holds the old, valid handle, a safer arrangement than the swapchain's (<a href="04-swapchain.html">Chapter 4</a>), whose old handle is
     unusable once replacement has been attempted.</p>

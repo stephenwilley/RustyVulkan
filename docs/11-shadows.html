@@ -102,7 +102,7 @@ fn cascade_splits(camera: &amp;Camera, shadow_distance: f32) -&gt; [f32; SHADOW_
         let linear = near + (far - near) * fraction;
         lambda * logarithmic + (1.0 - lambda) * linear
     })
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shadow_math.rs#L18-L30">src/graphics/shadow_math.rs:18-30</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/shadow_math.rs#L18-L30">src/graphics/shadow_math.rs:18-30</a></figcaption></figure><!--/x-->
     <p>Evenly spaced splits waste the near cascades on too much distance; purely logarithmic ones (each slice a
     fixed multiple of the last) squeeze the first slice to almost nothing. This blends the two, 65% logarithmic,
     over the range from the camera's near plane to the shadow distance (75 m by default, set in
@@ -131,7 +131,7 @@ fn cascade_splits(camera: &amp;Camera, shadow_distance: f32) -&gt; [f32; SHADOW_
         slice_near = slice_far;
         cascade
     })
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shadow_math.rs#L33-L47">src/graphics/shadow_math.rs:33-47</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/shadow_math.rs#L33-L47">src/graphics/shadow_math.rs:33-47</a></figcaption></figure><!--/x-->
 
     <h2>Fitting a light box around one slice</h2>
     <p><code>fit_frustum_slice</code> starts by finding the eight corners of the slice in world space, using the
@@ -155,7 +155,7 @@ let light_up = if direction.y.abs() &gt; 0.99 {
 };
 // Orientation only: a light view that followed the slice would move the texel grid
 // with the camera, defeating the snapping below.
-let light_view = Matrix4::look_at_rh(Point3::origin(), Point3::from_vec(direction), light_up);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shadow_math.rs#L75-L94">src/graphics/shadow_math.rs:75-94</a></figcaption></figure><!--/x-->
+let light_view = Matrix4::look_at_rh(Point3::origin(), Point3::from_vec(direction), light_up);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/shadow_math.rs#L75-L94">src/graphics/shadow_math.rs:75-94</a></figcaption></figure><!--/x-->
     <p>The sphere's radius sets how far the box reaches towards the sun, below. The light view itself
     deliberately depends only on the sun's direction: it sits at the world origin looking along the sunlight,
     and never moves with the camera.</p>
@@ -164,7 +164,7 @@ let half_extent =
     ((max_light.x - min_light.x).max(max_light.y - min_light.y) * 0.51).max(0.001);
 let units_per_texel = (half_extent * 2.0 / shadow_res.max(1) as f32).max(1e-6);
 let center_x = ((min_light.x + max_light.x) * 0.5 / units_per_texel).floor() * units_per_texel;
-let center_y = ((min_light.y + max_light.y) * 0.5 / units_per_texel).floor() * units_per_texel;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shadow_math.rs#L108-L113">src/graphics/shadow_math.rs:108-113</a></figcaption></figure><!--/x-->
+let center_y = ((min_light.y + max_light.y) * 0.5 / units_per_texel).floor() * units_per_texel;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/shadow_math.rs#L108-L113">src/graphics/shadow_math.rs:108-113</a></figcaption></figure><!--/x-->
     <p>In that fixed light space, the slice's corners give a rectangle; the box is made square, sized to the
     larger span, and its centre is <em>snapped</em> to a whole number of texels. Because the light space never
     moves, the snapped grid is fixed in the world: as the camera walks, the box jumps by exactly one texel at a
@@ -191,7 +191,7 @@ ShadowCascade {
     world_to_light_clip,
     view_to_light_clip: world_to_light_clip * inv_view,
     far_distance: slice_far,
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shadow_math.rs#L115-L136">src/graphics/shadow_math.rs:115-136</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/shadow_math.rs#L115-L136">src/graphics/shadow_math.rs:115-136</a></figcaption></figure><!--/x-->
     <p>The depth range reaches well beyond the slice towards the sun (by the sphere's radius plus a metre), so a
     tall object outside the slice can still cast a shadow into it. cgmath builds OpenGL-style matrices, so the same fixed matrix the
     camera uses (<a href="12-main-pass-scene.html">Chapter 12</a>) remaps depth from OpenGL's −1..1 to Vulkan's
@@ -207,7 +207,7 @@ ShadowCascade {
     binding: 0,
     format: vk::Format::R32G32B32_SFLOAT,
     offset: 0,
-}];</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/shadow_pass.rs#L72-L77">src/vulkan/shadow_pass.rs:72-77</a></figcaption></figure><!--/x-->
+}];</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/vulkan/shadow_pass.rs#L72-L77">src/vulkan/shadow_pass.rs:72-77</a></figcaption></figure><!--/x-->
     <p>It still steps through the full 68-byte <code>Vertex</code> (the binding stride), but reads only the
     position at offset 0. The vertex shader is the shortest in the project:</p>
     <!--x assets/shaders/shadow_depth.vert 1-11--><figure class="code"><pre><code class="language-glsl">#version 450
@@ -220,7 +220,7 @@ layout(push_constant) uniform PushConstants {
 
 void main() {
     gl_Position = push_constants.mvp * vec4(inPosition, 1.0);
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/assets/shaders/shadow_depth.vert#L1-L11">assets/shaders/shadow_depth.vert:1-11</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/assets/shaders/shadow_depth.vert#L1-L11">assets/shaders/shadow_depth.vert:1-11</a></figcaption></figure><!--/x-->
     <p>With no fragment shader, the hardware writes depth and nothing else, which is as cheap as rendering gets.
     The rasterizer state carries the two shadow-specific settings:</p>
     <!--x src/vulkan/shadow_pass.rs 115-132--><figure class="code"><pre><code class="language-rust">// The light projection has no Y flip (the camera's does), so winding is reversed
@@ -240,7 +240,7 @@ let rasterizer = vk::PipelineRasterizationStateCreateInfo {
     depth_bias_clamp: 0.0,
     line_width: 1.0,
     ..Default::default()
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/shadow_pass.rs#L115-L132">src/vulkan/shadow_pass.rs:115-132</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/vulkan/shadow_pass.rs#L115-L132">src/vulkan/shadow_pass.rs:115-132</a></figcaption></figure><!--/x-->
     <p><dfn>Depth bias</dfn> pushes the stored depths slightly further from the light, more so on surfaces
     seen at a glancing angle (the slope factor). Without it, a lit surface compares against its own depth, loses
     to limited precision on a patchy, angle-dependent basis, and is covered in stripes known as <em>shadow
@@ -283,7 +283,7 @@ let rasterizer = vk::PipelineRasterizationStateCreateInfo {
             ctx.mesh_manager.meshes[part.mesh_id].record(device, cmd);
         }
     }
-    device.cmd_end_rendering(cmd);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/shadow_pass.rs#L243-L276">src/vulkan/shadow_pass.rs:243-276</a></figcaption></figure><!--/x-->
+    device.cmd_end_rendering(cmd);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/vulkan/shadow_pass.rs#L243-L276">src/vulkan/shadow_pass.rs:243-276</a></figcaption></figure><!--/x-->
     <p><code>ShadowPushConstants</code> stores just one matrix on the stack; <code>bytemuck::bytes_of</code> passes its bytes without a per-draw allocation. The matrix is light-space projection × model, for each object part. Note that the
     grass isn't drawn here: dense vegetation doesn't cast shadows into the map in this renderer.</p>
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
@@ -309,7 +309,7 @@ let rasterizer = vk::PipelineRasterizationStateCreateInfo {
     vec3 ndc = lightPos.xyz / lightPos.w;
     // Convert to [0,1]
     vec2 uv = ndc.xy * 0.5 + 0.5;
-    float depth = ndc.z; // [0,1] inside light frustum after Vulkan correction</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/assets/shaders/main.frag#L27-L42">assets/shaders/main.frag:27-33,39-42</a></figcaption></figure><!--/x-->
+    float depth = ndc.z; // [0,1] inside light frustum after Vulkan correction</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/assets/shaders/main.frag#L27-L42">assets/shaders/main.frag:27-33,39-42</a></figcaption></figure><!--/x-->
     <p>Then come the PCF taps:</p>
     <!--x assets/shaders/main.frag 57-78--><figure class="code"><pre><code class="language-glsl">    // Manual PCF with a few jittered taps (compat path for platforms without compare samplers).
     // Poisson-ish offsets (in texels):
@@ -332,7 +332,7 @@ let rasterizer = vk::PipelineRasterizationStateCreateInfo {
         sum += (depth - bias &lt;= sm) ? 1.0 : 0.4;
     }
     return sum / 6.0;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/assets/shaders/main.frag#L57-L78">assets/shaders/main.frag:57-78</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/assets/shaders/main.frag#L57-L78">assets/shaders/main.frag:57-78</a></figcaption></figure><!--/x-->
     <p>Each tap samples the cascade's layer of the array at a small offset, measured in texels, and compares the
     stored depth with the fragment's own (minus a tiny extra bias). Lit taps count 1, shadowed ones 0.4, so a
     point in full shadow keeps 40% of the sun's light: a simple stand-in for light bounced in from the sky. Points outside every cascade, or outside
@@ -371,7 +371,7 @@ fn moving_the_camera_shifts_cascades_by_whole_texels() {
             );
         }
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shadow_math.rs#L188-L210">src/graphics/shadow_math.rs:188-210</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ef4cbdc10add41b31b97445cc20b7963b3d10c18/src/graphics/shadow_math.rs#L188-L210">src/graphics/shadow_math.rs:188-210</a></figcaption></figure><!--/x-->
     <p>The others check that the splits increase and end at the shadow distance plus the near plane, that every
     cascade still contains all eight corners of its slice, and that no matrix element is infinite or NaN.</p>
   </section>

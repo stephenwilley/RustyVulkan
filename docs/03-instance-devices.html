@@ -136,7 +136,7 @@ let layer_name_ptrs: Vec&lt;*const i8&gt; = Vec::new();
         }
     }
     println!("✅ Validation layers available and requested.");
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base/setup.rs#L460-L484">src/vulkan/base/setup.rs:460-484</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L460-L484">src/vulkan/base/setup.rs:460-484</a></figcaption></figure><!--/x-->
     <p><code>Entry::linked()</code> gives the function table for the loader linked in at build time. Then, in
     a debug build, the code asks the loader which layers are installed. If the validation layer is missing, it
     fails with a clear message rather than silently running unchecked (so debug runs need the layer installed,
@@ -172,7 +172,7 @@ let ext_names =
 let mut extension_ptrs: Vec&lt;*const i8&gt; = ext_names.to_vec();
 
 #[cfg(debug_assertions)]
-extension_ptrs.push(ash::ext::debug_utils::NAME.as_ptr());</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base/setup.rs#L20-L36">src/vulkan/base/setup.rs:20-36</a></figcaption></figure><!--/x-->
+extension_ptrs.push(ash::ext::debug_utils::NAME.as_ptr());</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L20-L36">src/vulkan/base/setup.rs:20-36</a></figcaption></figure><!--/x-->
     <p><code>enumerate_required_extensions</code> comes from the <code>ash-window</code> crate. It asks the
     windowing system which surface extensions this platform needs (on macOS, the generic surface extension
     plus a Metal-specific one), so the code never names them. In debug builds it adds
@@ -184,7 +184,7 @@ let mut instance_flags = vk::InstanceCreateFlags::empty();
 if supports_portability_enum {
     extension_ptrs.push(vk::KHR_PORTABILITY_ENUMERATION_NAME.as_ptr());
     instance_flags |= vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base/setup.rs#L46-L52">src/vulkan/base/setup.rs:46-52</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L46-L52">src/vulkan/base/setup.rs:46-52</a></figcaption></figure><!--/x-->
     <p>Some Vulkan implementations, MoltenVK being the best known, run on top of another API and can't support
     every part of the specification. Vulkan calls these <dfn>portability</dfn> drivers. To stop programs
     accidentally using one, the loader hides them unless the instance opts in with this flag and extension.
@@ -206,7 +206,7 @@ let create_info = vk::DebugUtilsMessengerCreateInfoEXT {
     pfn_user_callback: Some(vulkan_debug_callback),
     ..Default::default()
 };
-let messenger = unsafe { loader.create_debug_utils_messenger(&amp;create_info, None)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base/setup.rs#L707-L718">src/vulkan/base/setup.rs:707-718</a></figcaption></figure><!--/x-->
+let messenger = unsafe { loader.create_debug_utils_messenger(&amp;create_info, None)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L707-L718">src/vulkan/base/setup.rs:707-718</a></figcaption></figure><!--/x-->
     <p>The callback itself just formats the message and prints it to standard error. Returning
     <code>vk::FALSE</code> tells the layer not to abort the Vulkan call that triggered the message:</p>
     <!--x src/vulkan/base.rs 83-91,105-108--><figure class="code"><pre><code class="language-rust">#[cfg(debug_assertions)]
@@ -222,7 +222,7 @@ unsafe extern "system" fn vulkan_debug_callback(
         eprintln!("{} {} {:?}", severity, ty, message);
     }
     vk::FALSE
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base.rs#L83-L108">src/vulkan/base.rs:83-108</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base.rs#L83-L108">src/vulkan/base.rs:83-108</a></figcaption></figure><!--/x-->
     <aside class="callout rust"><p class="callout-title">Rust note · a function C can call</p>
       <p><code>extern "system"</code> tells the compiler to use the platform's C calling convention, so that
       Vulkan (C code) can call this Rust function through a pointer. Its parameters are raw C types: a raw
@@ -316,7 +316,7 @@ unsafe extern "system" fn vulkan_debug_callback(
     }
 }
 
-Err("No Vulkan 1.3 device supports graphics, presentation, dynamic rendering, synchronization2, push descriptors, maintenance5, and at least 144 bytes of push constants".into())</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base/setup.rs#L96-L170">src/vulkan/base/setup.rs:96-170</a></figcaption></figure><!--/x-->
+Err("No Vulkan 1.3 device supports graphics, presentation, dynamic rendering, synchronization2, push descriptors, maintenance5, and at least 144 bytes of push constants".into())</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L96-L170">src/vulkan/base/setup.rs:96-170</a></figcaption></figure><!--/x-->
     <p>For each candidate, it applies four tests in turn and moves to the next GPU (<code>continue</code>) on
     the first failure:</p>
     <ol>
@@ -347,7 +347,7 @@ let supported_features = unsafe { instance.get_physical_device_features(physical
 let supports_wireframe = supported_features.fill_mode_non_solid == vk::TRUE;
 let supports_multi_draw_indirect = supported_features.multi_draw_indirect == vk::TRUE;
 let supports_draw_indirect_first_instance =
-    supported_features.draw_indirect_first_instance == vk::TRUE;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base/setup.rs#L514-L520">src/vulkan/base/setup.rs:514-520</a></figcaption></figure><!--/x-->
+    supported_features.draw_indirect_first_instance == vk::TRUE;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L514-L520">src/vulkan/base/setup.rs:514-520</a></figcaption></figure><!--/x-->
     <p>The supported multisample counts for colour and depth are intersected, giving the anti-aliasing options
     the UI can offer (<a href="10-render-graph.html">Chapter 10</a>). Multi-draw indirect, which lets one
     command issue many draws, and indirect "first instance", which lets those commands pick out a range of
@@ -409,7 +409,7 @@ let device_create_info = vk::DeviceCreateInfo {
 let device = unsafe { instance.create_device(physical_device, &amp;device_create_info, None)? };
 let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 println!("✅ Logical device and graphics queue ready");
-Ok((device, queue))</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base/setup.rs#L191-L261">src/vulkan/base/setup.rs:191-261</a></figcaption></figure><!--/x-->
+Ok((device, queue))</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L191-L261">src/vulkan/base/setup.rs:191-261</a></figcaption></figure><!--/x-->
     <p>Reading it in order:</p>
     <ul>
       <li><strong>Features.</strong> Multi-draw indirect, indirect first-instance and non-solid fill mode
@@ -458,7 +458,7 @@ Ok((device, queue))</code></pre><figcaption><a href="https://github.com/stephenw
 
   <nav class="pager"><a class="prev" href="02-rust-meets-c.html">← 02 · Rust meets a C API</a><a class="next" href="04-swapchain.html">04 · Surfaces and the swapchain →</a></nav>
 </main>
-<footer class="site">Based on commit <code>93972f2</code>. · <a href="index.html#contents">Contents</a></footer>
+<footer class="site">Based on commit <code>ffbaa49</code>. · <a href="index.html#contents">Contents</a></footer>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>

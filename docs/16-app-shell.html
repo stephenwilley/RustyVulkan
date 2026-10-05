@@ -103,7 +103,7 @@ pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
         Some(error) =&gt; Err(error),
         None =&gt; Ok(()),
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/app/app.rs#L157-L166">src/app/app.rs:157-166</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/app.rs#L157-L166">src/app/app.rs:157-166</a></figcaption></figure><!--/x-->
     <p><code>ControlFlow::Poll</code> keeps the loop spinning instead of sleeping until the next input event,
     which suits a renderer that wants to draw continuously. <code>run_app</code> blocks until the loop exits; any
     fatal error stored along the way is then returned to <code>main</code>, which turns it into a failure exit
@@ -152,7 +152,7 @@ pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     self.render_graph.add(RenderPassNode::Shadow);
     self.render_graph.add(RenderPassNode::Main);
     let show = self.vulkan_base.as_ref().unwrap().engine_settings.show_ui;
-    self.render_graph.set_pass_enabled(RenderPassNode::UI, show);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/app/app.rs#L469-L523">src/app/app.rs:469-523</a></figcaption></figure><!--/x-->
+    self.render_graph.set_pass_enabled(RenderPassNode::UI, show);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/app.rs#L469-L523">src/app/app.rs:469-523</a></figcaption></figure><!--/x-->
     <p>The order is the order of the guide: window, ImGui context, the Vulkan backend
     (<a href="03-instance-devices.html">Chapter 3</a>), the ImGui renderer, the scene
     (<a href="12-main-pass-scene.html">Chapter 12</a>), and finally the passes. The guard at the top matters
@@ -173,7 +173,7 @@ pub fn capture_first_person_cursor(window: &amp;Window) {
             .ok();
     }
     window.set_cursor_visible(false);
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/app/app.rs#L43-L56">src/app/app.rs:43-56</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/app.rs#L43-L56">src/app/app.rs:43-56</a></figcaption></figure><!--/x-->
 
     <h2>Events</h2>
     <!--x src/app/app.rs 526-548--><figure class="code"><pre><code class="language-rust">fn device_event(
@@ -198,7 +198,7 @@ fn about_to_wait(&amp;mut self, _event_loop: &amp;ActiveEventLoop) {
     if let Some(window) = &amp;self.window {
         window.request_redraw();
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/app/app.rs#L526-L548">src/app/app.rs:526-548</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/app.rs#L526-L548">src/app/app.rs:526-548</a></figcaption></figure><!--/x-->
     <p><code>about_to_wait</code> runs when the loop has handled all pending events. Requesting a redraw every
     time is what keeps frames coming; each <code>RedrawRequested</code> then moves the camera and runs the render
     graph (<a href="09-frame-loop.html">Chapter 9</a>). Mouse look uses <em>device</em> events, the raw relative
@@ -212,7 +212,7 @@ pub fn handle_device_event(app: &amp;mut App, event: DeviceEvent) {
         let sensitivity = 0.1;
         app.camera.rotate(dx * sensitivity, -dy * sensitivity);
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/app/input.rs#L40-L49">src/app/input.rs:40-49</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/input.rs#L40-L49">src/app/input.rs:40-49</a></figcaption></figure><!--/x-->
     <p>Window events are first forwarded to ImGui, so it sees every click and key press, before the app
     handles them itself:</p>
     <!--x src/app/input.rs 58-68--><figure class="code"><pre><code class="language-rust">if let Some(win) = &amp;app.window {
@@ -225,7 +225,7 @@ pub fn handle_device_event(app: &amp;mut App, event: DeviceEvent) {
             event: event.clone(),
         };
         platform.handle_event(imgui.io_mut(), win, &amp;full_event);
-    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/app/input.rs#L58-L68">src/app/input.rs:58-68</a></figcaption></figure><!--/x-->
+    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/input.rs#L58-L68">src/app/input.rs:58-68</a></figcaption></figure><!--/x-->
     <p>Two details in the window-event handler are worth noting. Losing focus clears all movement keys, because
     the window may never receive their release events. And <strong>U</strong> uses a small latch so that holding
     the key down, which sends repeated "pressed" events, toggles the pointer only once:</p>
@@ -240,7 +240,7 @@ pub fn handle_device_event(app: &amp;mut App, event: DeviceEvent) {
 }
 (Code(KeyCode::KeyU), Released) =&gt; {
     app.input.cursor_toggle_locked = false;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/app/input.rs#L150-L161">src/app/input.rs:150-161</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/input.rs#L150-L161">src/app/input.rs:150-161</a></figcaption></figure><!--/x-->
     <p>Resize handling was covered with the swapchain (<a href="04-swapchain.html">Chapter 4</a>): it records a
     request, updates the camera's aspect ratio, and ignores zero-sized (minimised) windows.</p>
     <aside class="callout rust"><p class="callout-title">Rust note · an exit flag behind an Arc</p>
@@ -281,7 +281,7 @@ install_name_tool -change "$VULKAN_LINK_REFERENCE" \
 codesign --force --sign - "$FRAMEWORKS_DIR/libassimp.6.dylib"
 codesign --force --sign - "$FRAMEWORKS_DIR/libvulkan.1.dylib"
 codesign --force --sign - "$FRAMEWORKS_DIR/libvulkan_kosmickrisp.dylib"
-codesign --force --deep --sign - "$APP_BUNDLE"</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/scripts/package_macos.sh#L46-L80">scripts/package_macos.sh:46-80</a></figcaption></figure><!--/x-->
+codesign --force --deep --sign - "$APP_BUNDLE"</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/scripts/package_macos.sh#L46-L80">scripts/package_macos.sh:46-80</a></figcaption></figure><!--/x-->
     <ul>
       <li>The executable goes in <code>Contents/MacOS</code>, the assets and an installable client driver (ICD) manifest in
       <code>Contents/Resources</code>, and the three libraries in <code>Contents/Frameworks</code>.</li>
@@ -301,7 +301,7 @@ codesign --force --deep --sign - "$APP_BUNDLE"</code></pre><figcaption><a href="
         "library_path": "../../../Frameworks/libvulkan_kosmickrisp.dylib",
         "api_version": "1.4.0"
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/packaging/macos/libkosmickrisp_icd.json#L1-L7">packaging/macos/libkosmickrisp_icd.json:1-7</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/packaging/macos/libkosmickrisp_icd.json#L1-L7">packaging/macos/libkosmickrisp_icd.json:1-7</a></figcaption></figure><!--/x-->
     <p>That's the file <code>main.rs</code> points <code>VK_DRIVER_FILES</code> at when it finds itself running
     inside a bundle (<a href="01-why-vulkan.html">Chapter 1</a>), completing the loop from the very first
     chapter. <code>Info.plist</code> supplies the bundle's name, identifier, minimum macOS version (26) and
@@ -339,7 +339,7 @@ VK_KHRONOS_VALIDATION_GPUAV_ENABLE=true cargo run   # GPU-side checks, e.g. indi
 
   <nav class="pager"><a class="prev" href="15-imgui.html">← 15 · The ImGui overlay</a><a class="next" href="index.html#contents">Back to contents →</a></nav>
 </main>
-<footer class="site">Based on commit <code>93972f2</code>. · <a href="index.html#contents">Contents</a></footer>
+<footer class="site">Based on commit <code>ffbaa49</code>. · <a href="index.html#contents">Contents</a></footer>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>

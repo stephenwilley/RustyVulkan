@@ -128,7 +128,7 @@ pub struct Transform {
         let r = Matrix4::from(self.rotation);
         let s = Matrix4::from_scale(self.scale);
         t * r * s
-    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/app/scene.rs#L13-L67">src/app/scene.rs:13-67</a></figcaption></figure><!--/x-->
+    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/scene.rs#L13-L67">src/app/scene.rs:13-67</a></figcaption></figure><!--/x-->
     <p>A transform is translate × rotate × scale, with a quaternion for rotation and a single uniform scale.
     The uniform scale is a deliberate restriction: the shaders transform normals with the plain model-view
     matrix, which is only correct without stretching (<a href="06-shaders.html">Chapter 6</a>).</p>
@@ -149,7 +149,7 @@ pub struct SceneObject {
     pub parts: Vec&lt;ScenePart&gt;,
     /// Whether this object should be drawn
     pub visible: bool,
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/app/scene.rs#L80-L97">src/app/scene.rs:80-97</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/scene.rs#L80-L97">src/app/scene.rs:80-97</a></figcaption></figure><!--/x-->
     <p>Both types derive <code>Clone</code>, and <code>ScenePart</code> is even <code>Copy</code>, because
     all it holds is two indices and a transform. Cloning a rock's parts to place another copy of it costs a few
     bytes.</p>
@@ -164,7 +164,7 @@ pub struct SceneObject {
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
     );
     self.projection = OPENGL_TO_VULKAN_MATRIX * proj;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/camera.rs#L73-L82">src/graphics/camera.rs:73-82</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/camera.rs#L73-L82">src/graphics/camera.rs:73-82</a></figcaption></figure><!--/x-->
     <p>cgmath's <code>perspective</code> builds an OpenGL-style matrix. Negating <code>proj.y.y</code> flips Y
     so the image comes out upright under Vulkan's Y-down convention. Without it, the mirror image would also
     reverse triangle winding; with it, OpenGL's counter-clockwise front faces stay counter-clockwise (<a href="07-pipelines.html">Chapter 7</a>). The fixed
@@ -224,7 +224,7 @@ pub struct SceneObject {
     debug_assert_eq!(offset, bytes.len());
 
     bytes
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/main_pass.rs#L256-L292">src/vulkan/main_pass.rs:256-292</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/main_pass.rs#L256-L292">src/vulkan/main_pass.rs:256-292</a></figcaption></figure><!--/x-->
     <p>GLSL expects matrices column by column. Transposing and then reading <code>[col][row]</code> with
     <code>row</code> as the outer loop emits each original column in turn, which is that column-major layout
     (a roundabout route to it, given cgmath already stores columns). The block is a fixed <code>[u8; 144]</code> on the stack, so the
@@ -267,7 +267,7 @@ for obj in &amp;ctx.scene.objects {
 
         ctx.mesh_manager.meshes[part.mesh_id].record(device, cmd);
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/main_pass.rs#L144-L188">src/vulkan/main_pass.rs:144-188</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/main_pass.rs#L144-L188">src/vulkan/main_pass.rs:144-188</a></figcaption></figure><!--/x-->
     <p>Objects are drawn in scene order, not sorted, and the pipeline and descriptors are rebound only when a
     part's material differs from the previous part's (the binding itself was shown in
     <a href="08-descriptors-materials.html">Chapter 8</a>). Consecutive parts sharing a material therefore cost
@@ -286,7 +286,7 @@ let scene = Scene::from_file(
         PostProcess::CalculateTangentSpace,
         PostProcess::ImproveCacheLocality,
     ],
-)?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/assimp_loader.rs#L76-L85">src/graphics/assimp_loader.rs:76-85</a></figcaption></figure><!--/x-->
+)?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/assimp_loader.rs#L76-L85">src/graphics/assimp_loader.rs:76-85</a></figcaption></figure><!--/x-->
     <p>Assimp turns every polygon into triangles, computes the tangent and bitangent vectors that normal mapping
     needs, and reorders vertices for the GPU's cache. The loader then works through the file in three steps.</p>
     <p><strong>Materials.</strong> For each material it looks for a colour texture and a normal map, resolving
@@ -311,7 +311,7 @@ let (vs_path, fs_path) = if use_textured {
         "assets/shaders/spv/vertex_color.vert.spv".into(),
         "assets/shaders/spv/vertex_color.frag.spv".into(),
     )
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/assimp_loader.rs#L133-L153">src/graphics/assimp_loader.rs:133-153</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/assimp_loader.rs#L133-L153">src/graphics/assimp_loader.rs:133-153</a></figcaption></figure><!--/x-->
     <p>Textured materials use <code>main.vert</code>/<code>main.frag</code>. Untextured ones use the
     <code>vertex_color</code> pair, which lights a colour carried in each vertex. The loader copies the
     material's base colour into every vertex for exactly that reason.</p>
@@ -336,7 +336,7 @@ let (vs_path, fs_path) = if use_textured {
     )?;
     self.meshes.push(loaded);
     Ok(self.meshes.len() - 1)
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/meshmanager.rs#L69-L87">src/graphics/meshmanager.rs:69-87</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/meshmanager.rs#L69-L87">src/graphics/meshmanager.rs:69-87</a></figcaption></figure><!--/x-->
     <p><strong>Nodes.</strong> A model file is a tree of nodes, each with a transform and some meshes. The
     loader walks the tree with an explicit stack, combining transforms on the way down, and emits one part per
     mesh with its transform relative to the root. Assimp gives each node a general 4×4 matrix; the renderer's
@@ -352,7 +352,7 @@ let (vs_path, fs_path) = if use_textured {
     let s1 = c1.magnitude();
     let s2 = c2.magnitude();
     // Uniform scale approximation to match SceneTransform design
-    let scale = ((s0 + s1 + s2) / 3.0).max(1e-6);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/assimp_loader.rs#L268-L279">src/graphics/assimp_loader.rs:268-279</a></figcaption></figure><!--/x-->
+    let scale = ((s0 + s1 + s2) / 3.0).max(1e-6);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/assimp_loader.rs#L268-L279">src/graphics/assimp_loader.rs:268-279</a></figcaption></figure><!--/x-->
     <p>That's an approximation: a model built with stretched nodes would come out slightly wrong, a trade-off
     the comment owns.</p>
 
@@ -371,7 +371,7 @@ rock_clusters.push(SceneObject {
     // duplicate the Vulkan buffers or atlas image.
     parts: template.parts.clone(),
     visible: true,
-});</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/app/app.rs#L401-L410">src/app/app.rs:401-410</a></figcaption></figure><!--/x-->
+});</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/app.rs#L401-L410">src/app/app.rs:401-410</a></figcaption></figure><!--/x-->
     <p>The last steps flush every queued texture upload in one GPU submission
     (<a href="05-gpu-memory.html#staging">Chapter 5</a>) and put the camera at eye height:</p>
     <!--x src/app/app.rs 453-462--><figure class="code"><pre><code class="language-rust">// All scene materials have now recorded their texture uploads.  Submit
@@ -383,7 +383,7 @@ let camera_position = self.camera.position();
 self.camera.set_height_above_ground(
     terrain_settings.height_at(camera_position.x, camera_position.z),
     FIRST_PERSON_EYE_HEIGHT,
-);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/app/app.rs#L453-L462">src/app/app.rs:453-462</a></figcaption></figure><!--/x-->
+);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/app.rs#L453-L462">src/app/app.rs:453-462</a></figcaption></figure><!--/x-->
     <aside class="callout aside"><p class="callout-title">The debug grid</p>
       <p>The infinite grid's vertex shader (<code>infinite_plane.vert</code>) takes a 2 × 2 unit plane and stretches it to two kilometres, centred
       under the camera (though the 220 m far plane clips it). Its fragment shader (<code>infinite_plane.frag</code>) draws grid lines from <code>fwidth</code>, the screen-space rate of
@@ -408,7 +408,7 @@ self.camera.set_height_above_ground(
 
   <nav class="pager"><a class="prev" href="11-shadows.html">← 11 · Shadows</a><a class="next" href="13-procedural-world.html">13 · A procedural world →</a></nav>
 </main>
-<footer class="site">Based on commit <code>93972f2</code>. · <a href="index.html#contents">Contents</a></footer>
+<footer class="site">Based on commit <code>ffbaa49</code>. · <a href="index.html#contents">Contents</a></footer>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>

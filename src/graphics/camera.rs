@@ -11,14 +11,13 @@
 use cgmath::prelude::*;
 use cgmath::{Deg, Matrix4, Point3, Rad, Vector3, perspective};
 
-/// A simple camera with perspective projection and Y–X–Z Euler view control.
+/// A simple camera with perspective projection and yaw/pitch view control.
 pub struct Camera {
     projection: Matrix4<f32>,
     view: Matrix4<f32>,
     position: Point3<f32>,
     yaw: f32, // degrees
     pitch: f32,
-    roll: f32,
     // Persisted projection parameters so callers can adjust aspect without
     // clobbering near/far or fov.
     fov_deg: f32,
@@ -32,10 +31,9 @@ impl Camera {
     ///
     /// - Default projection: `fov=45°`, `aspect=16:9`, `near=0.5`, `far=220.0`.
     /// - Projection is Vulkan-corrected (Y flipped, depth range 0..1).
-    /// - Default view looks toward the origin from `(-2, 3, 8)`.
+    /// - Default position is `(-2, 3.5, 8)`, with yaw 12° and pitch −15°.
     ///
-    /// Use [`set_perspective_projection`] to change fov/near/far/aspect or
-    /// [`set_aspect`] during window resizes to preserve fov/near/far.
+    /// Use [`Self::set_aspect`] during window resizes to preserve fov/near/far.
     pub fn new() -> Self {
         let mut cam = Camera {
             projection: Matrix4::identity(),
@@ -43,7 +41,6 @@ impl Camera {
             position: Point3::new(-2.0, 3.5, 8.0),
             yaw: 12.0,
             pitch: -15.0,
-            roll: 0.0,
             fov_deg: 45.0,
             aspect: 16.0 / 9.0,
             near: 0.5,
@@ -52,7 +49,7 @@ impl Camera {
             far: 220.0,
         };
         cam.rebuild_projection();
-        cam.set_view_yxz(cam.position, cam.yaw, cam.pitch, cam.roll);
+        cam.set_view_yaw_pitch(cam.position, cam.yaw, cam.pitch);
         cam
     }
 
@@ -83,20 +80,13 @@ impl Camera {
 
     /// Defines the camera’s position and orientation using yaw–pitch in degrees.
     ///
-    /// Builds a right-handed view matrix via `look_at_rh` (roll is currently ignored).
+    /// Builds a right-handed view matrix via `look_at_rh`.
     ///
     /// Arguments
     /// - `position`: World position.
     /// - `yaw_deg`:  Yaw angle in degrees (rotation around +Y).
-    /// - `pitch_deg`: Pitch angle in degrees (rotation around +X).
-    /// - `roll_deg`:  Roll angle in degrees (currently unused).
-    pub fn set_view_yxz(
-        &mut self,
-        position: Point3<f32>,
-        yaw_deg: f32,
-        pitch_deg: f32,
-        _roll_deg: f32,
-    ) {
+    /// - `pitch_deg`: Pitch angle in degrees (positive looks upward).
+    pub fn set_view_yaw_pitch(&mut self, position: Point3<f32>, yaw_deg: f32, pitch_deg: f32) {
         self.position = position;
         self.yaw = yaw_deg;
         self.pitch = pitch_deg;
@@ -126,7 +116,7 @@ impl Camera {
         self.yaw += delta_yaw;
         self.pitch = (self.pitch + delta_pitch).clamp(-89.0, 89.0);
         // Recompute the view matrix with the new angles:
-        self.set_view_yxz(self.position, self.yaw, self.pitch, self.roll);
+        self.set_view_yaw_pitch(self.position, self.yaw, self.pitch);
     }
 
     /// Moves the camera in the horizontal X/Z plane using its yaw only.
@@ -148,13 +138,13 @@ impl Camera {
 
         self.position += (forward_dir * forward_distance) + (right_dir * right_distance);
 
-        self.set_view_yxz(self.position, self.yaw, self.pitch, self.roll);
+        self.set_view_yaw_pitch(self.position, self.yaw, self.pitch);
     }
 
     /// Raises the camera to a fixed eye height above a sampled terrain height.
     pub fn set_height_above_ground(&mut self, ground_height: f32, eye_height: f32) {
         self.position.y = ground_height + eye_height;
-        self.set_view_yxz(self.position, self.yaw, self.pitch, self.roll);
+        self.set_view_yaw_pitch(self.position, self.yaw, self.pitch);
     }
 
     /// Returns the current world-space camera position.

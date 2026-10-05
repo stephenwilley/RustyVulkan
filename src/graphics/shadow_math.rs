@@ -189,9 +189,9 @@ mod tests {
     fn moving_the_camera_shifts_cascades_by_whole_texels() {
         let res = 2048;
         let mut camera = Camera::new();
-        camera.set_view_yxz(Point3::new(1.0, 2.0, 3.0), 30.0, -10.0, 0.0);
+        camera.set_view_yaw_pitch(Point3::new(1.0, 2.0, 3.0), 30.0, -10.0);
         let before = compute_shadow_cascades(&camera, [0.3, -1.0, 0.2], res, 75.0);
-        camera.set_view_yxz(Point3::new(1.37, 2.0, 3.21), 30.0, -10.0, 0.0);
+        camera.set_view_yaw_pitch(Point3::new(1.37, 2.0, 3.21), 30.0, -10.0);
         let after = compute_shadow_cascades(&camera, [0.3, -1.0, 0.2], res, 75.0);
 
         // Orthographic: clip.x = row0 · p + w.x, so a change in w.x is a shift of

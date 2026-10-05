@@ -102,7 +102,7 @@ fn cascade_splits(camera: &amp;Camera, shadow_distance: f32) -&gt; [f32; SHADOW_
         let linear = near + (far - near) * fraction;
         lambda * logarithmic + (1.0 - lambda) * linear
     })
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/shadow_math.rs#L18-L30">src/graphics/shadow_math.rs:18-30</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shadow_math.rs#L18-L30">src/graphics/shadow_math.rs:18-30</a></figcaption></figure><!--/x-->
     <p>Evenly spaced splits waste the near cascades on too much distance; purely logarithmic ones (each slice a
     fixed multiple of the last) squeeze the first slice to almost nothing. This blends the two, 65% logarithmic,
     over the range from the camera's near plane to the shadow distance (75 m by default, set in
@@ -131,7 +131,7 @@ fn cascade_splits(camera: &amp;Camera, shadow_distance: f32) -&gt; [f32; SHADOW_
         slice_near = slice_far;
         cascade
     })
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/shadow_math.rs#L33-L47">src/graphics/shadow_math.rs:33-47</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shadow_math.rs#L33-L47">src/graphics/shadow_math.rs:33-47</a></figcaption></figure><!--/x-->
 
     <h2>Fitting a light box around one slice</h2>
     <p><code>fit_frustum_slice</code> starts by finding the eight corners of the slice in world space, using the
@@ -155,7 +155,7 @@ let light_up = if direction.y.abs() &gt; 0.99 {
 };
 // Orientation only: a light view that followed the slice would move the texel grid
 // with the camera, defeating the snapping below.
-let light_view = Matrix4::look_at_rh(Point3::origin(), Point3::from_vec(direction), light_up);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/shadow_math.rs#L75-L94">src/graphics/shadow_math.rs:75-94</a></figcaption></figure><!--/x-->
+let light_view = Matrix4::look_at_rh(Point3::origin(), Point3::from_vec(direction), light_up);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shadow_math.rs#L75-L94">src/graphics/shadow_math.rs:75-94</a></figcaption></figure><!--/x-->
     <p>The sphere's radius sets how far the box reaches towards the sun, below. The light view itself
     deliberately depends only on the sun's direction: it sits at the world origin looking along the sunlight,
     and never moves with the camera.</p>
@@ -164,7 +164,7 @@ let half_extent =
     ((max_light.x - min_light.x).max(max_light.y - min_light.y) * 0.51).max(0.001);
 let units_per_texel = (half_extent * 2.0 / shadow_res.max(1) as f32).max(1e-6);
 let center_x = ((min_light.x + max_light.x) * 0.5 / units_per_texel).floor() * units_per_texel;
-let center_y = ((min_light.y + max_light.y) * 0.5 / units_per_texel).floor() * units_per_texel;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/shadow_math.rs#L108-L113">src/graphics/shadow_math.rs:108-113</a></figcaption></figure><!--/x-->
+let center_y = ((min_light.y + max_light.y) * 0.5 / units_per_texel).floor() * units_per_texel;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shadow_math.rs#L108-L113">src/graphics/shadow_math.rs:108-113</a></figcaption></figure><!--/x-->
     <p>In that fixed light space, the slice's corners give a rectangle; the box is made square, sized to the
     larger span, and its centre is <em>snapped</em> to a whole number of texels. Because the light space never
     moves, the snapped grid is fixed in the world: as the camera walks, the box jumps by exactly one texel at a
@@ -191,7 +191,7 @@ ShadowCascade {
     world_to_light_clip,
     view_to_light_clip: world_to_light_clip * inv_view,
     far_distance: slice_far,
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/shadow_math.rs#L115-L136">src/graphics/shadow_math.rs:115-136</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shadow_math.rs#L115-L136">src/graphics/shadow_math.rs:115-136</a></figcaption></figure><!--/x-->
     <p>The depth range reaches well beyond the slice towards the sun (by the sphere's radius plus a metre), so a
     tall object outside the slice can still cast a shadow into it. cgmath builds OpenGL-style matrices, so the same fixed matrix the
     camera uses (<a href="12-main-pass-scene.html">Chapter 12</a>) remaps depth from OpenGL's −1..1 to Vulkan's
@@ -353,9 +353,9 @@ let rasterizer = vk::PipelineRasterizationStateCreateInfo {
 fn moving_the_camera_shifts_cascades_by_whole_texels() {
     let res = 2048;
     let mut camera = Camera::new();
-    camera.set_view_yxz(Point3::new(1.0, 2.0, 3.0), 30.0, -10.0, 0.0);
+    camera.set_view_yaw_pitch(Point3::new(1.0, 2.0, 3.0), 30.0, -10.0);
     let before = compute_shadow_cascades(&amp;camera, [0.3, -1.0, 0.2], res, 75.0);
-    camera.set_view_yxz(Point3::new(1.37, 2.0, 3.21), 30.0, -10.0, 0.0);
+    camera.set_view_yaw_pitch(Point3::new(1.37, 2.0, 3.21), 30.0, -10.0);
     let after = compute_shadow_cascades(&amp;camera, [0.3, -1.0, 0.2], res, 75.0);
 
     // Orthographic: clip.x = row0 · p + w.x, so a change in w.x is a shift of
@@ -371,7 +371,7 @@ fn moving_the_camera_shifts_cascades_by_whole_texels() {
             );
         }
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/shadow_math.rs#L188-L210">src/graphics/shadow_math.rs:188-210</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/shadow_math.rs#L188-L210">src/graphics/shadow_math.rs:188-210</a></figcaption></figure><!--/x-->
     <p>The others check that the splits increase and end at the shadow distance plus the near plane, that every
     cascade still contains all eight corners of its slice, and that no matrix element is infinite or NaN.</p>
   </section>

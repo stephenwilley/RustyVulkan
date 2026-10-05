@@ -155,7 +155,7 @@ pub struct SceneObject {
     bytes.</p>
 
     <h2>The camera's matrices</h2>
-    <!--x src/graphics/camera.rs 73-82--><figure class="code"><pre><code class="language-rust">fn rebuild_projection(&amp;mut self) {
+    <!--x src/graphics/camera.rs 70-79--><figure class="code"><pre><code class="language-rust">fn rebuild_projection(&amp;mut self) {
     let mut proj = perspective(Deg(self.fov_deg), self.aspect, self.near, self.far);
     // Flip Y to match Vulkan framebuffer coordinate conventions used here
     proj.y.y *= -1.0;
@@ -164,13 +164,13 @@ pub struct SceneObject {
         1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, 1.0,
     );
     self.projection = OPENGL_TO_VULKAN_MATRIX * proj;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/graphics/camera.rs#L73-L82">src/graphics/camera.rs:73-82</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/camera.rs#L70-L79">src/graphics/camera.rs:70-79</a></figcaption></figure><!--/x-->
     <p>cgmath's <code>perspective</code> builds an OpenGL-style matrix. Negating <code>proj.y.y</code> flips Y
     so the image comes out upright under Vulkan's Y-down convention. Without it, the mirror image would also
     reverse triangle winding; with it, OpenGL's counter-clockwise front faces stay counter-clockwise (<a href="07-pipelines.html">Chapter 7</a>). The fixed
     matrix then halves Z and adds half, mapping depth from −1..1 to 0..1. The shadow cascades reuse that depth
     fix-up but not the flip (<a href="11-shadows.html">Chapter 11</a>). The view matrix is a standard
-    right-handed look-at, built from yaw and pitch angles in <code>set_view_yxz</code>.</p>
+    right-handed look-at, built from yaw and pitch angles in <code>set_view_yaw_pitch</code>.</p>
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
       <p>OpenGL code can't simply be pointed at Vulkan: unchanged, everything renders upside down, and anything in
       the nearer half of OpenGL's depth range is clipped away. The alternative to flipping the projection is a

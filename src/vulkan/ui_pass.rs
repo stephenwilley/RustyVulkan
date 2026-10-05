@@ -13,7 +13,6 @@ use crate::vulkan::attachments::{AttachmentKind, AttachmentRequest};
 use crate::vulkan::render_graph::{RenderCtx, RenderPass};
 use ash::vk;
 use imgui::PlotLines;
-use std::sync::atomic::Ordering;
 
 /// Render pass responsible for drawing the ImGui user interface.
 pub struct UiPass {
@@ -60,7 +59,7 @@ impl RenderPass for UiPass {
         {
             if let Some(_main_menu) = ui.begin_menu("Main") {
                 if ui.menu_item("Exit") {
-                    ui_ctx.exit_flag.store(true, Ordering::Relaxed);
+                    *ui_ctx.exit_flag = true;
                 }
                 _main_menu.end();
             }

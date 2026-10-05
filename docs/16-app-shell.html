@@ -94,7 +94,7 @@
 
   <section id="deep-dive">
     <h2>Running the loop</h2>
-    <!--x src/app/app.rs 157-166--><figure class="code"><pre><code class="language-rust">/// Runs the winit event loop until exit.
+    <!--x src/app/app.rs 156-165--><figure class="code"><pre><code class="language-rust">/// Runs the winit event loop until exit.
 pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
@@ -103,7 +103,7 @@ pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
         Some(error) =&gt; Err(error),
         None =&gt; Ok(()),
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L157-L166">src/app/app.rs:157-166</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L156-L165">src/app/app.rs:156-165</a></figcaption></figure><!--/x-->
     <p><code>ControlFlow::Poll</code> keeps the loop spinning instead of sleeping until the next input event,
     which suits a renderer that wants to draw continuously. <code>run_app</code> blocks until the loop exits; any
     fatal error stored along the way is then returned to <code>main</code>, which turns it into a failure exit
@@ -117,7 +117,7 @@ pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     </aside>
 
     <h2>Start-up in <code>resumed</code></h2>
-    <!--x src/app/app.rs 469-482,494-503,521-530--><figure class="code"><pre><code class="language-rust">fn resumed(&amp;mut self, event_loop: &amp;ActiveEventLoop) {
+    <!--x src/app/app.rs 468-481,493-502,520-529--><figure class="code"><pre><code class="language-rust">fn resumed(&amp;mut self, event_loop: &amp;ActiveEventLoop) {
     // Winit can emit Resumed more than once. Keep the existing ownership
     // tree rather than replacing live GPU resources and the ImGui context.
     if self.window.is_some() {
@@ -152,7 +152,7 @@ pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     self.render_graph.add(RenderPassNode::Shadow);
     self.render_graph.add(RenderPassNode::Main);
     let show = self.vulkan_base.as_ref().unwrap().engine_settings.show_ui;
-    self.render_graph.set_pass_enabled(RenderPassNode::UI, show);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L469-L530">src/app/app.rs:469-482,494-503,521-530</a></figcaption></figure><!--/x-->
+    self.render_graph.set_pass_enabled(RenderPassNode::UI, show);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L468-L529">src/app/app.rs:468-481,493-502,520-529</a></figcaption></figure><!--/x-->
     <p>The order is the order of the guide: window, ImGui context, the Vulkan backend
     (<a href="03-instance-devices.html">Chapter 3</a>), the ImGui renderer, the scene
     (<a href="12-main-pass-scene.html">Chapter 12</a>), and finally the passes. The guard at the top matters
@@ -160,7 +160,7 @@ pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     mobile platforms it fires whenever the app returns to the foreground), and rebuilding would replace live GPU resources. <code>DEVELOPMENT.md</code>
     notes that the full mobile suspend-and-resume cycle isn't handled. The window is created with the
     pointer captured for first-person look:</p>
-    <!--x src/app/app.rs 43-56--><figure class="code"><pre><code class="language-rust">/// Enables the cursor mode used while playing in first-person view.
+    <!--x src/app/app.rs 42-55--><figure class="code"><pre><code class="language-rust">/// Enables the cursor mode used while playing in first-person view.
 pub fn capture_first_person_cursor(window: &amp;Window) {
     // Locked works on most platforms; confined is a useful fallback for window systems
     // without relative-pointer support.
@@ -173,10 +173,10 @@ pub fn capture_first_person_cursor(window: &amp;Window) {
             .ok();
     }
     window.set_cursor_visible(false);
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L43-L56">src/app/app.rs:43-56</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L42-L55">src/app/app.rs:42-55</a></figcaption></figure><!--/x-->
 
     <h2>Events</h2>
-    <!--x src/app/app.rs 533-555--><figure class="code"><pre><code class="language-rust">fn device_event(
+    <!--x src/app/app.rs 532-554--><figure class="code"><pre><code class="language-rust">fn device_event(
     &amp;mut self,
     _event_loop: &amp;ActiveEventLoop,
     _device_id: winit::event::DeviceId,
@@ -198,7 +198,7 @@ fn about_to_wait(&amp;mut self, _event_loop: &amp;ActiveEventLoop) {
     if let Some(window) = &amp;self.window {
         window.request_redraw();
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L533-L555">src/app/app.rs:533-555</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L532-L554">src/app/app.rs:532-554</a></figcaption></figure><!--/x-->
     <p><code>about_to_wait</code> runs when the loop has handled all pending events. Requesting a redraw every
     time is what keeps frames coming; each <code>RedrawRequested</code> then moves the camera and runs the render
     graph (<a href="09-frame-loop.html">Chapter 9</a>). Mouse look uses <em>device</em> events, the raw relative
@@ -212,7 +212,7 @@ pub fn handle_device_event(app: &amp;mut App, event: DeviceEvent) {
         let sensitivity = 0.1;
         app.camera.rotate(dx * sensitivity, -dy * sensitivity);
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/input.rs#L40-L49">src/app/input.rs:40-49</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/input.rs#L40-L49">src/app/input.rs:40-49</a></figcaption></figure><!--/x-->
     <p>Window events are first forwarded to ImGui, so it sees every click and key press, before the app
     handles them itself:</p>
     <!--x src/app/input.rs 58-68--><figure class="code"><pre><code class="language-rust">if let Some(win) = &amp;app.window {
@@ -225,7 +225,7 @@ pub fn handle_device_event(app: &amp;mut App, event: DeviceEvent) {
             event: event.clone(),
         };
         platform.handle_event(imgui.io_mut(), win, &amp;full_event);
-    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/input.rs#L58-L68">src/app/input.rs:58-68</a></figcaption></figure><!--/x-->
+    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/input.rs#L58-L68">src/app/input.rs:58-68</a></figcaption></figure><!--/x-->
     <p>Two details in the window-event handler are worth noting. Losing focus clears all movement keys, because
     the window may never receive their release events. And <strong>U</strong> uses a small latch so that holding
     the key down, which sends repeated "pressed" events, toggles the pointer only once:</p>
@@ -240,15 +240,14 @@ pub fn handle_device_event(app: &amp;mut App, event: DeviceEvent) {
 }
 (Code(KeyCode::KeyU), Released) =&gt; {
     app.input.cursor_toggle_locked = false;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/input.rs#L150-L161">src/app/input.rs:150-161</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/input.rs#L150-L161">src/app/input.rs:150-161</a></figcaption></figure><!--/x-->
     <p>Resize handling was covered with the swapchain (<a href="04-swapchain.html">Chapter 4</a>): it records a
     request, updates the camera's aspect ratio, and ignores zero-sized (minimised) windows.</p>
-    <aside class="callout rust"><p class="callout-title">Rust note · an exit flag behind an Arc</p>
-      <p>The menu's <strong>Exit</strong> item sets <code>exit_flag</code>, an <code>Arc&lt;AtomicBool&gt;</code>
-      that the redraw handler checks before drawing. <code>AtomicBool</code> can be changed through a shared
-      reference, which is handy when the UI only has borrowed access to the app's state; <code>Arc</code> is a
-      reference-counted pointer that lets the UI context hold its own handle to the same flag. The render graph hands the UI pass its own clone each frame. It's more than a single-threaded app needs,
-      but it costs little and would stay correct if threads arrived.</p>
+    <aside class="callout rust"><p class="callout-title">Rust note · borrowing an exit flag</p>
+      <p>The menu's <strong>Exit</strong> item sets a plain <code>bool</code> in the app. The UI context
+      borrows it as <code>&amp;mut bool</code> for this frame, so it can request exit without owning the app.
+      Input handling and UI rendering run on the same event-loop thread; no atomic or reference-counted
+      pointer is needed. The redraw handler checks the flag before drawing again.</p>
     </aside>
 
     <h2>Shutting down</h2>

@@ -387,7 +387,7 @@ let shader_stage_create_infos: Vec&lt;_&gt; = shader_infos
 }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L713-L723">src/vulkan/base.rs:713-723</a></figcaption></figure><!--/x-->
     <p>At the start of each frame, the render graph compares that counter with the last one it saw. If it has
     changed, the graph waits for the GPU once and asks every owner to rebuild:</p>
-    <!--x src/vulkan/render_graph.rs 221-232,242-243--><figure class="code"><pre><code class="language-rust">// Rebuild pipelines only when engine-signaled generation changes (swapchain/MSAA/wireframe)
+    <!--x src/vulkan/render_graph.rs 219-230,240-241--><figure class="code"><pre><code class="language-rust">// Rebuild pipelines only when engine-signaled generation changes (swapchain/MSAA/wireframe)
 let swap_gen = vb.pipeline_generation();
 if swap_gen != self.swap_gen_seen {
     // Rebuilding a pipeline invalidates objects referenced by already
@@ -401,7 +401,7 @@ if swap_gen != self.swap_gen_seen {
     app.material_manager.recreate_pipelines(vb)?;
 // ...
     self.swap_gen_seen = swap_gen;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L221-L243">src/vulkan/render_graph.rs:221-232,242-243</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L219-L241">src/vulkan/render_graph.rs:219-230,240-241</a></figcaption></figure><!--/x-->
     <p>Each material's rebuild goes through <code>Pipeline::recreate</code>:</p>
     <!--x src/graphics/pipeline.rs 344-359--><figure class="code"><pre><code class="language-rust">let old_pipeline = self.vk_pipeline;
 self.create_graphics_pipeline(

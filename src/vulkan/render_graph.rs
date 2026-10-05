@@ -29,8 +29,6 @@ use imgui::Context as ImGuiContext;
 use imgui_winit_support::WinitPlatform;
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 use winit::window::Window;
 
@@ -66,7 +64,7 @@ pub struct UiCtx<'a> {
     pub platform: &'a mut WinitPlatform,
     pub show_ui: bool,
     pub renderer: &'a mut ImGuiRenderer,
-    pub exit_flag: Arc<AtomicBool>,
+    pub exit_flag: &'a mut bool,
 }
 
 /// Per-pass context provided to [`RenderPass::execute`].  Gives each pass
@@ -432,7 +430,7 @@ impl RenderGraph {
                     platform: app.platform.as_mut().unwrap(),
                     show_ui: vb.engine_settings.show_ui,
                     renderer: app.imgui_renderer.as_mut().unwrap(),
-                    exit_flag: app.exit_flag.clone(),
+                    exit_flag: &mut app.exit_flag,
                 })
             } else {
                 None

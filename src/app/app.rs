@@ -10,7 +10,6 @@
 
 use std::collections::VecDeque;
 use std::error::Error;
-use std::sync::{Arc, atomic::AtomicBool};
 use std::time::Instant;
 
 use imgui::Context as ImGuiContext;
@@ -99,7 +98,7 @@ pub struct App {
     pub current_gpu_pass_timings: GpuPassTimings,
     pub world_controls: WorldControls,
     pub render_graph: RenderGraph,
-    pub exit_flag: Arc<AtomicBool>,
+    pub exit_flag: bool,
     // Rolling ms history for ImGui graphs
     pub cpu_ms_history: VecDeque<f32>,
     pub gpu_ms_history: VecDeque<f32>,
@@ -144,7 +143,7 @@ impl App {
             current_gpu_pass_timings: GpuPassTimings::default(),
             world_controls: WorldControls::default(),
             render_graph: RenderGraph::new(),
-            exit_flag: Arc::new(AtomicBool::new(false)),
+            exit_flag: false,
             cpu_ms_history: VecDeque::new(),
             gpu_ms_history: VecDeque::new(),
             infinite_plane_obj_index: None,

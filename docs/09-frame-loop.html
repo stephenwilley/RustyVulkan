@@ -122,7 +122,7 @@
         // unsignalled. Retrying could hang the next frame.
         event_loop.exit();
     }
-    app.render_graph = graph;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/input.rs#L165-L227">src/app/input.rs:165-227</a></figcaption></figure><!--/x-->
+    app.render_graph = graph;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/input.rs#L165-L227">src/app/input.rs:165-170,220-227</a></figcaption></figure><!--/x-->
     <aside class="callout rust"><p class="callout-title">Rust note · std::mem::take to satisfy the borrow checker</p>
       <p><code>graph.execute(app)</code> needs <code>&amp;mut app</code> (exclusive access to the whole
       application) while the graph is itself a field of <code>app</code>. Rust won't allow two exclusive

@@ -169,7 +169,7 @@ pub fn handle_window_event(
                         return;
                     }
                     // Exit requested via UI? Signal the event loop to exit.
-                    if app.exit_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    if app.exit_flag {
                         println!("👋 Exit requested from UI");
                         event_loop.exit();
                         return;

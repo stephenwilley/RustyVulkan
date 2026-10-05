@@ -105,7 +105,7 @@
   <section id="deep-dive">
     <h2>What a pass looks like to the graph</h2>
     <p>Every pass implements one trait:</p>
-    <!--x src/vulkan/render_graph.rs 102-122--><figure class="code"><pre><code class="language-rust">/// Trait implemented by all render passes.
+    <!--x src/vulkan/render_graph.rs 100-120--><figure class="code"><pre><code class="language-rust">/// Trait implemented by all render passes.
 pub trait RenderPass {
     /// Record commands for this pass using the supplied [`RenderCtx`].
     fn execute(&amp;mut self, ctx: &amp;mut RenderCtx) -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt;;
@@ -125,7 +125,7 @@ pub trait RenderPass {
     /// Optional cleanup hook for passes that own GPU objects (pipelines, layouts, etc.).
     /// Default is no-op.
     fn cleanup(&amp;mut self, _device: &amp;ash::Device) {}
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L102-L122">src/vulkan/render_graph.rs:102-122</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L100-L120">src/vulkan/render_graph.rs:100-120</a></figcaption></figure><!--/x-->
     <aside class="callout rust"><p class="callout-title">Rust note · traits and trait objects</p>
       <p>A <em>trait</em> is a set of methods a type promises to provide, like an interface. Methods with a body,
       such as <code>uses_attachment</code> and <code>cleanup</code>, are defaults a type may override. The graph
@@ -137,13 +137,13 @@ pub trait RenderPass {
     inserting at the right position. The app adds the shadow and main passes, then enables the UI pass
     separately through <code>set_pass_enabled</code>, and the priorities keep the result correct either
     way:</p>
-    <!--x src/vulkan/render_graph.rs 48-54--><figure class="code"><pre><code class="language-rust">fn pass_order(node: RenderPassNode) -&gt; u8 {
+    <!--x src/vulkan/render_graph.rs 46-52--><figure class="code"><pre><code class="language-rust">fn pass_order(node: RenderPassNode) -&gt; u8 {
     match node {
         RenderPassNode::Shadow =&gt; 50,
         RenderPassNode::Main =&gt; 100,
         RenderPassNode::UI =&gt; 200,
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L48-L54">src/vulkan/render_graph.rs:48-54</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L46-L52">src/vulkan/render_graph.rs:46-52</a></figcaption></figure><!--/x-->
 
     <h2>Declaring attachments</h2>
     <p>The main pass asks for five images, and states how it uses each:</p>
@@ -189,7 +189,7 @@ fn attachment_info(&amp;self, kind: AttachmentKind) -&gt; (vk::ImageLayout, vk::
     <h2>Finding the actual images</h2>
     <p>Each frame, the graph turns those requests into real images. Some come from the swapchain; the rest from
     an <code>AttachmentManager</code>:</p>
-    <!--x src/vulkan/render_graph.rs 321-332,337-344--><figure class="code"><pre><code class="language-rust">let handle = match req.kind {
+    <!--x src/vulkan/render_graph.rs 319-330,335-342--><figure class="code"><pre><code class="language-rust">let handle = match req.kind {
     AttachmentKind::SwapchainColor =&gt; AttachmentHandle {
         image: vb.swapchain.images[image_index],
         view: vb.swapchain.swapchain_image_views[image_index],
@@ -209,7 +209,7 @@ fn attachment_info(&amp;self, kind: AttachmentKind) -&gt; (vk::ImageLayout, vk::
         depth_req.extent = vb.swapchain.extent; // match swapchain size
         depth_req.samples = vk::SampleCountFlags::TYPE_1; // single-sampled
         vb.get_attachment(depth_req)
-    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L321-L344">src/vulkan/render_graph.rs:321-332,337-344</a></figcaption></figure><!--/x-->
+    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L319-L342">src/vulkan/render_graph.rs:319-330,335-342</a></figcaption></figure><!--/x-->
     <p>The swapchain image is the one just acquired. The MSAA images live in the <code>Swapchain</code>
     struct, because they share its size (<a href="04-swapchain.html">Chapter 4</a>), so there's one pair for
     everything. Depth and shadow images come from the manager, which creates them on first request and keeps
@@ -264,7 +264,7 @@ if key.kind == AttachmentKind::Shadow {
     images anyway. The first barrier must still wait for whatever used the image last (the display, for a
     swapchain image; the previous frame, for the shared MSAA images), so the starting state records that earlier
     use:</p>
-    <!--x src/vulkan/render_graph.rs 359-371--><figure class="code"><pre><code class="language-rust">attachment_handles.insert(req.kind, handle);
+    <!--x src/vulkan/render_graph.rs 357-369--><figure class="code"><pre><code class="language-rust">attachment_handles.insert(req.kind, handle);
 // Contents are discarded (UNDEFINED), but the first barrier must still wait
 // for the image's previous use: see `previous_frame_use`.
 let (access, stage) = previous_frame_use(req.kind);
@@ -276,7 +276,7 @@ attachment_states.insert(
         access,
         stage,
     },
-);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L359-L371">src/vulkan/render_graph.rs:359-371</a></figcaption></figure><!--/x-->
+);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L357-L369">src/vulkan/render_graph.rs:357-369</a></figcaption></figure><!--/x-->
     <p>A small function, <code>previous_frame_use</code>, supplies the stage and access of that earlier use for
     each kind of image.</p>
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
@@ -287,7 +287,7 @@ attachment_states.insert(
 
     <h2>Barriers between passes</h2>
     <p>Before each pass records, the graph compares what the pass wants with each image's current state:</p>
-    <!--x src/vulkan/render_graph.rs 385-419--><figure class="code"><pre><code class="language-rust">let mut transitions: Vec&lt;ImageTransition&gt; = Vec::new();
+    <!--x src/vulkan/render_graph.rs 383-417--><figure class="code"><pre><code class="language-rust">let mut transitions: Vec&lt;ImageTransition&gt; = Vec::new();
 for req in pass.attachments() {
     if !pass.uses_attachment(req.kind, vb.engine_settings.msaa_samples) {
         continue;
@@ -321,7 +321,7 @@ for req in pass.attachments() {
 
 if !transitions.is_empty() {
     vb.insert_attachment_barriers(cmd, &amp;transitions);
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L385-L419">src/vulkan/render_graph.rs:385-419</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L383-L417">src/vulkan/render_graph.rs:383-417</a></figcaption></figure><!--/x-->
     <p>If the layout or access differs, it records a transition from the current state to the new one, deriving
     the destination stage from the access type, and updates its record. All the transitions for one pass go into
     a single <code>vkCmdPipelineBarrier2</code> call, with each image's barrier carrying its own stages:</p>
@@ -410,7 +410,7 @@ unsafe {
 
     <h2>Handing the image to the display</h2>
     <p>After the last pass, the swapchain image goes to the layout presentation expects:</p>
-    <!--x src/vulkan/render_graph.rs 464-483--><figure class="code"><pre><code class="language-rust">// --- 4. Final transition for presentation ---
+    <!--x src/vulkan/render_graph.rs 462-481--><figure class="code"><pre><code class="language-rust">// --- 4. Final transition for presentation ---
 let swapchain_state = attachment_states
     .get_mut(&amp;AttachmentKind::SwapchainColor)
     .unwrap();
@@ -429,7 +429,7 @@ if swapchain_state.layout != vk::ImageLayout::PRESENT_SRC_KHR {
             layer_count: 1,
         }],
     );
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L464-L483">src/vulkan/render_graph.rs:464-483</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L462-L481">src/vulkan/render_graph.rs:462-481</a></figcaption></figure><!--/x-->
     <p>The destination stage and access are both empty: nothing later in this command buffer touches the image.
     Ordering against the presentation engine is handled by the render-finished semaphore, not by this barrier
     (<a href="09-frame-loop.html">Chapter 9</a>).</p>

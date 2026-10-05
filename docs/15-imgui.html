@@ -92,7 +92,7 @@
     <h2>Describing the UI</h2>
     <p><code>UiPass::execute</code> starts an ImGui frame (the winit support crate passes in mouse, keyboard and
     window size) and builds the interface:</p>
-    <!--x src/vulkan/ui_pass.rs 52-79--><figure class="code"><pre><code class="language-rust">ui_ctx
+    <!--x src/vulkan/ui_pass.rs 51-78--><figure class="code"><pre><code class="language-rust">ui_ctx
     .platform
     .prepare_frame(ui_ctx.imgui.io_mut(), ui_ctx.window)
     .expect("Failed to prepare imgui frame");
@@ -103,7 +103,7 @@ if ui_ctx.show_ui
 {
     if let Some(_main_menu) = ui.begin_menu("Main") {
         if ui.menu_item("Exit") {
-            ui_ctx.exit_flag.store(true, Ordering::Relaxed);
+            *ui_ctx.exit_flag = true;
         }
         _main_menu.end();
     }
@@ -119,7 +119,7 @@ if ui_ctx.show_ui
             self.show_ground_window = true;
         }
         _world_menu.end();
-    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/ui_pass.rs#L52-L79">src/vulkan/ui_pass.rs:52-79</a></figcaption></figure><!--/x-->
+    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/ui_pass.rs#L51-L78">src/vulkan/ui_pass.rs:51-78</a></figcaption></figure><!--/x-->
     <p><code>menu_item</code> returns <code>true</code> on the frame it's clicked, so the UI code reacts in the
     same place it's declared. The values handed to sliders are fields of the app's world controls, which the
     render graph copies into the uniform buffer each frame (<a href="09-frame-loop.html">Chapter 9</a>), so
@@ -329,7 +329,7 @@ let grow_vertex_buffer = vertex_size &gt; buffers.vertex_buffer_size;</code></pr
     <h2>Showing the shadow cascades</h2>
     <p>To show a GPU image in a window, it needs an entry in the texture list like the font's, registered under a texture id.
     The cascade panel does this for each layer of the shadow map:</p>
-    <!--x src/vulkan/ui_pass.rs 229-252--><figure class="code"><pre><code class="language-rust">let shadow_tex_ids: Option&lt;[imgui::TextureId; SHADOW_CASCADE_COUNT]&gt; =
+    <!--x src/vulkan/ui_pass.rs 228-251--><figure class="code"><pre><code class="language-rust">let shadow_tex_ids: Option&lt;[imgui::TextureId; SHADOW_CASCADE_COUNT]&gt; =
     ctx.attachments.get(&amp;AttachmentKind::Shadow).map(|handle| {
         std::array::from_fn(|cascade| {
             ui_ctx.renderer.shadow_texture_id(
@@ -352,7 +352,7 @@ ui.window("Shadow Cascades")
                     imgui::Image::new(texture_id, [224.0, 224.0])
                         .uv0([0.0, 1.0])
                         .uv1([1.0, 0.0])
-                        .build(ui);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/ui_pass.rs#L229-L252">src/vulkan/ui_pass.rs:229-252</a></figcaption></figure><!--/x-->
+                        .build(ui);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/ui_pass.rs#L228-L251">src/vulkan/ui_pass.rs:228-251</a></figcaption></figure><!--/x-->
     <p>Each cascade uses its own single-layer view of the shadow array (<a href="10-render-graph.html">Chapter
     10</a>), sampled with the shadow sampler. The shadow map is a per-swapchain-image attachment, so
     <code>shadow_texture_id</code> points each cascade's texture id at this frame's view. Pushed descriptors are

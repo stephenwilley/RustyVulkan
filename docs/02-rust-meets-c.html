@@ -331,7 +331,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
     managers built on top of it. After a <code>drop</code> body finishes, Rust drops the struct's fields in
     declaration order, which isn't the order Vulkan needs. So <code>App::drop</code> takes the backend out first, cleans up everything that
     depends on it, and only then lets it go:</p>
-    <!--x src/app/app.rs 558-569,584-592--><figure class="code"><pre><code class="language-rust">impl Drop for App {
+    <!--x src/app/app.rs 557-568,583-591--><figure class="code"><pre><code class="language-rust">impl Drop for App {
     fn drop(&amp;mut self) {
         // `take` moves VulkanBase out of the Option.  Its own Drop runs only
         // after the managers below release resources that depend on its device.
@@ -352,7 +352,7 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
             }
         }
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L558-L592">src/app/app.rs:558-569,584-592</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L557-L591">src/app/app.rs:557-568,583-591</a></figcaption></figure><!--/x-->
     <p>At the end of the <code>if let</code> block, <code>vb</code> goes out of scope and <code>VulkanBase</code>'s own
     <code>Drop</code>, above, runs last.</p>
 

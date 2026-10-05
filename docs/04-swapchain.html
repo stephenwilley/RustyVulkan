@@ -366,15 +366,15 @@ if let Some(vulkan_base) = &amp;mut app.vulkan_base {
     // Window systems often emit several resize events together. Record
     // intent here; the render loop performs one recreation at a safe point.
     vulkan_base.request_swapchain_recreation();
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/app/input.rs#L81-L88">src/app/input.rs:81-88</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/input.rs#L81-L88">src/app/input.rs:81-88</a></figcaption></figure><!--/x-->
     <p>At the start of the next frame, before anything is acquired, the render graph acts on it once:</p>
-    <!--x src/vulkan/render_graph.rs 214-220--><figure class="code"><pre><code class="language-rust">if vb.take_swapchain_recreation_request() {
+    <!--x src/vulkan/render_graph.rs 212-218--><figure class="code"><pre><code class="language-rust">if vb.take_swapchain_recreation_request() {
     let size = app.window.as_ref().unwrap().inner_size();
     if size.width != 0 &amp;&amp; size.height != 0 {
         vb.recreate_swapchain(app.window.as_ref().unwrap())?;
         device_is_idle = true;
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L214-L220">src/vulkan/render_graph.rs:214-220</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L212-L218">src/vulkan/render_graph.rs:212-218</a></figcaption></figure><!--/x-->
     <p>The same request is raised if acquiring or presenting reports <code>ERROR_OUT_OF_DATE_KHR</code> or
     "suboptimal" (<a href="02-rust-meets-c.html#rust-result">Chapter 2</a> showed the acquire side). Inside the
     swapchain, recreation is short:</p>

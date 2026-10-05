@@ -56,9 +56,9 @@ mod setup;
 /// Timestamp queries are asynchronous: these values describe the previous completed frame,
 /// which keeps the profiler from stalling the CPU waiting for the GPU.  `scene_ms` is the
 /// main scene after shadows and before vegetation; `total_ms` also includes the UI pass.
-/// GPUs that only timestamp at render-pass boundaries, such as Apple GPUs under
-/// KosmicKrisp, write both vegetation boundaries at the end of the main pass, so
-/// `vegetation_in_scene` is set and `scene_ms` includes the vegetation.
+/// Equal vegetation timestamps set `vegetation_in_scene`: no separate duration was
+/// measurable in that frame. This can reflect render-pass-boundary timestamps under
+/// KosmicKrisp or no measurable vegetation work; it does not prove a GPU capability limit.
 #[derive(Clone, Copy, Default)]
 pub struct GpuPassTimings {
     pub total_ms: Option<f32>,

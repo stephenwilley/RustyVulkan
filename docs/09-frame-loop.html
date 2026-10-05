@@ -338,8 +338,10 @@ self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len()
     perfectly good for a profiler and costs nothing.</p>
     <p>Not every GPU can honour a timestamp anywhere. Apple GPUs, under KosmicKrisp, record them only at the
     edges of a render pass, so both vegetation timestamps, which sit inside the main pass, land at its end
-    with the same value. <code>vegetation_in_scene</code> notes that case, and the profiler then labels the
-    scene figure as including vegetation instead of showing an empty grass line.</p>
+    with the same value. Equal timestamps can also mean there was no measurable vegetation work, so they
+    don't prove a GPU capability limit. <code>vegetation_in_scene</code> notes equal timestamps, and the
+    profiler labels the scene figure as including vegetation and reports grass as "not separately measurable
+    this frame".</p>
 
     <h2>When the swapchain changes</h2>
     <p>Recreation (<a href="04-swapchain.html">Chapter 4</a>) happens only at frame boundaries: before

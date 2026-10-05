@@ -172,7 +172,7 @@ impl RenderPass for UiPass {
                     match timings.vegetation_ms {
                         Some(ms) => ui.text(format!("  Grass + reeds: {:.2} ms", ms)),
                         None if timings.vegetation_in_scene => {
-                            ui.text("  Grass + reeds: in scene (GPU can't split it)")
+                            ui.text("  Grass + reeds: not separately measurable this frame")
                         }
                         None => ui.text("  Grass + reeds: --"),
                     }

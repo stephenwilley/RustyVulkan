@@ -21,9 +21,12 @@ and treat copies in descriptors and scene records as borrowed handles.
 
 `App::drop` waits for GPU work and destroys dependent renderers and managers
 before dropping `VulkanBase`. The backend destroys VMA allocations before the
-allocator, then the logical device, surface, and instance. `ShaderModule` uses
-Rust `Drop`, but its cloned Ash device wrapper does not extend the actual Vulkan
-device's lifetime.
+allocator, then the logical device, surface, and instance. `ShaderStageInfo` owns
+SPIR-V words in a Rust vector; no Vulkan shader-module objects are created.
+Pipeline creation chains a `VkShaderModuleCreateInfo` describing those words into
+each stage via `VK_KHR_maintenance5`. Keep the words and chained structures alive
+until the pipeline creation call returns. Retained SPIR-V supports later pipeline
+rebuilds and is freed when its Rust owner is dropped.
 
 The texture cache owns shared images and its sampler. Materials hold copies of
 those handles and must be destroyed before cache teardown. Upload staging memory must remain alive until

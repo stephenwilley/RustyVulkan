@@ -19,7 +19,7 @@ use std::error::Error;
 use std::fmt;
 
 /// Neutral albedo used when a material supplies only a normal map.
-const DEFAULT_DIFFUSE_TEXTURE_PATH: &str = "assets/meshes/sponza/white.png";
+const DEFAULT_DIFFUSE_TEXTURE_PATH: &str = "assets/textures/default_diffuse.png";
 
 /// The Material struct holds the information required to create a material
 pub struct Material {

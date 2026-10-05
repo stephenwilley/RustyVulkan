@@ -132,27 +132,27 @@ pub fn run(mut self) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
         }
     }
 // ...
-match VulkanBase::new(self.window.as_ref().unwrap(), event_loop) {
-    Ok(vulkan_base) =&gt; {
-        self.vulkan_base = Some(vulkan_base);
+    match VulkanBase::new(self.window.as_ref().unwrap(), event_loop) {
+        Ok(vulkan_base) =&gt; {
+            self.vulkan_base = Some(vulkan_base);
+        }
+        Err(e) =&gt; {
+            self.fatal_error = Some(e);
+            event_loop.exit();
+            return;
+        }
     }
-    Err(e) =&gt; {
+// ...
+    if let Err(e) = self.set_up_scene() {
         self.fatal_error = Some(e);
         event_loop.exit();
         return;
     }
-}
-// ...
-if let Err(e) = self.set_up_scene() {
-    self.fatal_error = Some(e);
-    event_loop.exit();
-    return;
-}
 
-self.render_graph.add(RenderPassNode::Shadow);
-self.render_graph.add(RenderPassNode::Main);
-let show = self.vulkan_base.as_ref().unwrap().engine_settings.show_ui;
-self.render_graph.set_pass_enabled(RenderPassNode::UI, show);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L469-L530">src/app/app.rs:469-482,494-503,521-530</a></figcaption></figure><!--/x-->
+    self.render_graph.add(RenderPassNode::Shadow);
+    self.render_graph.add(RenderPassNode::Main);
+    let show = self.vulkan_base.as_ref().unwrap().engine_settings.show_ui;
+    self.render_graph.set_pass_enabled(RenderPassNode::UI, show);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/app.rs#L469-L530">src/app/app.rs:469-482,494-503,521-530</a></figcaption></figure><!--/x-->
     <p>The order is the order of the guide: window, ImGui context, the Vulkan backend
     (<a href="03-instance-devices.html">Chapter 3</a>), the ImGui renderer, the scene
     (<a href="12-main-pass-scene.html">Chapter 12</a>), and finally the passes. The guard at the top matters

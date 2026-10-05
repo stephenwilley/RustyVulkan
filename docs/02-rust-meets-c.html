@@ -305,23 +305,23 @@ let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></p
         // `Drop` gives us `&amp;mut self`, but Vulkan does not know Rust's
         // ownership graph.  Destroy resources in reverse dependency order.
 // ...
-if let Err(error) = self.device.device_wait_idle() {
-    eprintln!("Failed to wait for device during shutdown: {error}");
-}
+        if let Err(error) = self.device.device_wait_idle() {
+            eprintln!("Failed to wait for device during shutdown: {error}");
+        }
 // ...
-self.device.destroy_command_pool(self.command_pool, None);
-// `Option::take` moves the allocator out while we only have `&amp;mut self`.
-// Dropping it here frees VMA memory before its Vulkan device disappears.
-if let Some(alloc) = self.allocator.take() {
+        self.device.destroy_command_pool(self.command_pool, None);
+        // `Option::take` moves the allocator out while we only have `&amp;mut self`.
+        // Dropping it here frees VMA memory before its Vulkan device disappears.
+        if let Some(alloc) = self.allocator.take() {
 // ...
-    drop(alloc);
-}
-self.device.destroy_device(None);
-self.surface_loader.destroy_surface(self.surface, None);
-#[cfg(debug_assertions)]
-self.debug_utils_loader
-    .destroy_debug_utils_messenger(self.debug_messenger, None);
-self.instance.destroy_instance(None);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L744-L809">src/vulkan/base.rs:744-748,751-753,790-793,802-809</a></figcaption></figure><!--/x-->
+            drop(alloc);
+        }
+        self.device.destroy_device(None);
+        self.surface_loader.destroy_surface(self.surface, None);
+        #[cfg(debug_assertions)]
+        self.debug_utils_loader
+            .destroy_debug_utils_messenger(self.debug_messenger, None);
+        self.instance.destroy_instance(None);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L744-L809">src/vulkan/base.rs:744-748,751-753,790-793,802-809</a></figcaption></figure><!--/x-->
     <p>Note that it logs the wait-idle error rather than returning it with <code>?</code>: a destructor has no
     caller to report to, and panicking in a destructor while another panic is unwinding aborts the program.
     The allocator is stored as an <code>Option</code> so it can be

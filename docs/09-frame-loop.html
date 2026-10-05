@@ -173,40 +173,40 @@ let image_owner_fence = vec![vk::Fence::null(); image_count];</code></pre><figca
         self.device
             .wait_for_fences(&amp;[self.in_flight_fences[slot]], true, u64::MAX)?;
 // ...
-// Acquire an image; signal when it's ready via the per-slot image-available semaphore.
-let (image_index, is_suboptimal) = match self.swapchain_loader.acquire_next_image(
-    self.swapchain.handle,
-    u64::MAX,
-    self.image_available_semaphores[slot],
-    vk::Fence::null(),
-) {
-    Ok(result) =&gt; result,
-    Err(vk::Result::ERROR_OUT_OF_DATE_KHR) =&gt; {
-        self.swapchain_recreation_needed = true;
-        return Ok(None);
-    }
-    Err(e) =&gt; return Err(e.into()),
-};
-self.swapchain_recreation_needed |= is_suboptimal;
+        // Acquire an image; signal when it's ready via the per-slot image-available semaphore.
+        let (image_index, is_suboptimal) = match self.swapchain_loader.acquire_next_image(
+            self.swapchain.handle,
+            u64::MAX,
+            self.image_available_semaphores[slot],
+            vk::Fence::null(),
+        ) {
+            Ok(result) =&gt; result,
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) =&gt; {
+                self.swapchain_recreation_needed = true;
+                return Ok(None);
+            }
+            Err(e) =&gt; return Err(e.into()),
+        };
+        self.swapchain_recreation_needed |= is_suboptimal;
 
-let idx = image_index as usize;
-self.current_image_index = idx;
+        let idx = image_index as usize;
+        self.current_image_index = idx;
 
-// If this image is still tied to an older in-flight slot, wait for that slot to finish first.
-if self.image_owner_fence[idx] != vk::Fence::null() {
-    self.device
-        .wait_for_fences(&amp;[self.image_owner_fence[idx]], true, u64::MAX)?;
-}
+        // If this image is still tied to an older in-flight slot, wait for that slot to finish first.
+        if self.image_owner_fence[idx] != vk::Fence::null() {
+            self.device
+                .wait_for_fences(&amp;[self.image_owner_fence[idx]], true, u64::MAX)?;
+        }
 
-// Reuse this slot's fence for the new submit and associate it with this image.
-self.device.reset_fences(&amp;[self.in_flight_fences[slot]])?;
-self.image_owner_fence[idx] = self.in_flight_fences[slot];
+        // Reuse this slot's fence for the new submit and associate it with this image.
+        self.device.reset_fences(&amp;[self.in_flight_fences[slot]])?;
+        self.image_owner_fence[idx] = self.in_flight_fences[slot];
 
-// Begin recording; passes are responsible for starting rendering.
-let cmd_buf = self.command_buffers[idx];
+        // Begin recording; passes are responsible for starting rendering.
+        let cmd_buf = self.command_buffers[idx];
 
-let begin_info = vk::CommandBufferBeginInfo::default();
-self.device.begin_command_buffer(cmd_buf, &amp;begin_info)?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L236-L301">src/vulkan/base.rs:236-242,268-301</a></figcaption></figure><!--/x-->
+        let begin_info = vk::CommandBufferBeginInfo::default();
+        self.device.begin_command_buffer(cmd_buf, &amp;begin_info)?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L236-L301">src/vulkan/base.rs:236-242,268-301</a></figcaption></figure><!--/x-->
     <p>In order:</p>
     <ol>
       <li><strong>Wait for this slot's fence.</strong> <code>u64::MAX</code> means no timeout. If the GPU has

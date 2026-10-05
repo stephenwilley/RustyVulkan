@@ -236,9 +236,9 @@ struct UiFrameBuffers {
     index_buffer_size: vk::DeviceSize,
 }
 // ...
-/// One buffer pair per swapchain image: rewriting a single pair each frame would race
-/// with the previous frame, which may still be drawing from it.
-frame_buffers: Vec&lt;UiFrameBuffers&gt;,</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/imgui_renderer.rs#L37-L58">src/vulkan/imgui_renderer.rs:37-45,56-58</a></figcaption></figure><!--/x-->
+    /// One buffer pair per swapchain image: rewriting a single pair each frame would race
+    /// with the previous frame, which may still be drawing from it.
+    frame_buffers: Vec&lt;UiFrameBuffers&gt;,</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/imgui_renderer.rs#L37-L58">src/vulkan/imgui_renderer.rs:37-45,56-58</a></figcaption></figure><!--/x-->
     <!--x src/vulkan/imgui_renderer.rs 81-91--><figure class="code"><pre><code class="language-rust">let index_size =
     (draw_data.total_idx_count as usize * std::mem::size_of::&lt;DrawIdx&gt;()) as vk::DeviceSize;
 if self.frame_buffers.len() &lt;= image_index {

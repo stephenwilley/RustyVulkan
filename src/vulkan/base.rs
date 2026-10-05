@@ -56,12 +56,16 @@ mod setup;
 /// Timestamp queries are asynchronous: these values describe the previous completed frame,
 /// which keeps the profiler from stalling the CPU waiting for the GPU.  `scene_ms` is the
 /// main scene after shadows and before vegetation; `total_ms` also includes the UI pass.
+/// GPUs that only timestamp at render-pass boundaries, such as Apple GPUs under
+/// KosmicKrisp, write both vegetation boundaries at the end of the main pass, so
+/// `vegetation_in_scene` is set and `scene_ms` includes the vegetation.
 #[derive(Clone, Copy, Default)]
 pub struct GpuPassTimings {
     pub total_ms: Option<f32>,
     pub shadow_ms: Option<f32>,
     pub scene_ms: Option<f32>,
     pub vegetation_ms: Option<f32>,
+    pub vegetation_in_scene: bool,
 }
 
 #[repr(u32)]
@@ -254,6 +258,7 @@ impl VulkanBase {
                         shadow_ms: self.timestamp_delta_ms(data[0], data[1]),
                         scene_ms: self.timestamp_delta_ms(data[1], data[2]),
                         vegetation_ms: self.timestamp_delta_ms(data[2], data[3]),
+                        vegetation_in_scene: data[2] == data[3],
                     };
                 }
                 // Clear the record; we'll set it again on submit

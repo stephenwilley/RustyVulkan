@@ -396,7 +396,7 @@ self.submit_commands(
 );</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/grass.rs#L439-L455">src/graphics/grass.rs:439-455</a></figcaption></figure><!--/x-->
     <p>The same pattern repeats for the medium LOD (a different blade mesh), the mid LOD (its own pipeline, using the cheaper <code>grass_mid.frag</code>), and the reeds, which use a six-sided stalk with a capsule-shaped flower head and
     their own instance buffer. The whole vegetation block is bracketed by GPU timestamps, which feed the profiler's
-    vegetation figure (<a href="09-frame-loop.html">Chapter 9</a>).</p>
+    vegetation figure where the GPU can time it separately (<a href="09-frame-loop.html">Chapter 9</a>).</p>
     <aside class="callout rust"><p class="callout-title">Rust note · raw pointers in a struct</p>
       <p><code>IndirectBuffer</code> keeps the mapped memory as <code>mapped: *mut
       vk::DrawIndexedIndirectCommand</code>, a raw pointer. Unlike a reference, Rust doesn't track its lifetime,

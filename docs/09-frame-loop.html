@@ -165,7 +165,7 @@ let image_owner_fence = vec![vk::Fence::null(); image_count];</code></pre><figca
     an unsignalled fence would never fire.</p>
 
     <h2><code>begin_frame</code></h2>
-    <!--x src/vulkan/base.rs 232-238,263-296--><figure class="code"><pre><code class="language-rust">pub fn begin_frame(&amp;mut self) -&gt; Result&lt;Option&lt;FrameCtx&gt;, Box&lt;dyn Error&gt;&gt; {
+    <!--x src/vulkan/base.rs 236-242,268-301--><figure class="code"><pre><code class="language-rust">pub fn begin_frame(&amp;mut self) -&gt; Result&lt;Option&lt;FrameCtx&gt;, Box&lt;dyn Error&gt;&gt; {
     unsafe {
         let slot = self.frame_slot;
 
@@ -206,7 +206,7 @@ let image_owner_fence = vec![vk::Fence::null(); image_count];</code></pre><figca
         let cmd_buf = self.command_buffers[idx];
 
         let begin_info = vk::CommandBufferBeginInfo::default();
-        self.device.begin_command_buffer(cmd_buf, &amp;begin_info)?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base.rs#L232-L296">src/vulkan/base.rs:232-296</a></figcaption></figure><!--/x-->
+        self.device.begin_command_buffer(cmd_buf, &amp;begin_info)?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base.rs#L236-L301">src/vulkan/base.rs:236-301</a></figcaption></figure><!--/x-->
     <p>In order:</p>
     <ol>
       <li><strong>Wait for this slot's fence.</strong> <code>u64::MAX</code> means no timeout. If the GPU has
@@ -245,7 +245,7 @@ let image_owner_fence = vec![vk::Fence::null(); image_count];</code></pre><figca
     <p>Steps 3–5 are the subject of <a href="10-render-graph.html">Chapter 10</a>.</p>
 
     <h2><code>end_frame</code>: submit and present</h2>
-    <!--x src/vulkan/base.rs 355-373,386-398--><figure class="code"><pre><code class="language-rust">self.device.end_command_buffer(frame.cmd_buf)?;
+    <!--x src/vulkan/base.rs 360-378,391-403--><figure class="code"><pre><code class="language-rust">self.device.end_command_buffer(frame.cmd_buf)?;
 
 let wait = [vk::SemaphoreSubmitInfo::default()
     .semaphore(self.image_available_semaphores[frame.frame_slot])
@@ -277,7 +277,7 @@ match self
 }
 
 // Advance to next CPU slot
-self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len();</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base.rs#L355-L398">src/vulkan/base.rs:355-398</a></figcaption></figure><!--/x-->
+self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len();</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base.rs#L360-L403">src/vulkan/base.rs:360-403</a></figcaption></figure><!--/x-->
     <p>The submit ties the three hazards together:</p>
     <ul>
       <li><strong>Wait</strong> on the slot's image-available semaphore, but only at the
@@ -314,7 +314,7 @@ self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len()
     are written per frame: start, end of shadows, start and end of vegetation, and end. Reading results
     straight after submitting would mean waiting for the GPU, so instead they're read in a later
     <code>begin_frame</code>, just after that slot's fence wait has guaranteed they're complete:</p>
-    <!--x src/vulkan/base.rs 242-258--><figure class="code"><pre><code class="language-rust">if let Some(prev_image_index) = self.last_image_per_slot[slot] {
+    <!--x src/vulkan/base.rs 246-263--><figure class="code"><pre><code class="language-rust">if let Some(prev_image_index) = self.last_image_per_slot[slot] {
     let base = self.image_query_base(prev_image_index);
     let mut data = [0_u64; TIMESTAMPS_PER_IMAGE as usize];
     let res = self.device.get_query_pool_results(
@@ -329,12 +329,17 @@ self.frame_slot = (frame.frame_slot + 1) % self.image_available_semaphores.len()
             shadow_ms: self.timestamp_delta_ms(data[0], data[1]),
             scene_ms: self.timestamp_delta_ms(data[1], data[2]),
             vegetation_ms: self.timestamp_delta_ms(data[2], data[3]),
+            vegetation_in_scene: data[2] == data[3],
         };
-    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base.rs#L242-L258">src/vulkan/base.rs:242-258</a></figcaption></figure><!--/x-->
+    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base.rs#L246-L263">src/vulkan/base.rs:246-263</a></figcaption></figure><!--/x-->
     <p>Results are read without asking Vulkan to wait for them; that's safe only because the fence has already
     been waited on. Raw ticks are converted to milliseconds using the device's <code>timestamp_period</code>
     (nanoseconds per tick). The reported numbers therefore describe the frame from two frames ago, which is
     perfectly good for a profiler and costs nothing.</p>
+    <p>Not every GPU can honour a timestamp anywhere. Apple GPUs, under KosmicKrisp, record them only at the
+    edges of a render pass, so both vegetation timestamps, which sit inside the main pass, land at its end
+    with the same value. <code>vegetation_in_scene</code> notes that case, and the profiler then labels the
+    scene figure as including vegetation instead of showing an empty grass line.</p>
 
     <h2>When the swapchain changes</h2>
     <p>Recreation (<a href="04-swapchain.html">Chapter 4</a>) happens only at frame boundaries: before

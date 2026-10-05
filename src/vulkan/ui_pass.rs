@@ -160,12 +160,20 @@ impl RenderPass for UiPass {
                         Some(ms) => ui.text(format!("  Shadow: {:.2} ms", ms)),
                         None => ui.text("  Shadow: --"),
                     }
+                    let scene_label = if timings.vegetation_in_scene {
+                        "Scene incl. vegetation"
+                    } else {
+                        "Scene before vegetation"
+                    };
                     match timings.scene_ms {
-                        Some(ms) => ui.text(format!("  Scene before vegetation: {:.2} ms", ms)),
-                        None => ui.text("  Scene before vegetation: --"),
+                        Some(ms) => ui.text(format!("  {scene_label}: {:.2} ms", ms)),
+                        None => ui.text(format!("  {scene_label}: --")),
                     }
                     match timings.vegetation_ms {
                         Some(ms) => ui.text(format!("  Grass + reeds: {:.2} ms", ms)),
+                        None if timings.vegetation_in_scene => {
+                            ui.text("  Grass + reeds: in scene (GPU can't split it)")
+                        }
                         None => ui.text("  Grass + reeds: --"),
                     }
                     ui.text(format!(

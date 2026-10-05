@@ -341,7 +341,7 @@ layout(set = 1, binding = 1) uniform sampler2D normalMap;</code></pre><figcaptio
     <p><code>std140</code> fixes the buffer's memory layout by strict rules: for instance, a <code>vec3</code>
     is aligned like a <code>vec4</code>, to 16 bytes. The Rust struct that's copied into this buffer each frame
     (<a href="05-gpu-memory.html">Chapter 5</a>) has to reproduce that layout:</p>
-    <!--x src/vulkan/base.rs 836-851--><figure class="code"><pre><code class="language-rust">/// Global (per-frame/per-image) uniform buffer object shared across all pipelines via **descriptor set 0, binding 0**.
+    <!--x src/vulkan/base.rs 841-856--><figure class="code"><pre><code class="language-rust">/// Global (per-frame/per-image) uniform buffer object shared across all pipelines via **descriptor set 0, binding 0**.
 /// There is **one buffer per swapchain image** so the CPU can update the UBO while another image is still in-flight.
 /// Keep fields 16-byte aligned for std140. Field order must match every GLSL `GlobalUBO`.
 #[repr(C, align(16))]
@@ -356,7 +356,7 @@ pub struct GlobalUbo {
     pub lights: [GpuLight; crate::app::app::MAX_LIGHTS], // array of point lights
     pub light_count: u32,                                // number of active point lights
     pub _pad0: [u32; 3],                                 // three GLSL uints, never a uvec3 (std140)
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base.rs#L836-L851">src/vulkan/base.rs:836-851</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base.rs#L841-L856">src/vulkan/base.rs:841-856</a></figcaption></figure><!--/x-->
     <p><code>std140</code> is a contract, and the Rust side reproduces it by hand with explicit
     <code>_pad</code> fields and <code>align(16)</code>. Nothing checks that the two agree. Get it wrong and the
     shader silently reads shifted values. <code>cascade_splits</code> shows the care needed: it's a

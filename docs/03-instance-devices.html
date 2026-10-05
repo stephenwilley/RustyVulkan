@@ -209,7 +209,7 @@ let create_info = vk::DebugUtilsMessengerCreateInfoEXT {
 let messenger = unsafe { loader.create_debug_utils_messenger(&amp;create_info, None)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base/setup.rs#L707-L718">src/vulkan/base/setup.rs:707-718</a></figcaption></figure><!--/x-->
     <p>The callback itself just formats the message and prints it to standard error. Returning
     <code>vk::FALSE</code> tells the layer not to abort the Vulkan call that triggered the message:</p>
-    <!--x src/vulkan/base.rs 79-87,101-104--><figure class="code"><pre><code class="language-rust">#[cfg(debug_assertions)]
+    <!--x src/vulkan/base.rs 83-91,105-108--><figure class="code"><pre><code class="language-rust">#[cfg(debug_assertions)]
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
     message_type: vk::DebugUtilsMessageTypeFlagsEXT,
@@ -222,7 +222,7 @@ unsafe extern "system" fn vulkan_debug_callback(
         eprintln!("{} {} {:?}", severity, ty, message);
     }
     vk::FALSE
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base.rs#L79-L104">src/vulkan/base.rs:79-104</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base.rs#L83-L108">src/vulkan/base.rs:83-108</a></figcaption></figure><!--/x-->
     <aside class="callout rust"><p class="callout-title">Rust note · a function C can call</p>
       <p><code>extern "system"</code> tells the compiler to use the platform's C calling convention, so that
       Vulkan (C code) can call this Rust function through a pointer. Its parameters are raw C types: a raw

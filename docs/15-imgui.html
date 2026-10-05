@@ -331,7 +331,7 @@ let grow_vertex_buffer = vertex_size &gt; buffers.vertex_buffer_size;</code></pr
     <h2>Showing the shadow cascades</h2>
     <p>To show a GPU image in a window, it needs an entry in the texture list like the font's, registered under a texture id.
     The cascade panel does this for each layer of the shadow map:</p>
-    <!--x src/vulkan/ui_pass.rs 221-244--><figure class="code"><pre><code class="language-rust">let shadow_tex_ids: Option&lt;[imgui::TextureId; SHADOW_CASCADE_COUNT]&gt; =
+    <!--x src/vulkan/ui_pass.rs 229-252--><figure class="code"><pre><code class="language-rust">let shadow_tex_ids: Option&lt;[imgui::TextureId; SHADOW_CASCADE_COUNT]&gt; =
     ctx.attachments.get(&amp;AttachmentKind::Shadow).map(|handle| {
         std::array::from_fn(|cascade| {
             ui_ctx.renderer.shadow_texture_id(
@@ -354,7 +354,7 @@ ui.window("Shadow Cascades")
                     imgui::Image::new(texture_id, [224.0, 224.0])
                         .uv0([0.0, 1.0])
                         .uv1([1.0, 0.0])
-                        .build(ui);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/ui_pass.rs#L221-L244">src/vulkan/ui_pass.rs:221-244</a></figcaption></figure><!--/x-->
+                        .build(ui);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/ui_pass.rs#L229-L252">src/vulkan/ui_pass.rs:229-252</a></figcaption></figure><!--/x-->
     <p>Each cascade uses its own single-layer view of the shadow array (<a href="10-render-graph.html">Chapter
     10</a>), sampled with the shadow sampler. The shadow map is a per-swapchain-image attachment, so
     <code>shadow_texture_id</code> points each cascade's texture id at this frame's view. Pushed descriptors are

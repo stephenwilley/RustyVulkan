@@ -230,7 +230,7 @@ pub struct Vertex {
     <p>The per-frame block of settings (sun direction, shadow matrices, lights) also lives in host-visible
     buffers, one per swapchain image, created with VMA's <code>MAPPED</code> flag so they stay mapped for their
     whole life. Updating one is just a copy and a flush:</p>
-    <!--x src/vulkan/base.rs 494-511--><figure class="code"><pre><code class="language-rust">pub fn update_global_ubo(&amp;mut self, image_index: usize, ubo: &amp;GlobalUbo) {
+    <!--x src/vulkan/base.rs 499-516--><figure class="code"><pre><code class="language-rust">pub fn update_global_ubo(&amp;mut self, image_index: usize, ubo: &amp;GlobalUbo) {
     let allocator = self.allocator.as_ref().expect("allocator");
     let allocation = &amp;self.ubo_allocations[image_index];
     unsafe {
@@ -247,7 +247,7 @@ pub struct Vertex {
             .flush_allocation(allocation, 0, std::mem::size_of::&lt;GlobalUbo&gt;() as u64)
             .expect("flush UBO");
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base.rs#L494-L511">src/vulkan/base.rs:494-511</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base.rs#L499-L516">src/vulkan/base.rs:499-516</a></figcaption></figure><!--/x-->
     <p>There's one buffer per swapchain image so that the CPU never overwrites data the GPU is still reading
     for an earlier frame. <a href="09-frame-loop.html">Chapter 9</a> shows how the frame loop guarantees that,
     and <a href="08-descriptors-materials.html">Chapter 8</a> how shaders find these buffers.</p>

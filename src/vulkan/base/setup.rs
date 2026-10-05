@@ -535,9 +535,7 @@ impl VulkanBase {
         let command_pool = Self::create_command_pool(&device, graphics_queue_family_index)?;
 
         // Create a Vulkan Memory Allocator (VMA) instance.
-        let mut allocator_info =
-            vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
-        allocator_info.flags |= vk_mem::AllocatorCreateFlags::EXT_MEMORY_BUDGET;
+        let allocator_info = vk_mem::AllocatorCreateInfo::new(&instance, &device, physical_device);
         let allocator = unsafe { Allocator::new(allocator_info)? };
 
         // Binding 1 contains one sampled 2D-array view of all shadow cascades.

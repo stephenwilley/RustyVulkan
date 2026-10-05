@@ -125,15 +125,14 @@
   <section id="deep-dive">
     <h2>The allocator</h2>
     <p>VMA is created once, straight after the device, in <code>VulkanBase::new</code>:</p>
-    <!--x src/vulkan/base/setup.rs 537-541--><figure class="code"><pre><code class="language-rust">// Create a Vulkan Memory Allocator (VMA) instance.
-let mut allocator_info =
-    vk_mem::AllocatorCreateInfo::new(&amp;instance, &amp;device, physical_device);
-allocator_info.flags |= vk_mem::AllocatorCreateFlags::EXT_MEMORY_BUDGET;
-let allocator = unsafe { Allocator::new(allocator_info)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/ffbaa49ecdab9cf9bdc00f06f7945d534b62f2b4/src/vulkan/base/setup.rs#L537-L541">src/vulkan/base/setup.rs:537-541</a></figcaption></figure><!--/x-->
-    <p>The <code>EXT_MEMORY_BUDGET</code> flag lets VMA track how much memory the system is willing to give
-    this process. The allocator is stored as an <code>Option</code> so it can be destroyed at a chosen moment
-    during teardown (<a href="02-rust-meets-c.html#rust-drop">Chapter 2</a>). That's why later code reaches
-    it through <code>vb.allocator.as_ref()</code>.</p>
+    <!--x src/vulkan/base/setup.rs 537-539--><figure class="code"><pre><code class="language-rust">// Create a Vulkan Memory Allocator (VMA) instance.
+let allocator_info = vk_mem::AllocatorCreateInfo::new(&amp;instance, &amp;device, physical_device);
+let allocator = unsafe { Allocator::new(allocator_info)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L537-L539">src/vulkan/base/setup.rs:537-539</a></figcaption></figure><!--/x-->
+    <p>VMA estimates the memory budget by default. Its <code>EXT_MEMORY_BUDGET</code> flag would also
+    require enabling <code>VK_EXT_memory_budget</code> on the device, so it is left unset here.
+    The allocator is stored as an <code>Option</code> so it can be destroyed at a chosen moment
+    during <a href="02-rust-meets-c.html#rust-drop">teardown</a>, before the Vulkan device. The rest of the code borrows it through
+    <code>vb.allocator.as_ref()</code>.</p>
 
     <h2>A vertex, as the GPU sees it</h2>
     <p>Before uploading vertices, the code needs a Rust type whose memory layout the GPU can read:</p>

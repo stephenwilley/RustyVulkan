@@ -119,7 +119,7 @@ struct GrassInstance {
     /// Rotation, width, colour variation, and wind phase packed as UNORM16 values.
     /// Vulkan expands these back to `0.0..=1.0` before the vertex shader sees them.
     rotation_width_tint_phase: [u16; 4],
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass.rs#L68-L87">src/graphics/grass.rs:68-87</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/grass.rs#L68-L87">src/graphics/grass.rs:68-87</a></figcaption></figure><!--/x-->
     <p>A <code>GrassVertex</code> is a point on the shared blade: 28 bytes, ten of them. A
     <code>GrassInstance</code> is eight 16-bit numbers. Each is a fraction of a known range stored as an integer
     from 0 to 65 535 (a <dfn>UNORM16</dfn> value), which the GPU turns back into a float between 0 and 1
@@ -135,7 +135,7 @@ struct GrassInstance {
         pack_range(z, INSTANCE_Z_RANGE),
         pack_range(height, INSTANCE_HEIGHT_RANGE),
     ]
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass/generation.rs#L61-L72">src/graphics/grass/generation.rs:61-72</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/grass/generation.rs#L61-L72">src/graphics/grass/generation.rs:61-72</a></figcaption></figure><!--/x-->
     <p>Across a 161 m field, 16 bits gives a position step of about 2.5 mm, which is plenty. Packing halves the
     instance buffer compared with 32-bit floats: about 59 MB instead of 117.</p>
     <p>The pipeline describes two bindings, one stepped per vertex and one per instance, and tells Vulkan the
@@ -164,7 +164,7 @@ struct GrassInstance {
         location: 4,
         format: vk::Format::R16G16B16A16_UNORM,
         offset: offset_of!(GrassInstance, rotation_width_tint_phase) as u32,
-    },</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass/pipeline.rs#L41-L83">src/graphics/grass/pipeline.rs:41-83</a></figcaption></figure><!--/x-->
+    },</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/grass/pipeline.rs#L41-L83">src/graphics/grass/pipeline.rs:41-83</a></figcaption></figure><!--/x-->
 
     <h2>Generating the field</h2>
     <p>The field is a 1792 × 1792 grid with two candidate roots per cell, nudged by a hash so the rows don't show.
@@ -190,7 +190,7 @@ if is_clearing(x, z) {
 let ground_y = terrain.height_at(x, z) + 0.003;
 let blade_height = 0.14 + hash01(id, 2) * 0.18 + grass_density * 0.08;
 min_y = min_y.min(ground_y);
-max_y = max_y.max(ground_y + blade_height);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass/generation.rs#L263-L283">src/graphics/grass/generation.rs:263-283</a></figcaption></figure><!--/x-->
+max_y = max_y.max(ground_y + blade_height);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/grass/generation.rs#L263-L283">src/graphics/grass/generation.rs:263-283</a></figcaption></figure><!--/x-->
     <p>That density is the terrain's own <code>grass_density_at</code> (<a href="13-procedural-world.html">Chapter
     13</a>), pre-sampled into a coarse 129 × 129 map for speed, times a fall-off that thins the field to 30%
     towards its edges. <code>hash01</code> is a hash like the terrain's, with a "stream" number so that each
@@ -214,7 +214,7 @@ max_y = max_y.max(ground_y + blade_height);</code></pre><figcaption><a href="htt
 let mid_count = mid_subset.len() as u32;
 let near_count = (mid_subset.len() + remaining.len()) as u32;
 instances.extend(mid_subset);
-instances.extend(remaining);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass/generation.rs#L299-L316">src/graphics/grass/generation.rs:299-316</a></figcaption></figure><!--/x-->
+instances.extend(remaining);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/grass/generation.rs#L299-L316">src/graphics/grass/generation.rs:299-316</a></figcaption></figure><!--/x-->
     <p>Within each chunk, a stable random half of the blades is stored first. The "mid" LOD draws just that first
     half of the chunk's range; the near LODs draw the whole range. Neither needs its own copy of the data.</p>
 
@@ -239,7 +239,7 @@ instances.extend(remaining);</code></pre><figcaption><a href="https://github.com
 
     mat2 blade_rotation = rotate2d(rotation);
     vec2 local_xz = blade_rotation * inLocalPosition.xz * blade_width;
-    vec2 normal_xz = blade_rotation * inLocalNormal.xz;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/assets/shaders/grass.vert#L47-L66">assets/shaders/grass.vert:47-66</a></figcaption></figure><!--/x-->
+    vec2 normal_xz = blade_rotation * inLocalNormal.xz;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/assets/shaders/grass.vert#L47-L66">assets/shaders/grass.vert:47-66</a></figcaption></figure><!--/x-->
     <p>The bounds are written in both languages (<code>INSTANCE_X_RANGE</code> and friends in Rust, the literal
     <code>mix(-80.5, 80.5, …)</code> here), so changing one without the other would misplace the whole field.
     <code>grassParams.z</code> is the LOD value from the push constants, 0, 0.5 or 1 for near, medium and mid; it
@@ -267,7 +267,7 @@ vec3 world_position = vec3(
     position_height.x + local_xz.x + local_wind.x * bend,
     position_height.y + height_fraction * position_height.w - abs(bend) * 0.12,
     position_height.z + local_xz.y + local_wind.y * bend
-);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/assets/shaders/grass.vert#L70-L99">assets/shaders/grass.vert:70-99</a></figcaption></figure><!--/x-->
+);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/assets/shaders/grass.vert#L70-L99">assets/shaders/grass.vert:70-99</a></figcaption></figure><!--/x-->
     <p>Two samples of the wind map, scrolling at different speeds and scales, give a gust strength
     (<code>broad</code>) and turbulence (<code>detail</code>). A continuous sway built from smoothed triangle
     waves runs underneath. The total bend grows with the <em>square</em> of height up the blade, so roots stay
@@ -298,7 +298,7 @@ self.visible_chunks
 
 for visible in &amp;self.visible_chunks {
     let chunk = &amp;self.chunks[visible.index];
-    match grass_lod(visible.distance) {</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass.rs#L553-L570">src/graphics/grass.rs:553-570</a></figcaption></figure><!--/x-->
+    match grass_lod(visible.distance) {</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/grass.rs#L553-L570">src/graphics/grass.rs:553-570</a></figcaption></figure><!--/x-->
     <p>Every chunk is tested each frame. <code>chunk_intersects_frustum</code> transforms the eight corners of the
     chunk's box (including the real height range of its ground and blades) to clip space, and rejects it only if
     all eight lie outside the same clip plane, a conservative test with no plane maths.
@@ -316,7 +316,7 @@ for visible in &amp;self.visible_chunks {
         vertex_offset: 0,
         first_instance: range.first,
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass/generation.rs#L469-L480">src/graphics/grass/generation.rs:469-480</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/grass/generation.rs#L469-L480">src/graphics/grass/generation.rs:469-480</a></figcaption></figure><!--/x-->
     <p><code>first_instance</code> is where the chunk's blades start in the shared instance buffer, so no data
     moves; only this 20-byte command is written each frame, into a mapped buffer belonging to the current
     swapchain image (<a href="09-frame-loop.html#frames-in-flight">Chapter 9</a>).</p>
@@ -368,7 +368,7 @@ for visible in &amp;self.visible_chunks {
             };
         }
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass.rs#L658-L704">src/graphics/grass.rs:658-704</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/grass.rs#L658-L704">src/graphics/grass.rs:658-704</a></figcaption></figure><!--/x-->
     <p>The preferred path issues each LOD's commands with one <code>cmd_draw_indexed_indirect</code>, in batches
     no larger than the device's limit. Without multi-draw, it issues them one at a time.</p>
     <p>The first branch is a fallback for GPUs that lack the <code>drawIndirectFirstInstance</code> feature,
@@ -393,7 +393,7 @@ self.submit_commands(
     near_offset,
     &amp;self.near_commands,
     vb,
-);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass.rs#L439-L455">src/graphics/grass.rs:439-455</a></figcaption></figure><!--/x-->
+);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/graphics/grass.rs#L439-L455">src/graphics/grass.rs:439-455</a></figcaption></figure><!--/x-->
     <p>The same pattern repeats for the medium LOD (a different blade mesh), the mid LOD (its own pipeline, using the cheaper <code>grass_mid.frag</code>), and the reeds, which use a six-sided stalk with a capsule-shaped flower head and
     their own instance buffer. The whole vegetation block is bracketed by GPU timestamps, which feed the profiler's
     vegetation figure (<a href="09-frame-loop.html">Chapter 9</a>).</p>
@@ -422,7 +422,7 @@ self.submit_commands(
 
   <nav class="pager"><a class="prev" href="13-procedural-world.html">← 13 · A procedural world</a><a class="next" href="15-imgui.html">15 · The ImGui overlay →</a></nav>
 </main>
-<footer class="site">Based on commit <code>79546db</code>, with local device-capability and UI dependency fixes. · <a href="index.html#contents">Contents</a></footer>
+<footer class="site">Based on commit <code>93972f2</code>. · <a href="index.html#contents">Contents</a></footer>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>

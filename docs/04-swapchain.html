@@ -115,7 +115,7 @@
         window.window_handle().unwrap().as_raw(),
         None,
     )?
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L278-L286">src/vulkan/base/setup.rs:278-286</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/base/setup.rs#L278-L286">src/vulkan/base/setup.rs:278-286</a></figcaption></figure><!--/x-->
     <p><code>display_handle()</code> and <code>window_handle()</code> come from the
     <code>raw-window-handle</code> crate, a common vocabulary that windowing libraries (here winit) and
     graphics libraries (here ash-window) both speak. On macOS, <code>ash-window</code> uses them to find the
@@ -135,7 +135,7 @@ let formats = unsafe {
 
 let present_modes = unsafe {
     surface_loader.get_physical_device_surface_present_modes(physical_device, surface)?
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/swapchain.rs#L500-L510">src/vulkan/swapchain.rs:500-510</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/swapchain.rs#L500-L510">src/vulkan/swapchain.rs:500-510</a></figcaption></figure><!--/x-->
     <p><em>Capabilities</em> cover image-count limits, size limits and the current size, and supported
     transforms and alpha modes. <em>Formats</em> are the (pixel format, colour space) pairs the surface accepts,
     and <em>present modes</em> are the presentation strategies. Then <code>new_with_old_swapchain</code> picks
@@ -156,7 +156,7 @@ if swapchain_support.capabilities.max_image_count &gt; 0
     &amp;&amp; image_count &gt; swapchain_support.capabilities.max_image_count
 {
     image_count = swapchain_support.capabilities.max_image_count;
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/swapchain.rs#L96-L112">src/vulkan/swapchain.rs:96-112</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/swapchain.rs#L96-L112">src/vulkan/swapchain.rs:96-112</a></figcaption></figure><!--/x-->
     <p>The depth format, <code>D32_SFLOAT</code> (a 32-bit float per pixel), isn't part of the swapchain at
     all; it's recorded here for the depth images made alongside it. The image count is three, clamped into the
     surface's allowed range. A <code>max_image_count</code> of 0 means "no upper limit", hence the extra
@@ -184,7 +184,7 @@ if swapchain_support.capabilities.max_image_count &gt; 0
         })
         .or_else(|| available_formats.first().copied())
         .ok_or(vk::Result::ERROR_FORMAT_NOT_SUPPORTED)
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/swapchain.rs#L292-L313">src/vulkan/swapchain.rs:292-313</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/swapchain.rs#L292-L313">src/vulkan/swapchain.rs:292-313</a></figcaption></figure><!--/x-->
     <p>The preferred format is <code>B8G8R8A8_UNORM</code> in the standard sRGB colour space. If the surface
     doesn't offer it, the first supported format is used; if it offers none at all, that's an error. The very
     first branch handles an old convention where a surface reported one <code>UNDEFINED</code> format, meaning
@@ -216,7 +216,7 @@ if swapchain_support.capabilities.max_image_count &gt; 0
     } else {
         vk::PresentModeKHR::FIFO
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/swapchain.rs#L335-L343">src/vulkan/swapchain.rs:335-343</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/swapchain.rs#L335-L343">src/vulkan/swapchain.rs:335-343</a></figcaption></figure><!--/x-->
     <!--x src/vulkan/swapchain.rs 352-371--><figure class="code"><pre><code class="language-rust">fn choose_swap_extent(
     capabilities: &amp;vk::SurfaceCapabilitiesKHR,
     window: &amp;Window,
@@ -236,7 +236,7 @@ if swapchain_support.capabilities.max_image_count &gt; 0
             ),
         }
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/swapchain.rs#L352-L371">src/vulkan/swapchain.rs:352-371</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/swapchain.rs#L352-L371">src/vulkan/swapchain.rs:352-371</a></figcaption></figure><!--/x-->
     <p>Most platforms, macOS included, report the surface's <code>current_extent</code>, and the swapchain must
     match it. On some platforms the special value <code>u32::MAX</code> means the application decides, in which case the window's
     <code>inner_size()</code> (in physical pixels) is clamped into the allowed range.</p>
@@ -259,7 +259,7 @@ if swapchain_support.capabilities.max_image_count &gt; 0
     clipped: vk::TRUE,
     old_swapchain,
     ..Default::default()
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/swapchain.rs#L114-L131">src/vulkan/swapchain.rs:114-131</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/swapchain.rs#L114-L131">src/vulkan/swapchain.rs:114-131</a></figcaption></figure><!--/x-->
     <p>Fields worth knowing:</p>
     <ul>
       <li><code>image_usage: COLOR_ATTACHMENT</code>: these images will be rendered into. This renderer never
@@ -312,7 +312,7 @@ let result = (|| -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
 if let Err(error) = result {
     swapchain.cleanup(instance, device, allocator);
     return Err(error);
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/swapchain.rs#L136-L192">src/vulkan/swapchain.rs:136-192</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/swapchain.rs#L136-L192">src/vulkan/swapchain.rs:136-192</a></figcaption></figure><!--/x-->
     <p>The <code>Swapchain</code> struct is created first, with null handles and <code>None</code> allocations.
     Each step then stores its result in the struct the moment it succeeds. If any step fails, the struct
     accurately lists what exists, and <code>cleanup</code> destroys exactly that.</p>
@@ -348,7 +348,7 @@ if let Err(error) = result {
         None,
     );
 }
-self.images.clear();</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/swapchain.rs#L258-L284">src/vulkan/swapchain.rs:258-284</a></figcaption></figure><!--/x-->
+self.images.clear();</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/swapchain.rs#L258-L284">src/vulkan/swapchain.rs:258-284</a></figcaption></figure><!--/x-->
     <p><code>cleanup</code> is written so that running it twice is harmless.
     <code>drain(..)</code> empties the vector of views as it goes. <code>Option::take</code> removes each
     allocation (<a href="02-rust-meets-c.html#rust-drop">Chapter 2</a>). <code>std::mem::replace</code> swaps
@@ -366,7 +366,7 @@ if let Some(vulkan_base) = &amp;mut app.vulkan_base {
     // Window systems often emit several resize events together. Record
     // intent here; the render loop performs one recreation at a safe point.
     vulkan_base.request_swapchain_recreation();
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/app/input.rs#L81-L88">src/app/input.rs:81-88</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/app/input.rs#L81-L88">src/app/input.rs:81-88</a></figcaption></figure><!--/x-->
     <p>At the start of the next frame, before anything is acquired, the render graph acts on it once:</p>
     <!--x src/vulkan/render_graph.rs 214-220--><figure class="code"><pre><code class="language-rust">if vb.take_swapchain_recreation_request() {
     let size = app.window.as_ref().unwrap().inner_size();
@@ -374,7 +374,7 @@ if let Some(vulkan_base) = &amp;mut app.vulkan_base {
         vb.recreate_swapchain(app.window.as_ref().unwrap())?;
         device_is_idle = true;
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/render_graph.rs#L214-L220">src/vulkan/render_graph.rs:214-220</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/render_graph.rs#L214-L220">src/vulkan/render_graph.rs:214-220</a></figcaption></figure><!--/x-->
     <p>The same request is raised if acquiring or presenting reports <code>ERROR_OUT_OF_DATE_KHR</code> or
     "suboptimal" (<a href="02-rust-meets-c.html#rust-result">Chapter 2</a> showed the acquire side). Inside the
     swapchain, recreation is short:</p>
@@ -392,7 +392,7 @@ let new_swapchain = Self::new_with_old_swapchain(
     self.handle,
 )?;
 self.cleanup(instance, device, allocator);
-*self = new_swapchain;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/swapchain.rs#L227-L241">src/vulkan/swapchain.rs:227-241</a></figcaption></figure><!--/x-->
+*self = new_swapchain;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/swapchain.rs#L227-L241">src/vulkan/swapchain.rs:227-241</a></figcaption></figure><!--/x-->
     <p>Wait for the GPU to stop using the old images, build the new swapchain with the old one as
     <code>old_swapchain</code>, destroy the old resources, and overwrite <code>self</code> with the new value.
     <code>VulkanBase::recreate_swapchain</code> then rebuilds everything sized per swapchain image, including
@@ -420,7 +420,7 @@ mod tests {
             Swapchain::choose_swap_surface_format(&amp;[]),
             Err(vk::Result::ERROR_FORMAT_NOT_SUPPORTED)
         );
-    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/swapchain.rs#L526-L537">src/vulkan/swapchain.rs:526-537</a></figcaption></figure><!--/x-->
+    }</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/93972f2fa06ddc154b0e278fc17505c131be5dc5/src/vulkan/swapchain.rs#L526-L537">src/vulkan/swapchain.rs:526-537</a></figcaption></figure><!--/x-->
     <aside class="callout rust" id="rust-tests"><p class="callout-title">Rust note · tests live next to the code</p>
       <p><code>#[cfg(test)]</code> compiles the <code>tests</code> module only when running
       <code>cargo test</code>. Each <code>#[test]</code> function is one test; <code>assert_eq!</code> fails it
@@ -446,7 +446,7 @@ mod tests {
 
   <nav class="pager"><a class="prev" href="03-instance-devices.html">← 03 · Instance, devices and queues</a><a class="next" href="05-gpu-memory.html">05 · GPU memory →</a></nav>
 </main>
-<footer class="site">Based on commit <code>79546db</code>, with local device-capability and UI dependency fixes. · <a href="index.html#contents">Contents</a></footer>
+<footer class="site">Based on commit <code>93972f2</code>. · <a href="index.html#contents">Contents</a></footer>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/glsl.min.js"></script>

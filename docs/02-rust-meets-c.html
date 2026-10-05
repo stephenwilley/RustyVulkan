@@ -124,13 +124,14 @@ println!("{}", vertices.len());     // compile error: vertices was moved</code><
       commands, submit work).</li>
     </ul>
     <p>Extensions, optional features outside core Vulkan, get their own small tables, created from the base
-    ones. The window-surface and swapchain functions are extensions, so <code>VulkanBase::new</code> builds
-    loaders for them:</p>
-    <!--x src/vulkan/base/setup.rs 426,461,547--><figure class="code"><pre><code class="language-rust">Ok((pool, sets))
+    ones. The window-surface, swapchain and push-descriptor functions are extensions, so
+    <code>VulkanBase::new</code> builds loaders for them:</p>
+    <!--x src/vulkan/base/setup.rs 448,483,569-570--><figure class="code"><pre><code class="language-rust">let entry = Entry::linked();
 // ...
-        }
+let surface_loader = surface::Instance::new(&amp;entry, &amp;instance);
 // ...
-println!(</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L426-L547">src/vulkan/base/setup.rs:426-547</a></figcaption></figure><!--/x-->
+let swapchain_loader = swapchain::Device::new(&amp;instance, &amp;device);
+let push_descriptor = push_descriptor::Device::new(&amp;instance, &amp;device);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L448-L570">src/vulkan/base/setup.rs:448-570</a></figcaption></figure><!--/x-->
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
       <p>This is the same job that GLEW or glad did for you: OpenGL functions past version 1.1 had to be fetched
       as function pointers at run time. <code>ash</code> fetches device functions per device, which avoids the
@@ -140,7 +141,7 @@ println!(</code></pre><figcaption><a href="https://github.com/stephenwilley/Rust
     <h2>Create-info structs</h2>
     <p>Here is how the code creates its Vulkan instance (<code>app_info</code> and the two name lists are built
     just above). It's nearly a literal translation:</p>
-    <!--x src/vulkan/base/setup.rs 49-59--><figure class="code"><pre><code class="language-rust">let create_info = vk::InstanceCreateInfo {
+    <!--x src/vulkan/base/setup.rs 52-62--><figure class="code"><pre><code class="language-rust">let create_info = vk::InstanceCreateInfo {
     flags: instance_flags,
     p_application_info: &amp;app_info,
     enabled_layer_count: layers.len() as u32,
@@ -150,7 +151,7 @@ println!(</code></pre><figcaption><a href="https://github.com/stephenwilley/Rust
     ..Default::default()
 };
 
-Ok(unsafe { entry.create_instance(&amp;create_info, None)? })</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L49-L59">src/vulkan/base/setup.rs:49-59</a></figcaption></figure><!--/x-->
+Ok(unsafe { entry.create_instance(&amp;create_info, None)? })</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L52-L62">src/vulkan/base/setup.rs:52-62</a></figcaption></figure><!--/x-->
     <p>In C you'd write <code>VkInstanceCreateInfo info = {0};</code>, set
     <code>info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO</code>, and fill in the fields. The Rust version
     does the same, but <code>..Default::default()</code> fills every field not mentioned, and <code>ash</code>'s
@@ -175,13 +176,13 @@ Ok(unsafe { entry.create_instance(&amp;create_info, None)? })</code></pre><figca
     whether it supports <em>dynamic rendering</em> and <em>synchronization2</em>, two Vulkan 1.3 features this
     renderer depends on (<a href="07-pipelines.html">Chapter 7</a>, <a href="10-render-graph.html">Chapter
     10</a>):</p>
-    <!--x src/vulkan/base/setup.rs 125-131--><figure class="code"><pre><code class="language-rust">let supports_vulkan13_features = unsafe {
+    <!--x src/vulkan/base/setup.rs 131-137--><figure class="code"><pre><code class="language-rust">let supports_vulkan13_features = unsafe {
     let mut features = vk::PhysicalDeviceVulkan13Features::default();
     let mut features2 =
         vk::PhysicalDeviceFeatures2::default().push_next(&amp;mut features);
     instance.get_physical_device_features2(physical_device, &amp;mut features2);
     features.dynamic_rendering == vk::TRUE &amp;&amp; features.synchronization2 == vk::TRUE
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L125-L131">src/vulkan/base/setup.rs:125-131</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L131-L137">src/vulkan/base/setup.rs:131-137</a></figcaption></figure><!--/x-->
 
     <h2>Why it's all <code>unsafe</code></h2>
     <aside class="callout rust" id="rust-unsafe"><p class="callout-title">Rust note · unsafe</p>
@@ -199,9 +200,8 @@ Ok(unsafe { entry.create_instance(&amp;create_info, None)? })</code></pre><figca
       that the GPU is still reading. Chapter 9 explains the waits that prevent that race.</p>
     </aside>
     <p>That's why the codebase is dotted with blocks like this, often covering a whole function body:</p>
-    <!--x src/vulkan/base/setup.rs 223-225--><figure class="code"><pre><code class="language-rust">dynamic_rendering: vk::TRUE,
-synchronization2: vk::TRUE,
-..Default::default()</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L223-L225">src/vulkan/base/setup.rs:223-225</a></figcaption></figure><!--/x-->
+    <!--x src/vulkan/base/setup.rs 246-247--><figure class="code"><pre><code class="language-rust">let device = unsafe { instance.create_device(physical_device, &amp;device_create_info, None)? };
+let queue = unsafe { device.get_device_queue(queue_family_index, 0) };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L246-L247">src/vulkan/base/setup.rs:246-247</a></figcaption></figure><!--/x-->
 
     <h2>Errors: <code>Result</code> and <code>?</code></h2>
     <aside class="callout rust" id="rust-result"><p class="callout-title">Rust note · Result, ?, and Box&lt;dyn Error&gt;</p>
@@ -218,18 +218,18 @@ synchronization2: vk::TRUE,
       <code>Error</code>, <code>?</code> (or an explicit <code>.into()</code>) converts it automatically, so
       different error types can flow out of one function.</p>
     </aside>
-    <!--x src/vulkan/base/setup.rs 9-14--><figure class="code"><pre><code class="language-rust">fn create_instance(
+    <!--x src/vulkan/base/setup.rs 12-17--><figure class="code"><pre><code class="language-rust">fn create_instance(
     entry: &amp;Entry,
     event_loop: &amp;ActiveEventLoop,
     layers: &amp;[*const i8],
 ) -&gt; Result&lt;Instance, Box&lt;dyn Error&gt;&gt; {
-    let app_name = std::ffi::CString::new("RustyVulkan")?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L9-L14">src/vulkan/base/setup.rs:9-14</a></figcaption></figure><!--/x-->
+    let app_name = std::ffi::CString::new("RustyVulkan")?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L12-L17">src/vulkan/base/setup.rs:12-17</a></figcaption></figure><!--/x-->
     <p>Below, <code>CString::new</code> can fail with yet another error type (a string containing a zero byte),
     and the <code>?</code> on the last line handles it the same way.</p>
     <p>Sometimes a specific error is expected and handled rather than passed up. Acquiring a swapchain image can
     return <code>ERROR_OUT_OF_DATE_KHR</code> when the window has been resized. That isn't a failure, just a
     signal to rebuild, so <code>begin_frame</code> pattern-matches on it:</p>
-    <!--x src/vulkan/base.rs 261-273--><figure class="code"><pre><code class="language-rust">let (image_index, is_suboptimal) = match self.swapchain_loader.acquire_next_image(
+    <!--x src/vulkan/base.rs 264-276--><figure class="code"><pre><code class="language-rust">let (image_index, is_suboptimal) = match self.swapchain_loader.acquire_next_image(
     self.swapchain.handle,
     u64::MAX,
     self.image_available_semaphores[slot],
@@ -241,7 +241,7 @@ synchronization2: vk::TRUE,
         return Ok(None);
     }
     Err(e) =&gt; return Err(e.into()),
-};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L261-L273">src/vulkan/base.rs:261-273</a></figcaption></figure><!--/x-->
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L264-L276">src/vulkan/base.rs:264-276</a></figcaption></figure><!--/x-->
     <p><code>match</code> is like a <code>switch</code> that must cover every case and can look inside values:
     <code>Ok(result)</code> pulls out the success value; the second arm catches one particular error; the last
     converts anything else with <code>.into()</code> and returns it.</p>
@@ -255,14 +255,14 @@ synchronization2: vk::TRUE,
       <p>Most functions in this codebase take the big objects by reference (<code>&amp;Instance</code>,
       <code>&amp;ash::Device</code>), because they only need to use them. Handles, being <code>Copy</code> (see below),
       are usually passed by value, like <code>physical_device</code> here:</p>
-      <!--x src/vulkan/base/setup.rs 159-166--><figure class="code"><pre><code class="language-rust">
-/// Creates a logical device and retrieves the graphics queue.
-/// # Arguments
-/// * `instance` - The Vulkan instance.
-/// * `physical_device` - The physical device to create the logical device from.
-/// * `queue_family_index` - The index of the graphics queue family.
-/// # Returns
-/// * `Result&lt;(ash::Device, vk::Queue), vk::Result&gt;` - A tuple containing the logical device and graphics queue on success, or a Vulkan error on failure.</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L159-L166">src/vulkan/base/setup.rs:159-166</a></figcaption></figure><!--/x-->
+      <!--x src/vulkan/base/setup.rs 173-180--><figure class="code"><pre><code class="language-rust">fn create_logical_device_and_queue(
+    instance: &amp;Instance,
+    physical_device: vk::PhysicalDevice,
+    queue_family_index: u32,
+    enable_multi_draw_indirect: bool,
+    enable_draw_indirect_first_instance: bool,
+    enable_wireframe: bool,
+) -&gt; Result&lt;(ash::Device, vk::Queue), vk::Result&gt; {</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L173-L180">src/vulkan/base/setup.rs:173-180</a></figcaption></figure><!--/x-->
     </aside>
 
     <h2>Handles are just numbers</h2>
@@ -278,9 +278,9 @@ synchronization2: vk::TRUE,
     </aside>
     <p>You can see this in shutdown code. <code>for &amp;sem in &amp;self.…</code> borrows the vector and the <code>&amp;sem</code> pattern copies each handle out of it, then destroys the object it
     names:</p>
-    <!--x src/vulkan/base.rs 744-746--><figure class="code"><pre><code class="language-rust">    eprintln!("Failed to wait for device during shutdown: {error}");
-}
-</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L744-L746">src/vulkan/base.rs:744-746</a></figcaption></figure><!--/x-->
+    <!--x src/vulkan/base.rs 761-763--><figure class="code"><pre><code class="language-rust">for &amp;sem in &amp;self.image_available_semaphores {
+    self.device.destroy_semaphore(sem, None);
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L761-L763">src/vulkan/base.rs:761-763</a></figcaption></figure><!--/x-->
 
     <h2><code>Drop</code>: automatic clean-up, and its limits</h2>
     <aside class="callout rust" id="rust-drop"><p class="callout-title">Rust note · Drop</p>
@@ -312,29 +312,29 @@ impl Drop for ShaderModule {
     <p>For the big objects, the code uses explicit ordering instead. <code>VulkanBase</code> owns the device
     and everything hanging off it, and its <code>Drop</code> waits for the GPU and then destroys things in
     reverse order:</p>
-    <!--x src/vulkan/base.rs 722-726,729-731,768-771,780-787--><figure class="code"><pre><code class="language-rust">        std::mem::take(&amp;mut self.swapchain_recreation_needed)
-    }
-
-    /// Queue a resize for the next frame boundary. Several window events collapse into one.
-    pub fn request_swapchain_recreation(&amp;mut self) {
+    <!--x src/vulkan/base.rs 739-743,746-748,785-788,797-804--><figure class="code"><pre><code class="language-rust">fn drop(&amp;mut self) {
+    println!("💧 Dropping VulkanBase");
+    unsafe {
+        // `Drop` gives us `&amp;mut self`, but Vulkan does not know Rust's
+        // ownership graph.  Destroy resources in reverse dependency order.
 // ...
-}
-
-impl Drop for VulkanBase {
+        if let Err(error) = self.device.device_wait_idle() {
+            eprintln!("Failed to wait for device during shutdown: {error}");
+        }
 // ...
-                .destroy_query_pool(self.timestamp_query_pool, None);
-            for &amp;buffer in &amp;self.command_buffers {
-                self.device
-                    .free_command_buffers(self.command_pool, &amp;[buffer]);
+        self.device.destroy_command_pool(self.command_pool, None);
+        // `Option::take` moves the allocator out while we only have `&amp;mut self`.
+        // Dropping it here frees VMA memory before its Vulkan device disappears.
+        if let Some(alloc) = self.allocator.take() {
 // ...
-            self.device
-                .destroy_pipeline_cache(self.pipeline_cache, None);
-            self.device.destroy_command_pool(self.command_pool, None);
-            // `Option::take` moves the allocator out while we only have `&amp;mut self`.
-            // Dropping it here frees VMA memory before its Vulkan device disappears.
-            if let Some(alloc) = self.allocator.take() {
-                // (optional) quick summary before it goes away
-                if let Ok(stats) = alloc.calculate_statistics() {</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L722-L787">src/vulkan/base.rs:722-787</a></figcaption></figure><!--/x-->
+            drop(alloc);
+        }
+        self.device.destroy_device(None);
+        self.surface_loader.destroy_surface(self.surface, None);
+        #[cfg(debug_assertions)]
+        self.debug_utils_loader
+            .destroy_debug_utils_messenger(self.debug_messenger, None);
+        self.instance.destroy_instance(None);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L739-L804">src/vulkan/base.rs:739-804</a></figcaption></figure><!--/x-->
     <p>Note that it logs the wait-idle error rather than returning it with <code>?</code>: a destructor has no
     caller to report to, and panicking in a destructor while another panic is unwinding aborts the program.
     The allocator is stored as an <code>Option</code> so it can be
@@ -375,19 +375,19 @@ impl Drop for VulkanBase {
     now need destroying, or they leak. The project's rule is to record
     ownership after each step and release what's been made if a later step fails. Here it is in the code that
     creates one uniform buffer per swapchain image:</p>
-    <!--x src/vulkan/base/setup.rs 325-337--><figure class="code"><pre><code class="language-rust">
-for _ in 0..count {
-    let buffer_info = vk::BufferCreateInfo {
-        size: buffer_size,
-        usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
-        sharing_mode: vk::SharingMode::EXCLUSIVE,
-        ..Default::default()
-    };
-    let alloc_info = vk_mem::AllocationCreateInfo {
-        usage: MemoryUsage::AutoPreferHost,
-        flags: vk_mem::AllocationCreateFlags::HOST_ACCESS_SEQUENTIAL_WRITE
-            | vk_mem::AllocationCreateFlags::MAPPED,
-        ..Default::default()</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L325-L337">src/vulkan/base/setup.rs:325-337</a></figcaption></figure><!--/x-->
+    <!--x src/vulkan/base/setup.rs 347-359--><figure class="code"><pre><code class="language-rust">    let (buffer, allocation) =
+        match unsafe { allocator.create_buffer(&amp;buffer_info, &amp;alloc_info) } {
+            Ok(resource) =&gt; resource,
+            Err(error) =&gt; {
+                for (buffer, mut allocation) in buffers.into_iter().zip(allocations) {
+                    unsafe { allocator.destroy_buffer(buffer, &amp;mut allocation) };
+                }
+                return Err(error);
+            }
+        };
+    buffers.push(buffer);
+    allocations.push(allocation);
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L347-L359">src/vulkan/base/setup.rs:347-359</a></figcaption></figure><!--/x-->
     <p>If creating buffer <em>n</em> fails, the error arm destroys buffers 0 to <em>n</em>−1 before
     returning (<code>zip</code> pairs the two vectors; <code>into_iter</code> consumes them).</p>
     <aside class="callout aside"><p class="callout-title">Not finished yet</p>

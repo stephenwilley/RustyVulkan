@@ -180,7 +180,7 @@ impl ImGuiRenderer {
             size: std::mem::size_of::<[[f32; 4]; 4]>() as u32,
         };
 
-        // Pipeline layout with descriptor set and push constant
+        // Pipeline layout with the texture set and push constant
         let layout_info = vk::PipelineLayoutCreateInfo {
             set_layout_count: 1,
             p_set_layouts: &self.descriptor_set_layout,

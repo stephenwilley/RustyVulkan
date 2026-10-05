@@ -242,7 +242,7 @@ println!("cargo:rustc-link-arg=-Wl,-rpath,{}", library_dir.display());</code></p
     </aside>
     <p>Materials load their vertex/fragment pair together, both using the conventional entry point
     <code>main</code>:</p>
-    <!--x src/graphics/material.rs 305-320--><figure class="code"><pre><code class="language-rust">let vs = ShaderModule::from_spv_file(device, vs_path)?;
+    <!--x src/graphics/material.rs 216-231--><figure class="code"><pre><code class="language-rust">let vs = ShaderModule::from_spv_file(device, vs_path)?;
 let fs = ShaderModule::from_spv_file(device, fs_path)?;
 let entry = c"main";
 
@@ -257,7 +257,7 @@ Ok(LoadedShaders {
         shader_module: fs,
         entry_name: entry,
     },
-})</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/material.rs#L305-L320">src/graphics/material.rs:305-320</a></figcaption></figure><!--/x-->
+})</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/material.rs#L216-L231">src/graphics/material.rs:216-231</a></figcaption></figure><!--/x-->
     <aside class="callout gl"><p class="callout-title">Coming from OpenGL</p>
       <p>A <code>ShaderModule</code> is not a linked program. In OpenGL, <code>glLinkProgram</code> joined the
       stages and checked their interfaces. In Vulkan, that joining happens when a pipeline is created
@@ -341,22 +341,22 @@ layout(set = 1, binding = 1) uniform sampler2D normalMap;</code></pre><figcaptio
     <p><code>std140</code> fixes the buffer's memory layout by strict rules: for instance, a <code>vec3</code>
     is aligned like a <code>vec4</code>, to 16 bytes. The Rust struct that's copied into this buffer each frame
     (<a href="05-gpu-memory.html">Chapter 5</a>) has to reproduce that layout:</p>
-    <!--x src/vulkan/base.rs 819-834--><figure class="code"><pre><code class="language-rust">    pub intensity: f32, // packs with position to 16 bytes
-    pub color: [f32; 3],
-    pub _pad: f32, // pad to 16 bytes
-}
-
-#[repr(C)]
+    <!--x src/vulkan/base.rs 836-851--><figure class="code"><pre><code class="language-rust">/// Global (per-frame/per-image) uniform buffer object shared across all pipelines via **descriptor set 0, binding 0**.
+/// There is **one buffer per swapchain image** so the CPU can update the UBO while another image is still in-flight.
+/// Keep fields 16-byte aligned for std140. Field order must match every GLSL `GlobalUBO`.
+#[repr(C, align(16))]
 #[derive(Clone, Copy, Default)]
-pub struct GpuDirLight {
-    pub direction: [f32; 3],
-    pub intensity: f32, // keep std140 friendly packing
-    pub color: [f32; 3],
-    pub _pad: f32,
-}
-
-/// Global (per-frame/per-image) uniform buffer object shared across all pipelines via **descriptor set 0, binding 0**.
-/// There is **one buffer per swapchain image** so the CPU can update the UBO while another image is still in-flight.</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L819-L834">src/vulkan/base.rs:819-834</a></figcaption></figure><!--/x-->
+pub struct GlobalUbo {
+    pub dir_light: GpuDirLight,
+    /// One view-to-light-clip matrix for each camera-depth slice.
+    pub light_vp: [[[f32; 4]; 4]; crate::graphics::shadow_math::SHADOW_CASCADE_COUNT],
+    /// Positive view-space far depth for each cascade.
+    pub cascade_splits: [f32; crate::graphics::shadow_math::SHADOW_CASCADE_COUNT],
+    // Then the array of point lights (std140 array of structs)
+    pub lights: [GpuLight; crate::app::app::MAX_LIGHTS], // array of point lights
+    pub light_count: u32,                                // number of active point lights
+    pub _pad0: [u32; 3],                                 // three GLSL uints, never a uvec3 (std140)
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L836-L851">src/vulkan/base.rs:836-851</a></figcaption></figure><!--/x-->
     <p><code>std140</code> is a contract, and the Rust side reproduces it by hand with explicit
     <code>_pad</code> fields and <code>align(16)</code>. Nothing checks that the two agree. Get it wrong and the
     shader silently reads shifted values. <code>cascade_splits</code> shows the care needed: it's a

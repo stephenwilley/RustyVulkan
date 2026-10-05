@@ -147,7 +147,7 @@ pub trait RenderPass {
 
     <h2>Declaring attachments</h2>
     <p>The main pass asks for five images, and states how it uses each:</p>
-    <!--x src/vulkan/main_pass.rs 25-32,237-260--><figure class="code"><pre><code class="language-rust">    let attachments = [
+    <!--x src/vulkan/main_pass.rs 25-32,223-246--><figure class="code"><pre><code class="language-rust">    let attachments = [
         AttachmentRequest::new(AttachmentKind::MsaaColor),
         AttachmentRequest::new(AttachmentKind::MsaaDepth),
         AttachmentRequest::new(AttachmentKind::SwapchainColor),
@@ -179,7 +179,7 @@ fn attachment_info(&amp;self, kind: AttachmentKind) -&gt; (vk::ImageLayout, vk::
         AttachmentKind::Shadow =&gt; (
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             vk::AccessFlags2::SHADER_READ,
-        ),</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/main_pass.rs#L25-L260">src/vulkan/main_pass.rs:25-260</a></figcaption></figure><!--/x-->
+        ),</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/main_pass.rs#L25-L246">src/vulkan/main_pass.rs:25-246</a></figcaption></figure><!--/x-->
     <p>Not all five are used at once. With MSAA on, it draws into the two multisampled images and resolves into
     the swapchain image; at 1×, it draws straight into the swapchain image and a single-sample depth buffer.
     <code>uses_attachment</code> tells the graph which set is live. <code>attachment_info</code> gives the
@@ -325,7 +325,7 @@ if !transitions.is_empty() {
     <p>If the layout or access differs, it records a transition from the current state to the new one, deriving
     the destination stage from the access type, and updates its record. All the transitions for one pass go into
     a single <code>vkCmdPipelineBarrier2</code> call, with each image's barrier carrying its own stages:</p>
-    <!--x src/vulkan/base.rs 317-341--><figure class="code"><pre><code class="language-rust">    let mut barriers: Vec&lt;vk::ImageMemoryBarrier2&gt; = Vec::new();
+    <!--x src/vulkan/base.rs 320-344--><figure class="code"><pre><code class="language-rust">    let mut barriers: Vec&lt;vk::ImageMemoryBarrier2&gt; = Vec::new();
     for t in transitions {
         barriers.push(vk::ImageMemoryBarrier2 {
             src_stage_mask: t.src_stage_mask,
@@ -349,7 +349,7 @@ if !transitions.is_empty() {
     }
     let dependency = vk::DependencyInfo::default().image_memory_barriers(&amp;barriers);
     unsafe { self.device.cmd_pipeline_barrier2(cmd, &amp;dependency) };
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L317-L341">src/vulkan/base.rs:317-341</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L320-L344">src/vulkan/base.rs:320-344</a></figcaption></figure><!--/x-->
     <aside class="callout aside"><p class="callout-title">synchronization2</p>
       <p><code>vkCmdPipelineBarrier2</code> takes a <code>DependencyInfo</code> listing barriers that each pair
       their own source and destination stage and access masks, and <code>queue_submit2</code> does the same for

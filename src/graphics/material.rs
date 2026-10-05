@@ -20,16 +20,17 @@ use std::fmt;
 
 /// Neutral albedo used when a material supplies only a normal map.
 const DEFAULT_DIFFUSE_TEXTURE_PATH: &str = "assets/textures/default_diffuse.png";
+/// Flat normal used when a material supplies only a diffuse map.
+const DEFAULT_NORMAL_TEXTURE_PATH: &str = "assets/textures/default_normal.png";
 
 /// The Material struct holds the information required to create a material
 pub struct Material {
     pub name: String,
     pub pipeline: Pipeline,
-    pub texture_descriptor_set_layout: vk::DescriptorSetLayout,
-    pub texture_descriptor_pool: vk::DescriptorPool,
-    pub texture_descriptor_set: vk::DescriptorSet,
+    texture_set_layout: vk::DescriptorSetLayout,
     shaders: LoadedShaders,
-    pub textures: Option<LoadedTextures>,
+    /// Diffuse (binding 0) and normal map (binding 1), pushed as set 1 at draw time.
+    pub textures: Option<[vk::DescriptorImageInfo; 2]>,
     pub uv_tiling: [f32; 2],
 }
 
@@ -53,67 +54,19 @@ impl Material {
         Ok(())
     }
 
-    fn setup_texture_descriptors(
-        vb: &VulkanBase,
-    ) -> Result<
-        (
-            vk::DescriptorSetLayout,
-            vk::DescriptorSet,
-            vk::DescriptorPool,
-        ),
-        Box<dyn Error>,
-    > {
-        let layout_bindings = [
-            vk::DescriptorSetLayoutBinding {
-                binding: 0,
-                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: 1,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                p_immutable_samplers: std::ptr::null(),
-                ..Default::default()
-            },
-            vk::DescriptorSetLayoutBinding {
-                binding: 1,
-                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: 1,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                p_immutable_samplers: std::ptr::null(),
-                ..Default::default()
-            },
-        ];
-        let layout_info = vk::DescriptorSetLayoutCreateInfo {
-            binding_count: 2,
-            p_bindings: layout_bindings.as_ptr(),
+    fn create_texture_set_layout(device: &Device) -> Result<vk::DescriptorSetLayout, vk::Result> {
+        let binding = |binding| vk::DescriptorSetLayoutBinding {
+            binding,
+            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            descriptor_count: 1,
+            stage_flags: vk::ShaderStageFlags::FRAGMENT,
             ..Default::default()
         };
-        let texture_descriptor_set_layout =
-            unsafe { vb.device.create_descriptor_set_layout(&layout_info, None)? };
-
-        let pool_size = vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: 2,
-        };
-        let pool_info = vk::DescriptorPoolCreateInfo {
-            pool_size_count: 1,
-            p_pool_sizes: &pool_size,
-            max_sets: 1,
-            ..Default::default()
-        };
-        let texture_descriptor_pool =
-            unsafe { vb.device.create_descriptor_pool(&pool_info, None)? };
-
-        let alloc_info = vk::DescriptorSetAllocateInfo {
-            descriptor_pool: texture_descriptor_pool,
-            descriptor_set_count: 1,
-            p_set_layouts: &texture_descriptor_set_layout,
-            ..Default::default()
-        };
-        let texture_descriptor_set = unsafe { vb.device.allocate_descriptor_sets(&alloc_info)?[0] };
-        Ok((
-            texture_descriptor_set_layout,
-            texture_descriptor_set,
-            texture_descriptor_pool,
-        ))
+        let bindings = [binding(0), binding(1)];
+        let layout_info = vk::DescriptorSetLayoutCreateInfo::default()
+            .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR)
+            .bindings(&bindings);
+        unsafe { device.create_descriptor_set_layout(&layout_info, None) }
     }
 
     /// Create a new Material
@@ -141,40 +94,35 @@ impl Material {
         depth_write: bool,
         uv_tiling: [f32; 2],
     ) -> Result<Self, Box<dyn Error>> {
-        // Enable texturing if either a diffuse or normal map is provided
-        let texturing_enabled = diffuse_texture_path.is_some() || normalmap_texture_path.is_some();
-
-        // If texturing is enabled but no normal map was provided, use a default normal map
-        let normalmap_texture_path = if texturing_enabled && normalmap_texture_path.is_none() {
-            Some("assets/textures/default_normal.png".to_string())
-        } else {
-            normalmap_texture_path
-        };
-        // A normal-map-only material still needs both bindings in the shader's
-        // texture descriptor set.  Previously this reached `unwrap()` below
-        // and panicked during material creation.
-        let diffuse_texture_path = if texturing_enabled && diffuse_texture_path.is_none() {
-            Some(DEFAULT_DIFFUSE_TEXTURE_PATH.to_string())
-        } else {
-            diffuse_texture_path
-        };
-
-        // Only create all the texture descriptor stuff if texture paths are there
-        let (texture_descriptor_set_layout, texture_descriptor_set, texture_descriptor_pool) =
-            if texturing_enabled {
-                Self::setup_texture_descriptors(vb)?
-            } else {
-                (
-                    vk::DescriptorSetLayout::null(),
-                    vk::DescriptorSet::null(),
-                    vk::DescriptorPool::null(),
-                )
+        // A material with either map is textured and binds both; the missing one gets a neutral default.
+        let textures = if diffuse_texture_path.is_some() || normalmap_texture_path.is_some() {
+            let diffuse_path =
+                diffuse_texture_path.unwrap_or_else(|| DEFAULT_DIFFUSE_TEXTURE_PATH.to_string());
+            let normal_path =
+                normalmap_texture_path.unwrap_or_else(|| DEFAULT_NORMAL_TEXTURE_PATH.to_string());
+            // The cache records copies now; MaterialManager submits the batch after scene setup.
+            let diffuse_view = texture_cache.load(vb, &diffuse_path)?;
+            let normal_view = texture_cache.load(vb, &normal_path)?;
+            let image_info = |image_view| vk::DescriptorImageInfo {
+                sampler: texture_cache.sampler(),
+                image_view,
+                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             };
+            Some([image_info(diffuse_view), image_info(normal_view)])
+        } else {
+            None
+        };
+
+        let texture_set_layout = if textures.is_some() {
+            Self::create_texture_set_layout(&vb.device)?
+        } else {
+            vk::DescriptorSetLayout::null()
+        };
 
         // Pipeline layout must be contiguous sets starting at 0.
         // Always include the global set=0 layout first, then set=1 texture layout if used.
-        let layouts = if texturing_enabled {
-            vec![vb.set0_global_layout, texture_descriptor_set_layout] // set 0, set 1
+        let layouts = if textures.is_some() {
+            vec![vb.set0_global_layout, texture_set_layout] // set 0, set 1
         } else {
             vec![vb.set0_global_layout] // set 0 only
         };
@@ -183,67 +131,14 @@ impl Material {
 
         let shaders = LoadedShaders::load(&vb.device, vs_path, fs_path)?;
 
-        let mut textures = None;
-        if texturing_enabled {
-            // The cache records copies now; MaterialManager submits the batch after scene setup.
-            textures = Some(LoadedTextures::load(
-                texture_cache,
-                vb,
-                diffuse_texture_path.unwrap(),
-                normalmap_texture_path.unwrap(),
-            )?);
-        }
-
         let mut material = Self {
             name,
             pipeline,
-            texture_descriptor_set_layout,
-            texture_descriptor_pool,
-            texture_descriptor_set,
+            texture_set_layout,
             shaders,
             textures,
             uv_tiling,
         };
-
-        if texturing_enabled {
-            let diffuse_view = material.textures.as_ref().unwrap().diffuse_view;
-            // Both bindings share the cache sampler but point at different image views.
-            let diffuse_info = vk::DescriptorImageInfo {
-                sampler: texture_cache.sampler(),
-                image_view: diffuse_view,
-                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            };
-            // Write it into binding 0 of set 1
-            let write_diffuse = vk::WriteDescriptorSet {
-                dst_set: texture_descriptor_set,
-                dst_binding: 0,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                p_image_info: &diffuse_info,
-                ..Default::default()
-            };
-            let normalmap_view = material.textures.as_ref().unwrap().normalmap_view;
-            let normal_info = vk::DescriptorImageInfo {
-                sampler: texture_cache.sampler(),
-                image_view: normalmap_view,
-                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            };
-            // Write it into binding 1 of set 1
-            let write_normal = vk::WriteDescriptorSet {
-                dst_set: texture_descriptor_set,
-                dst_binding: 1,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                p_image_info: &normal_info,
-                ..Default::default()
-            };
-            unsafe {
-                vb.device.update_descriptor_sets(&[write_diffuse], &[]);
-                vb.device.update_descriptor_sets(&[write_normal], &[]);
-            }
-        }
 
         material.pipeline.create_graphics_pipeline(
             &vb.device,
@@ -258,6 +153,28 @@ impl Material {
         Ok(material)
     }
 
+    /// Records this material's textures as set 1 for the draws that follow.
+    pub fn push_textures(&self, vb: &VulkanBase, cmd: vk::CommandBuffer) {
+        let Some(textures) = &self.textures else {
+            return;
+        };
+        let writes = [0, 1].map(|binding| {
+            vk::WriteDescriptorSet::default()
+                .dst_binding(binding)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(std::slice::from_ref(&textures[binding as usize]))
+        });
+        unsafe {
+            vb.push_descriptor.cmd_push_descriptor_set(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipeline.vk_layout,
+                1,
+                &writes,
+            );
+        }
+    }
+
     /// Cleans up Vulkan resources for the material.
     /// This should be called when the material is no longer needed.
     /// # Arguments
@@ -265,15 +182,9 @@ impl Material {
     pub fn cleanup(&mut self, device: &Device) {
         // `shaders` owns RAII ShaderModules. They drop when this Material is
         // removed from MaterialManager after its pipeline has been destroyed.
-        if self.textures.is_some() {
-            // Descriptor sets belong to this material; cache-owned images outlive them.
-            unsafe {
-                // Destroying the pool implicitly frees every set it owns.
-                device.destroy_descriptor_pool(self.texture_descriptor_pool, None);
-                device.destroy_descriptor_set_layout(self.texture_descriptor_set_layout, None);
-            }
-        }
+        // The texture images belong to TextureCache, which outlives every material.
         self.pipeline.cleanup(device);
+        unsafe { device.destroy_descriptor_set_layout(self.texture_set_layout, None) };
     }
 }
 
@@ -317,39 +228,6 @@ impl LoadedShaders {
                 shader_module: fs,
                 entry_name: entry,
             },
-        })
-    }
-}
-
-/// Non-owning Vulkan handles used by one material.
-///
-/// These are copied values, not Rust references.  The images remain owned by
-/// `TextureCache`; `MaterialManager::cleanup` destroys materials before the cache.
-pub struct LoadedTextures {
-    pub diffuse_view: vk::ImageView,
-    pub normalmap_view: vk::ImageView,
-}
-
-impl LoadedTextures {
-    /// Gets the two texture handles from the cache, queuing first-use uploads as needed.
-    /// # Arguments
-    /// * `texture_cache` - Scene-wide texture owner and upload batch.
-    /// * `vb` - Vulkan state used to create images and record copy commands.
-    /// * `diffuse_texture_path` - The path to the diffuse texture.
-    /// * `normalmap_texture_path` - The path to the normalmap texture.
-    /// # Returns
-    /// * `Result<Self, Box<dyn Error>>` - Returns the loaded textures on success, or an error on failure.
-    pub fn load(
-        texture_cache: &mut TextureCache,
-        vb: &VulkanBase,
-        diffuse_texture_path: String,
-        normalmap_texture_path: String,
-    ) -> Result<Self, Box<dyn Error>> {
-        let diffuse_view = texture_cache.load(vb, diffuse_texture_path.as_str())?;
-        let normalmap_view = texture_cache.load(vb, normalmap_texture_path.as_str())?;
-        Ok(LoadedTextures {
-            diffuse_view,
-            normalmap_view,
         })
     }
 }

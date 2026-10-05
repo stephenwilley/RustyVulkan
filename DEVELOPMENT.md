@@ -25,8 +25,8 @@ allocator, then the logical device, surface, and instance. `ShaderModule` uses
 Rust `Drop`, but its cloned Ash device wrapper does not extend the actual Vulkan
 device's lifetime.
 
-The texture cache owns shared images and its sampler. Material descriptors must
-be released before cache teardown. Upload staging memory must remain alive until
+The texture cache owns shared images and its sampler. Materials hold copies of
+those handles and must be destroyed before cache teardown. Upload staging memory must remain alive until
 the GPU has finished reading it. Flush non-coherent host writes before submission.
 
 For every fallible creation step, record ownership before attempting the next

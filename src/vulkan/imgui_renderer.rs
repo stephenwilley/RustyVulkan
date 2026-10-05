@@ -7,7 +7,7 @@
 //! This module defines `ImGuiRenderer`, which encapsulates the Vulkan setup and rendering
 //! logic for Dear ImGui. It handles:
 //!   • Uploading the font atlas and creating associated Vulkan resources (image, view, sampler)
-//!   • Creating descriptor set layout, pool, and descriptor set for UI textures
+//!   • Creating the push-descriptor set layout for UI textures
 //!   • Building the ImGui-specific graphics pipeline and pipeline layout
 //!   • Recording draw commands for ImGui draw data into command buffers
 //!   • Cleaning up all ImGui-related Vulkan resources on teardown
@@ -20,7 +20,9 @@
 //! --------------------------------------------------------------------------------------
 
 use crate::graphics::shaders::ShaderStageInfo;
+use crate::graphics::shadow_math::SHADOW_CASCADE_COUNT;
 use crate::vulkan::base::VulkanBase;
+use ash::khr::push_descriptor;
 use ash::vk;
 use imgui::DrawData;
 use imgui::DrawIdx;
@@ -44,8 +46,6 @@ struct UiFrameBuffers {
 /// Renders ImGui UI elements using Vulkan.
 pub struct ImGuiRenderer {
     descriptor_set_layout: vk::DescriptorSetLayout,
-    descriptor_pool: vk::DescriptorPool,
-    descriptor_set: vk::DescriptorSet,
     pipeline_layout: vk::PipelineLayout,
     pub vk_pipeline: vk::Pipeline,
     pub font_sampler: Option<vk::Sampler>,
@@ -56,14 +56,12 @@ pub struct ImGuiRenderer {
     /// with the previous frame, which may still be drawing from it.
     frame_buffers: Vec<UiFrameBuffers>,
     device: ash::Device,
+    push_descriptor: push_descriptor::Device,
     vert_stage: Option<ShaderStageInfo>,
     frag_stage: Option<ShaderStageInfo>,
-    // Extra textures support (for Image widgets):
-    texture_pool: vk::DescriptorPool,
-    textures: Vec<vk::DescriptorSet>,
-    // Each swapchain image and shadow cascade gets its own descriptor set.
-    // The acquired image's fence has completed before any set is updated.
-    shadow_tex_ids: Vec<Option<(vk::ImageView, imgui::TextureId)>>,
+    /// Images that draw commands can show, indexed by `imgui::TextureId`; 0 is the font atlas.
+    textures: Vec<vk::DescriptorImageInfo>,
+    shadow_tex_ids: [Option<imgui::TextureId>; SHADOW_CASCADE_COUNT],
 }
 
 impl ImGuiRenderer {
@@ -229,12 +227,7 @@ impl ImGuiRenderer {
                 allocator.destroy_image(image, allocation);
             }
 
-            // Descriptor resources and pipeline
-            if self.texture_pool != vk::DescriptorPool::null() {
-                self.device.destroy_descriptor_pool(self.texture_pool, None);
-            }
-            self.device
-                .destroy_descriptor_pool(self.descriptor_pool, None);
+            // Descriptor layout and pipeline
             self.device
                 .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
             if self.vk_pipeline != vk::Pipeline::null() {
@@ -250,7 +243,7 @@ impl ImGuiRenderer {
         drop(self.frag_stage.take());
     }
 
-    /// Records ImGui draw commands: bind pipeline, descriptor set, and push constants.
+    /// Records ImGui draw commands: bind pipeline, push textures and constants, and draw.
     /// # Arguments
     /// * `device` - The Vulkan device to use for command recording.
     /// * `cmd_buf` - The command buffer to record the ImGui draw commands into.
@@ -259,10 +252,10 @@ impl ImGuiRenderer {
     ///   This function performs the following steps:
     ///   1. Updates the vertex and index buffers with the latest ImGui draw data.
     ///   2. Binds the vertex and index buffers to the command buffer.
-    ///   3. Binds the ImGui graphics pipeline and descriptor set.
+    ///   3. Binds the ImGui graphics pipeline.
     ///   4. Sets the dynamic viewport based on the ImGui display size.
     ///   5. Computes the orthographic projection matrix for ImGui.
-    ///   6. Iterates through the ImGui draw lists and issues draw calls for each command.
+    ///   6. Iterates through the ImGui draw lists, pushing each command's texture and drawing it.
     ///
     ///   It handles scissor rectangles and indexed drawing based on ImGui's clip rects.
     ///   If there is no ImGui draw data (total vertex or index count is zero),
@@ -290,7 +283,7 @@ impl ImGuiRenderer {
             device.cmd_bind_vertex_buffers(cmd_buf, 0, &[buffers.vertex_buffer], &[0]);
             device.cmd_bind_index_buffer(cmd_buf, buffers.index_buffer, 0, vk::IndexType::UINT16);
         }
-        // Bind ImGui pipeline and descriptor set
+        // Bind ImGui pipeline
         unsafe {
             device.cmd_bind_pipeline(cmd_buf, vk::PipelineBindPoint::GRAPHICS, self.vk_pipeline);
         }
@@ -332,39 +325,26 @@ impl ImGuiRenderer {
         unsafe {
             let mut vertex_offset: i32 = 0;
             let mut index_offset: u32 = 0;
-            let mut bound_set: vk::DescriptorSet = self.descriptor_set;
-            // Bind the default font set initially
-            device.cmd_bind_descriptor_sets(
-                cmd_buf,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.pipeline_layout,
-                0,
-                &[bound_set],
-                &[],
-            );
+            let mut bound_view = vk::ImageView::null();
             for draw_list in draw_data.draw_lists() {
                 for cmd in draw_list.commands() {
                     if let imgui::DrawCmd::Elements { count, cmd_params } = cmd {
-                        // Switch texture if needed
-                        let tex_id = cmd_params.texture_id.id();
-                        let desired_set = if tex_id == 0 {
-                            self.descriptor_set
-                        } else {
-                            self.textures
-                                .get(tex_id - 1)
-                                .copied()
-                                .unwrap_or(self.descriptor_set)
-                        };
-                        if desired_set != bound_set {
-                            device.cmd_bind_descriptor_sets(
+                        let image_info = self
+                            .textures
+                            .get(cmd_params.texture_id.id())
+                            .unwrap_or(&self.textures[0]);
+                        if image_info.image_view != bound_view {
+                            let write = vk::WriteDescriptorSet::default()
+                                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                                .image_info(std::slice::from_ref(image_info));
+                            self.push_descriptor.cmd_push_descriptor_set(
                                 cmd_buf,
                                 vk::PipelineBindPoint::GRAPHICS,
                                 self.pipeline_layout,
                                 0,
-                                &[desired_set],
-                                &[],
+                                &[write],
                             );
-                            bound_set = desired_set;
+                            bound_view = image_info.image_view;
                         }
                         // Set scissor rectangle from ImGui clip rect
                         let clip = cmd_params.clip_rect;

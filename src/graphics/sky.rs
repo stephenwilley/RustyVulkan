@@ -3,7 +3,7 @@
 //!
 //! Draws an equirectangular photograph behind the scene with one fullscreen triangle.
 //! The panorama image remains owned by `MaterialManager`'s texture cache; this renderer
-//! owns only its descriptor objects, shader modules, and pipeline.
+//! owns only its sampler, descriptor set layout, shader modules, and pipeline.
 //!
 //! --------------------------------------------------------------------------------------
 
@@ -27,9 +27,7 @@ pub struct SkyRenderer {
     pipeline: Pipeline,
     shaders: SkyShaders,
     descriptor_set_layout: vk::DescriptorSetLayout,
-    descriptor_pool: vk::DescriptorPool,
-    descriptor_set: vk::DescriptorSet,
-    sampler: vk::Sampler,
+    image_info: vk::DescriptorImageInfo,
 }
 
 impl SkyRenderer {
@@ -44,23 +42,11 @@ impl SkyRenderer {
         // Material textures repeat both axes, so the sky needs this one specialised sampler.
         let sampler = create_sampler(&vb.device)?;
         let descriptor_set_layout = create_descriptor_set_layout(&vb.device)?;
-        let (descriptor_pool, descriptor_set) =
-            create_descriptor_set(&vb.device, descriptor_set_layout)?;
-
         let image_info = vk::DescriptorImageInfo {
             sampler,
             image_view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         };
-        let descriptor_write = vk::WriteDescriptorSet {
-            dst_set: descriptor_set,
-            dst_binding: 0,
-            descriptor_count: 1,
-            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            p_image_info: &image_info,
-            ..Default::default()
-        };
-        unsafe { vb.device.update_descriptor_sets(&[descriptor_write], &[]) };
 
         let shaders = SkyShaders::load(&vb.device)?;
         let mut pipeline = Pipeline::new_background(&vb.device, &[descriptor_set_layout])?;
@@ -81,13 +67,11 @@ impl SkyRenderer {
             pipeline,
             shaders,
             descriptor_set_layout,
-            descriptor_pool,
-            descriptor_set,
-            sampler,
+            image_info,
         })
     }
 
-    /// Rebuilds the swapchain-dependent pipeline while retaining the panorama descriptor.
+    /// Rebuilds the swapchain-dependent pipeline.
     pub fn recreate_pipeline(&mut self, vb: &VulkanBase) -> Result<(), Box<dyn Error>> {
         self.pipeline.recreate_with_vertex_input(
             &vb.device,
@@ -104,21 +88,24 @@ impl SkyRenderer {
     }
 
     /// Records one three-vertex draw before scene geometry overwrites the background.
-    pub fn draw(&self, device: &ash::Device, cmd: vk::CommandBuffer, camera: &Camera) {
+    pub fn draw(&self, vb: &VulkanBase, cmd: vk::CommandBuffer, camera: &Camera) {
+        let device = &vb.device;
         let push_constants = sky_push_constants(camera);
+        let write = vk::WriteDescriptorSet::default()
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(std::slice::from_ref(&self.image_info));
         unsafe {
             device.cmd_bind_pipeline(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline.vk_pipeline,
             );
-            device.cmd_bind_descriptor_sets(
+            vb.push_descriptor.cmd_push_descriptor_set(
                 cmd,
                 vk::PipelineBindPoint::GRAPHICS,
                 self.pipeline.vk_layout,
                 0,
-                &[self.descriptor_set],
-                &[],
+                &[write],
             );
             device.cmd_push_constants(
                 cmd,
@@ -131,12 +118,11 @@ impl SkyRenderer {
         }
     }
 
-    /// Releases descriptor and pipeline handles before the cache-owned image is destroyed.
+    /// Releases the sampler, layout, and pipeline before the cache-owned image is destroyed.
     pub fn cleanup(&mut self, device: &ash::Device) {
         self.pipeline.cleanup(device);
         unsafe {
-            device.destroy_descriptor_pool(self.descriptor_pool, None);
-            device.destroy_sampler(self.sampler, None);
+            device.destroy_sampler(self.image_info.sampler, None);
             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
         }
     }
@@ -166,37 +152,10 @@ fn create_descriptor_set_layout(
         stage_flags: vk::ShaderStageFlags::FRAGMENT,
         ..Default::default()
     };
-    let layout_info = vk::DescriptorSetLayoutCreateInfo {
-        binding_count: 1,
-        p_bindings: &binding,
-        ..Default::default()
-    };
+    let layout_info = vk::DescriptorSetLayoutCreateInfo::default()
+        .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR)
+        .bindings(std::slice::from_ref(&binding));
     unsafe { device.create_descriptor_set_layout(&layout_info, None) }
-}
-
-fn create_descriptor_set(
-    device: &ash::Device,
-    layout: vk::DescriptorSetLayout,
-) -> Result<(vk::DescriptorPool, vk::DescriptorSet), vk::Result> {
-    let pool_size = vk::DescriptorPoolSize {
-        ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        descriptor_count: 1,
-    };
-    let pool_info = vk::DescriptorPoolCreateInfo {
-        max_sets: 1,
-        pool_size_count: 1,
-        p_pool_sizes: &pool_size,
-        ..Default::default()
-    };
-    let descriptor_pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
-    let allocate_info = vk::DescriptorSetAllocateInfo {
-        descriptor_pool,
-        descriptor_set_count: 1,
-        p_set_layouts: &layout,
-        ..Default::default()
-    };
-    let descriptor_set = unsafe { device.allocate_descriptor_sets(&allocate_info)?[0] };
-    Ok((descriptor_pool, descriptor_set))
 }
 
 /// Packs the inverse projection and rotation-only view matrix into GLSL column-major order.

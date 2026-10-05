@@ -1,6 +1,6 @@
 //! Wind-map image ownership and deterministic noise generation.
 //!
-//! The descriptor set, sampler, view, image, and allocation are one resource
+//! The descriptor set layout, sampler, view, image, and allocation are one resource
 //! family, so WindMap destroys them together in the reverse of creation.
 
 use super::{WIND_MAP_SIZE, generation::hash01};
@@ -11,20 +11,17 @@ use vk_mem::{Allocation, Allocator};
 pub(super) struct WindMap {
     pub(super) image: vk::Image,
     pub(super) allocation: Allocation,
-    pub(super) view: vk::ImageView,
-    pub(super) sampler: vk::Sampler,
-    pub(super) descriptor_pool: vk::DescriptorPool,
+    /// Sampler and view pushed as the grass pipelines' set 1.
+    pub(super) image_info: vk::DescriptorImageInfo,
     pub(super) descriptor_set_layout: vk::DescriptorSetLayout,
-    pub(super) descriptor_set: vk::DescriptorSet,
 }
 
 impl WindMap {
     pub(super) fn cleanup(&mut self, device: &ash::Device, allocator: &Allocator) {
         unsafe {
-            device.destroy_descriptor_pool(self.descriptor_pool, None);
             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            device.destroy_sampler(self.sampler, None);
-            device.destroy_image_view(self.view, None);
+            device.destroy_sampler(self.image_info.sampler, None);
+            device.destroy_image_view(self.image_info.image_view, None);
             allocator.destroy_image(self.image, &mut self.allocation);
         }
     }
@@ -68,52 +65,20 @@ pub(super) fn create_wind_map_resources(
         stage_flags: vk::ShaderStageFlags::VERTEX,
         ..Default::default()
     };
-    let layout_info = vk::DescriptorSetLayoutCreateInfo {
-        binding_count: 1,
-        p_bindings: &binding,
-        ..Default::default()
-    };
+    let layout_info = vk::DescriptorSetLayoutCreateInfo::default()
+        .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR)
+        .bindings(std::slice::from_ref(&binding));
     let descriptor_set_layout = unsafe { device.create_descriptor_set_layout(&layout_info, None)? };
-    let pool_size = vk::DescriptorPoolSize {
-        ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        descriptor_count: 1,
-    };
-    let pool_info = vk::DescriptorPoolCreateInfo {
-        max_sets: 1,
-        pool_size_count: 1,
-        p_pool_sizes: &pool_size,
-        ..Default::default()
-    };
-    let descriptor_pool = unsafe { device.create_descriptor_pool(&pool_info, None)? };
-    let allocate_info = vk::DescriptorSetAllocateInfo {
-        descriptor_pool,
-        descriptor_set_count: 1,
-        p_set_layouts: &descriptor_set_layout,
-        ..Default::default()
-    };
-    let descriptor_set = unsafe { device.allocate_descriptor_sets(&allocate_info)?[0] };
     let image_info = vk::DescriptorImageInfo {
         sampler,
         image_view: view,
         image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
     };
-    let write = vk::WriteDescriptorSet {
-        dst_set: descriptor_set,
-        dst_binding: 0,
-        descriptor_count: 1,
-        descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-        p_image_info: &image_info,
-        ..Default::default()
-    };
-    unsafe { device.update_descriptor_sets(&[write], &[]) };
     Ok(WindMap {
         image,
         allocation,
-        view,
-        sampler,
-        descriptor_pool,
+        image_info,
         descriptor_set_layout,
-        descriptor_set,
     })
 }
 

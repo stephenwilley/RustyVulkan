@@ -218,14 +218,10 @@ impl RenderPass for UiPass {
 
         // Shadow Map debug window
         if self.show_shadow_map_window {
-            // Every image/layer pair has a descriptor, so all widgets keep their
-            // own cascade while the swapchain rotates through in-flight images.
             let shadow_tex_ids: Option<[imgui::TextureId; SHADOW_CASCADE_COUNT]> =
                 ctx.attachments.get(&AttachmentKind::Shadow).map(|handle| {
                     std::array::from_fn(|cascade| {
                         ui_ctx.renderer.shadow_texture_id(
-                            ctx.vulkan_base,
-                            ctx.frame.image_index as usize,
                             cascade,
                             ctx.vulkan_base.shadow_sampler,
                             handle.layer_views[cascade],

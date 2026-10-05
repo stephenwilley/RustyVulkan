@@ -281,7 +281,7 @@ vec3 world_position = vec3(
     </aside>
 
     <h2>Choosing what to draw each frame</h2>
-    <!--x src/graphics/grass.rs 547-564--><figure class="code"><pre><code class="language-rust">    let dz = chunk.centre[1] - camera_position.z;
+    <!--x src/graphics/grass.rs 553-570--><figure class="code"><pre><code class="language-rust">    let dz = chunk.centre[1] - camera_position.z;
     let distance = ((dx * dx + dz * dz).sqrt() - chunk.radius).max(0.0);
     // Retain the chunk beneath the camera as an extra precaution.
     // Frustum-test the remaining chunks.
@@ -298,7 +298,7 @@ self.visible_chunks
 
 for visible in &amp;self.visible_chunks {
     let chunk = &amp;self.chunks[visible.index];
-    match grass_lod(visible.distance) {</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass.rs#L547-L564">src/graphics/grass.rs:547-564</a></figcaption></figure><!--/x-->
+    match grass_lod(visible.distance) {</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass.rs#L553-L570">src/graphics/grass.rs:553-570</a></figcaption></figure><!--/x-->
     <p>Every chunk is tested each frame. <code>chunk_intersects_frustum</code> transforms the eight corners of the
     chunk's box (including the real height range of its ground and blades) to clip space, and rejects it only if
     all eight lie outside the same clip plane, a conservative test with no plane maths.
@@ -322,7 +322,7 @@ for visible in &amp;self.visible_chunks {
     swapchain image (<a href="09-frame-loop.html#frames-in-flight">Chapter 9</a>).</p>
 
     <h2>Submitting the commands</h2>
-    <!--x src/graphics/grass.rs 652-698--><figure class="code"><pre><code class="language-rust">    let stride = size_of::&lt;vk::DrawIndexedIndirectCommand&gt;() as u32;
+    <!--x src/graphics/grass.rs 658-704--><figure class="code"><pre><code class="language-rust">    let stride = size_of::&lt;vk::DrawIndexedIndirectCommand&gt;() as u32;
     if commands.is_empty() {
         return;
     }
@@ -368,7 +368,7 @@ for visible in &amp;self.visible_chunks {
             };
         }
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass.rs#L652-L698">src/graphics/grass.rs:652-698</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass.rs#L658-L704">src/graphics/grass.rs:658-704</a></figcaption></figure><!--/x-->
     <p>The preferred path issues each LOD's commands with one <code>cmd_draw_indexed_indirect</code>, in batches
     no larger than the device's limit. Without multi-draw, it issues them one at a time.</p>
     <p>The first branch is a fallback for GPUs that lack the <code>drawIndirectFirstInstance</code> feature,
@@ -377,7 +377,7 @@ for visible in &amp;self.visible_chunks {
     <p>The draw itself binds the near pipeline, set 0 plus the wind map's set, the push constants (camera matrices,
     time, wind strength and LOD), and two vertex buffers. The blade mesh is binding 0, and the shared instance
     buffer is binding 1:</p>
-    <!--x src/graphics/grass.rs 433-450--><figure class="code"><pre><code class="language-rust">// The first bound buffer is shared blade geometry; the second advances once per
+    <!--x src/graphics/grass.rs 439-455--><figure class="code"><pre><code class="language-rust">// The first bound buffer is shared blade geometry; the second advances once per
 // instance.  Each chunk draw selects its range through `first_instance` below.
 device.cmd_bind_vertex_buffers(cmd, 0, &amp;near_buffers, &amp;offsets);
 device.cmd_bind_index_buffer(
@@ -393,8 +393,7 @@ self.submit_commands(
     near_offset,
     &amp;self.near_commands,
     vb,
-);
-</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass.rs#L433-L450">src/graphics/grass.rs:433-450</a></figcaption></figure><!--/x-->
+);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/grass.rs#L439-L455">src/graphics/grass.rs:439-455</a></figcaption></figure><!--/x-->
     <p>The same pattern repeats for the medium LOD (a different blade mesh), the mid LOD (its own pipeline, using the cheaper <code>grass_mid.frag</code>), and the reeds, which use a six-sided stalk with a capsule-shaped flower head and
     their own instance buffer. The whole vegetation block is bracketed by GPU timestamps, which feed the profiler's
     vegetation figure (<a href="09-frame-loop.html">Chapter 9</a>).</p>

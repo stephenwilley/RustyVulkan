@@ -314,15 +314,20 @@ vec3 albedo = neutral_grey + (atlas - vec3(atlas_value)) * 0.04;</code></pre><fi
     <p><code>SkyRenderer</code> borrows its panorama from the material manager's texture cache, so the image
     joins the start-up upload batch (<a href="05-gpu-memory.html#staging">Chapter 5</a>). It gets its own sampler,
     though:</p>
-    <!--x src/graphics/sky.rs 41-48--><figure class="code"><pre><code class="language-rust">let (image_view, _shared_material_sampler) =
+    <!--x src/graphics/sky.rs 39-49--><figure class="code"><pre><code class="language-rust">let (image_view, _shared_material_sampler) =
     material_manager.load_shared_texture(vb, SKY_TEXTURE_PATH)?;
 // Longitude repeats at the left/right seam, but latitude must stop at the poles.
 // Material textures repeat both axes, so the sky needs this one specialised sampler.
 let sampler = create_sampler(&amp;vb.device)?;
 let descriptor_set_layout = create_descriptor_set_layout(&amp;vb.device)?;
-let (descriptor_pool, descriptor_set) =
-    create_descriptor_set(&amp;vb.device, descriptor_set_layout)?;</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/sky.rs#L41-L48">src/graphics/sky.rs:41-48</a></figcaption></figure><!--/x-->
-    <p>Its pipeline is the <code>new_background</code> variant from <a href="07-pipelines.html">Chapter 7</a>: no
+let image_info = vk::DescriptorImageInfo {
+    sampler,
+    image_view,
+    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/sky.rs#L39-L49">src/graphics/sky.rs:39-49</a></figcaption></figure><!--/x-->
+    <p>The sampler and view go into a <code>DescriptorImageInfo</code>, which <code>draw</code> pushes as set 0
+    each frame, the same way materials push their textures (<a href="08-descriptors-materials.html">Chapter 8</a>).
+    Its pipeline is the <code>new_background</code> variant from <a href="07-pipelines.html">Chapter 7</a>: no
     depth test, no blending, no culling, and no vertex input at all. The three corners are built in the vertex
     shader from <code>gl_VertexIndex</code>:</p>
     <!--x assets/shaders/sky.vert 17-31--><figure class="code"><pre><code class="language-glsl">void main() {
@@ -344,13 +349,12 @@ let (descriptor_pool, descriptor_set) =
     which is a little cheaper than two triangles meeting along a diagonal. For each corner, the inverse of
     projection × view turns a point on the far plane back into a world-space direction. The view has its
     translation zeroed first, which is what makes the sky infinitely distant:</p>
-    <!--x src/graphics/sky.rs 203-209--><figure class="code"><pre><code class="language-rust">fn sky_push_constants(camera: &amp;Camera) -&gt; [u8; 80] {
+    <!--x src/graphics/sky.rs 162-167--><figure class="code"><pre><code class="language-rust">fn sky_push_constants(camera: &amp;Camera) -&gt; [u8; 80] {
     let mut rotation_only_view = *camera.get_view();
     rotation_only_view.w = Vector4::new(0.0, 0.0, 0.0, 1.0);
     let inverse_view_projection = (*camera.get_projection() * rotation_only_view)
         .invert()
-        .unwrap_or_else(Matrix4::identity);
-</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/sky.rs#L203-L209">src/graphics/sky.rs:203-209</a></figcaption></figure><!--/x-->
+        .unwrap_or_else(Matrix4::identity);</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/sky.rs#L162-L167">src/graphics/sky.rs:162-167</a></figcaption></figure><!--/x-->
     <p>The fragment shader converts the interpolated direction to longitude and latitude, the panorama's two
     texture coordinates:</p>
     <!--x assets/shaders/sky.frag 22-28--><figure class="code"><pre><code class="language-glsl">void main() {

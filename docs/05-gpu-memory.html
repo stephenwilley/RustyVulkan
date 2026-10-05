@@ -125,11 +125,11 @@
   <section id="deep-dive">
     <h2>The allocator</h2>
     <p>VMA is created once, straight after the device, in <code>VulkanBase::new</code>:</p>
-    <!--x src/vulkan/base/setup.rs 503-507--><figure class="code"><pre><code class="language-rust">let (device, graphics_queue) = Self::create_logical_device_and_queue(
-    &amp;instance,
-    physical_device,
-    graphics_queue_family_index,
-    supports_multi_draw_indirect,</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L503-L507">src/vulkan/base/setup.rs:503-507</a></figcaption></figure><!--/x-->
+    <!--x src/vulkan/base/setup.rs 525-529--><figure class="code"><pre><code class="language-rust">// Create a Vulkan Memory Allocator (VMA) instance.
+let mut allocator_info =
+    vk_mem::AllocatorCreateInfo::new(&amp;instance, &amp;device, physical_device);
+allocator_info.flags |= vk_mem::AllocatorCreateFlags::EXT_MEMORY_BUDGET;
+let allocator = unsafe { Allocator::new(allocator_info)? };</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L525-L529">src/vulkan/base/setup.rs:525-529</a></figcaption></figure><!--/x-->
     <p>The <code>EXT_MEMORY_BUDGET</code> flag lets VMA track how much memory the system is willing to give
     this process. The allocator is stored as an <code>Option</code> so it can be destroyed at a chosen moment
     during teardown (<a href="02-rust-meets-c.html#rust-drop">Chapter 2</a>). That's why later code reaches
@@ -230,24 +230,24 @@ pub struct Vertex {
     <p>The per-frame block of settings (sun direction, shadow matrices, lights) also lives in host-visible
     buffers, one per swapchain image, created with VMA's <code>MAPPED</code> flag so they stay mapped for their
     whole life. Updating one is just a copy and a flush:</p>
-    <!--x src/vulkan/base.rs 477-494--><figure class="code"><pre><code class="language-rust">    image_index * TIMESTAMPS_PER_IMAGE
-}
-
-/// Converts a monotonic timestamp pair into milliseconds.  An unavailable or invalid pair
-/// remains `None` instead of producing a misleading profiler value.
-fn timestamp_delta_ms(&amp;self, start: u64, end: u64) -&gt; Option&lt;f32&gt; {
-    (end &gt; start).then(|| {
-        let delta_ticks = end - start;
-        let ns = (delta_ticks as f64) * (self.timestamp_period_ns as f64);
-        (ns / 1_000_000.0) as f32
-    })
-}
-
-/// Update the global UBO with lighting data
-pub fn update_global_ubo(&amp;mut self, image_index: usize, ubo: &amp;GlobalUbo) {
+    <!--x src/vulkan/base.rs 494-511--><figure class="code"><pre><code class="language-rust">pub fn update_global_ubo(&amp;mut self, image_index: usize, ubo: &amp;GlobalUbo) {
     let allocator = self.allocator.as_ref().expect("allocator");
     let allocation = &amp;self.ubo_allocations[image_index];
-    unsafe {</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L477-L494">src/vulkan/base.rs:477-494</a></figcaption></figure><!--/x-->
+    unsafe {
+        // These allocations were created with MAPPED, so VMA keeps the pointer valid
+        // for their lifetime and the per-frame path does not need map/unmap calls.
+        let ptr = allocator.get_allocation_info(allocation).mapped_data as *mut u8;
+        debug_assert!(!ptr.is_null());
+        std::ptr::copy_nonoverlapping(
+            ubo as *const GlobalUbo as *const u8,
+            ptr,
+            std::mem::size_of::&lt;GlobalUbo&gt;(),
+        );
+        allocator
+            .flush_allocation(allocation, 0, std::mem::size_of::&lt;GlobalUbo&gt;() as u64)
+            .expect("flush UBO");
+    }
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L494-L511">src/vulkan/base.rs:494-511</a></figcaption></figure><!--/x-->
     <p>There's one buffer per swapchain image so that the CPU never overwrites data the GPU is still reading
     for an earlier frame. <a href="09-frame-loop.html">Chapter 9</a> shows how the frame loop guarantees that,
     and <a href="08-descriptors-materials.html">Chapter 8</a> how shaders find these buffers.</p>
@@ -338,11 +338,11 @@ let (image, allocation) =
     <a href="10-render-graph.html#barriers">Chapter 10</a>.</p>
     <p>Nothing has actually happened yet. These are only <em>recorded</em> commands. So the staging buffer
     can't be freed here; it's handed to the batch to keep:</p>
-    <!--x src/graphics/texture.rs 194-198--><figure class="code"><pre><code class="language-rust">view_type: vk::ImageViewType::TYPE_2D,
-format: vk::Format::R8G8B8A8_UNORM,
-components: vk::ComponentMapping::default(),
-subresource_range,
-..Default::default()</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/texture.rs#L194-L198">src/graphics/texture.rs:194-198</a></figcaption></figure><!--/x-->
+    <!--x src/graphics/texture.rs 201-205--><figure class="code"><pre><code class="language-rust">// The copy has not run yet, so keep the staging allocation alive until `finish`.
+self.staging_buffers.push(StagingBuffer {
+    buffer: staging_buffer,
+    allocation: staging_allocation,
+});</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/graphics/texture.rs#L201-L205">src/graphics/texture.rs:201-205</a></figcaption></figure><!--/x-->
     <p>When scene construction is done, <code>TextureCache::flush</code> calls <code>finish</code>:</p>
     <!--x src/graphics/texture.rs 227-243--><figure class="code"><pre><code class="language-rust">unsafe {
     // Submit all recorded copies together, then wait once before rendering begins.

@@ -5,6 +5,9 @@
 
 use super::*;
 
+const REQUIRED_DEVICE_EXTENSIONS: [&CStr; 2] =
+    [vk::KHR_SWAPCHAIN_NAME, vk::KHR_PUSH_DESCRIPTOR_NAME];
+
 impl VulkanBase {
     fn create_instance(
         entry: &Entry,
@@ -115,7 +118,10 @@ impl VulkanBase {
                         name == required
                     })
                 };
-                if !has_extension(vk::KHR_SWAPCHAIN_NAME) {
+                if !REQUIRED_DEVICE_EXTENSIONS
+                    .iter()
+                    .all(|&name| has_extension(name))
+                {
                     continue;
                 }
 
@@ -154,7 +160,7 @@ impl VulkanBase {
             }
         }
 
-        Err("No Vulkan 1.3 device supports graphics, presentation, dynamic rendering, synchronization2, and at least 144 bytes of push constants".into())
+        Err("No Vulkan 1.3 device supports graphics, presentation, dynamic rendering, synchronization2, push descriptors, and at least 144 bytes of push constants".into())
     }
 
     /// Creates a logical device and retrieves the graphics queue.
@@ -212,8 +218,10 @@ impl VulkanBase {
             name == vk::KHR_PORTABILITY_SUBSET_NAME
         });
 
-        let mut device_extensions: Vec<*const i8> = Vec::new();
-        device_extensions.push(vk::KHR_SWAPCHAIN_NAME.as_ptr());
+        let mut device_extensions: Vec<*const i8> = REQUIRED_DEVICE_EXTENSIONS
+            .iter()
+            .map(|name| name.as_ptr())
+            .collect();
         if has_portability_subset {
             // Required by portability drivers such as MoltenVK; absent on KosmicKrisp.
             device_extensions.push(vk::KHR_PORTABILITY_SUBSET_NAME.as_ptr());
@@ -559,6 +567,7 @@ impl VulkanBase {
             engine_settings.msaa_samples,
         )?;
         let swapchain_loader = swapchain::Device::new(&instance, &device);
+        let push_descriptor = push_descriptor::Device::new(&instance, &device);
 
         // Create sync objects: N frames-in-flight worth of semaphores/fences
         let image_count = swapchain.swapchain_image_views.len();
@@ -624,6 +633,7 @@ impl VulkanBase {
             instance,
             physical_device,
             device,
+            push_descriptor,
             pipeline_cache,
             allocator: Some(allocator),
             graphics_queue,

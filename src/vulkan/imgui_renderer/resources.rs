@@ -281,32 +281,24 @@ impl ImGuiRenderer {
     }
 
     // ----------------------------------------------------------
-    // 2 - Descriptor Set Lifecycle
-    // create_imgui_descriptor_set_layout
-    // create_imgui_descriptor_pool
-    // allocate_imgui_descriptor_set
-    // write_descriptor_set
-    // Aggregated in `init_imgui_descriptor_resources`
+    // 2 - Descriptors
     // ----------------------------------------------------------
-    /// Helper: create descriptor set layout for ImGui font atlas
+    /// Helper: create the push-descriptor set layout for the texture each draw samples
     /// # Arguments
     /// * `base` - The VulkanBase instance.
     /// # Returns
     /// * `vk::DescriptorSetLayout` - The created descriptor set layout.
     fn create_imgui_descriptor_set_layout(base: &VulkanBase) -> vk::DescriptorSetLayout {
-        let bindings = [vk::DescriptorSetLayoutBinding {
+        let binding = vk::DescriptorSetLayoutBinding {
             binding: 0,
             descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
             descriptor_count: 1,
             stage_flags: vk::ShaderStageFlags::FRAGMENT,
-            p_immutable_samplers: std::ptr::null(),
-            ..Default::default()
-        }];
-        let layout_info = vk::DescriptorSetLayoutCreateInfo {
-            binding_count: bindings.len() as u32,
-            p_bindings: bindings.as_ptr(),
             ..Default::default()
         };
+        let layout_info = vk::DescriptorSetLayoutCreateInfo::default()
+            .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR)
+            .bindings(std::slice::from_ref(&binding));
         unsafe {
             base.device
                 .create_descriptor_set_layout(&layout_info, None)
@@ -314,173 +306,40 @@ impl ImGuiRenderer {
         }
     }
 
-    /// Helper: create descriptor pool for one combined image sampler
-    /// # Arguments
-    /// * `base` - The VulkanBase instance.
-    /// # Returns
-    /// * `vk::DescriptorPool` - The created descriptor pool.
-    fn create_imgui_descriptor_pool(base: &VulkanBase, max_sets: u32) -> vk::DescriptorPool {
-        let pool_sizes = [vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: max_sets,
-        }];
-        let pool_info = vk::DescriptorPoolCreateInfo {
-            flags: vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
-            pool_size_count: pool_sizes.len() as u32,
-            p_pool_sizes: pool_sizes.as_ptr(),
-            max_sets,
-            ..Default::default()
-        };
-        unsafe {
-            base.device
-                .create_descriptor_pool(&pool_info, None)
-                .unwrap()
-        }
-    }
-
-    /// Helper: allocate a descriptor set for ImGui
-    /// # Arguments
-    /// * `base` - The VulkanBase instance.
-    /// # Returns
-    /// * `vk::DescriptorSet` - The allocated descriptor set.
-    fn allocate_imgui_descriptor_set(&self, base: &VulkanBase) -> vk::DescriptorSet {
-        let layouts = [self.descriptor_set_layout];
-        let alloc_info = vk::DescriptorSetAllocateInfo {
-            descriptor_pool: self.descriptor_pool,
-            descriptor_set_count: 1,
-            p_set_layouts: layouts.as_ptr(),
-            ..Default::default()
-        };
-        unsafe { base.device.allocate_descriptor_sets(&alloc_info).unwrap()[0] }
-    }
-
-    /// Updates the previously-allocated descriptor set so binding 0 points at our atlas view+sampler.
-    /// # Arguments
-    /// * `base` - The VulkanBase instance.
-    fn write_descriptor_set(&self, base: &VulkanBase) {
-        let device = &base.device;
-        let image_info = vk::DescriptorImageInfo {
-            sampler: self.font_sampler.unwrap(),
-            image_view: self.font_image_view.unwrap(),
-            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-        };
-        let descriptor_write = vk::WriteDescriptorSet {
-            dst_set: self.descriptor_set,
-            dst_binding: 0,
-            dst_array_element: 0,
-            descriptor_count: 1,
-            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            p_image_info: &image_info,
-            ..Default::default()
-        };
-        unsafe {
-            device.update_descriptor_sets(&[descriptor_write], &[]);
-        }
-    }
-
-    /// Initialize ImGui descriptor resources
-    /// # Arguments
-    /// * `base` - The VulkanBase instance.
-    fn init_imgui_descriptor_resources(&mut self, base: &VulkanBase) {
-        // Layout
-        self.descriptor_set_layout = Self::create_imgui_descriptor_set_layout(base);
-        // Pool (font set)
-        self.descriptor_pool = Self::create_imgui_descriptor_pool(base, 1);
-        // Separate pool for user textures (increase capacity to reduce exhaustion)
-        self.texture_pool = Self::create_imgui_descriptor_pool(base, 32);
-        // Allocate
-        self.descriptor_set = self.allocate_imgui_descriptor_set(base);
-        // The write to bind image+sampler will happen later when fonts are uploaded
-        self.textures = Vec::new();
-        self.shadow_tex_ids.clear();
-    }
-
-    /// Register or update a texture descriptor for displaying images in ImGui.
-    /// Returns a stable TextureId that can be used with ui.image(...).
+    /// Register or replace an image for displaying with ui.image(...).
+    /// Passing the ID returned earlier replaces that image and keeps the ID.
     pub fn ensure_texture(
         &mut self,
-        base: &VulkanBase,
         sampler: vk::Sampler,
         view: vk::ImageView,
         existing: Option<imgui::TextureId>,
     ) -> imgui::TextureId {
-        let device = &base.device;
-        if let Some(id) = existing {
-            let idx = id.id() - 1;
-            if let Some(&set) = self.textures.get(idx) {
-                let info = vk::DescriptorImageInfo {
-                    sampler,
-                    image_view: view,
-                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                };
-                let write = vk::WriteDescriptorSet {
-                    dst_set: set,
-                    dst_binding: 0,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    p_image_info: &info,
-                    ..Default::default()
-                };
-                unsafe { device.update_descriptor_sets(&[write], &[]) };
-                return id;
-            }
-        }
-        // Allocate new set
-        let layouts = [self.descriptor_set_layout];
-        let alloc_info = vk::DescriptorSetAllocateInfo {
-            descriptor_pool: self.texture_pool,
-            descriptor_set_count: 1,
-            p_set_layouts: layouts.as_ptr(),
-            ..Default::default()
-        };
-        let set = unsafe { device.allocate_descriptor_sets(&alloc_info).unwrap()[0] };
-        let info = vk::DescriptorImageInfo {
+        let image_info = vk::DescriptorImageInfo {
             sampler,
             image_view: view,
             image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         };
-        let write = vk::WriteDescriptorSet {
-            dst_set: set,
-            dst_binding: 0,
-            dst_array_element: 0,
-            descriptor_count: 1,
-            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            p_image_info: &info,
-            ..Default::default()
-        };
-        unsafe { device.update_descriptor_sets(&[write], &[]) };
-        self.textures.push(set);
-        // Reserve ID space: 1..=textures.len(), where 0 is font
-        imgui::TextureId::new(self.textures.len())
+        match existing {
+            Some(id) if id.id() < self.textures.len() => {
+                self.textures[id.id()] = image_info;
+                id
+            }
+            _ => {
+                self.textures.push(image_info);
+                imgui::TextureId::new(self.textures.len() - 1)
+            }
+        }
     }
 
-    /// Returns a descriptor-backed texture ID for this frame's shadow image.
+    /// Returns the texture ID that shows one shadow cascade, pointed at this frame's view.
     pub fn shadow_texture_id(
         &mut self,
-        base: &VulkanBase,
-        image_index: usize,
         cascade_index: usize,
         sampler: vk::Sampler,
         view: vk::ImageView,
     ) -> imgui::TextureId {
-        // Reusing one cache slot would update all four widgets to the final layer.
-        let cache_index = image_index * SHADOW_CASCADE_COUNT + cascade_index;
-        if self.shadow_tex_ids.len() <= cache_index {
-            self.shadow_tex_ids.resize(cache_index + 1, None);
-        }
-
-        if let Some((cached_view, texture_id)) = self.shadow_tex_ids[cache_index] {
-            if cached_view == view {
-                return texture_id;
-            }
-            let texture_id = self.ensure_texture(base, sampler, view, Some(texture_id));
-            self.shadow_tex_ids[cache_index] = Some((view, texture_id));
-            return texture_id;
-        }
-
-        let texture_id = self.ensure_texture(base, sampler, view, None);
-        self.shadow_tex_ids[cache_index] = Some((view, texture_id));
+        let texture_id = self.ensure_texture(sampler, view, self.shadow_tex_ids[cascade_index]);
+        self.shadow_tex_ids[cascade_index] = Some(texture_id);
         texture_id
     }
 
@@ -524,10 +383,14 @@ impl ImGuiRenderer {
         // 7) Create a Sampler for the font atlas
         let font_sampler = Self::create_sampler(base);
 
+        let font_image_info = vk::DescriptorImageInfo {
+            sampler: font_sampler,
+            image_view: font_image_view,
+            image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        };
+
         let mut imgui_renderer = Self {
-            descriptor_set_layout: vk::DescriptorSetLayout::null(),
-            descriptor_pool: vk::DescriptorPool::null(),
-            descriptor_set: vk::DescriptorSet::null(),
+            descriptor_set_layout: Self::create_imgui_descriptor_set_layout(base),
             pipeline_layout: vk::PipelineLayout::null(),
             vk_pipeline: vk::Pipeline::null(),
             font_sampler: Some(font_sampler),
@@ -536,19 +399,14 @@ impl ImGuiRenderer {
             font_image_view: Some(font_image_view),
             frame_buffers: Vec::new(),
             device,
+            push_descriptor: base.push_descriptor.clone(),
             vert_stage: None,
             frag_stage: None,
-            texture_pool: vk::DescriptorPool::null(),
-            textures: Vec::new(),
-            shadow_tex_ids: Vec::new(),
+            textures: vec![font_image_info],
+            shadow_tex_ids: [None; SHADOW_CASCADE_COUNT],
         };
 
-        // 8) Initialize descriptor layout, pool, and set for ImGui
-        imgui_renderer.init_imgui_descriptor_resources(base);
-        // 9) Write the descriptor set to bind the font atlas image and sampler
-        imgui_renderer.write_descriptor_set(base);
-
-        // 10) Loads the shaders and build the pipeline
+        // 8) Loads the shaders and build the pipeline
         imgui_renderer
             .rebuild_pipeline(base)
             .expect("Failed to rebuild imgui pipeline");

@@ -32,6 +32,7 @@ const INFLIGHT_FRAMES: usize = 2;
 /// Frame start/end plus the boundaries needed to isolate shadow, scene, and vegetation work.
 const TIMESTAMPS_PER_IMAGE: u32 = 5;
 
+use ash::khr::push_descriptor;
 use ash::khr::surface;
 use ash::khr::swapchain;
 use ash::vk;
@@ -116,6 +117,8 @@ pub struct VulkanBase {
     pub physical_device: vk::PhysicalDevice,
     /// Logical device used for all Vulkan calls.
     pub device: ash::Device,
+    /// Records per-draw descriptors directly into command buffers.
+    pub push_descriptor: push_descriptor::Device,
     /// Reused while creating graphics pipelines to avoid recompiling shared
     /// pipeline state during runtime rebuilds.
     pub pipeline_cache: vk::PipelineCache,

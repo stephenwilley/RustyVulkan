@@ -362,17 +362,17 @@ let pipelines = unsafe {
     <h2>Rebuilding</h2>
     <p>Toggling wireframe, or changing the MSAA sample count or swapchain format, bumps a generation counter on
     <code>VulkanBase</code>:</p>
-    <!--x src/vulkan/base.rs 690-700--><figure class="code"><pre><code class="language-rust">}
-
-/// Requests a new MSAA sample count. The swapchain/pipelines will be
-/// recreated on the next safe point to apply the change.
-pub fn request_msaa_samples(&amp;mut self, desired: u32) {
-    self.pending_msaa_samples = Some(self.clamp_msaa_samples(desired));
-}
-
-/// Current MSAA sample count in effect.
-pub fn get_msaa_samples(&amp;self) -&gt; u32 {
-    self.engine_settings.msaa_samples</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L690-L700">src/vulkan/base.rs:690-700</a></figcaption></figure><!--/x-->
+    <!--x src/vulkan/base.rs 707-717--><figure class="code"><pre><code class="language-rust">pub fn toggle_wireframe(&amp;mut self) {
+    if !self.supports_wireframe {
+        return;
+    }
+    let old = self.engine_settings.wireframe;
+    self.engine_settings.wireframe = !self.engine_settings.wireframe;
+    if self.engine_settings.wireframe != old {
+        // Wireframe affects pipelines; ensure rebuild next frame
+        self.pipeline_generation = self.pipeline_generation.saturating_add(1);
+    }
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base.rs#L707-L717">src/vulkan/base.rs:707-717</a></figcaption></figure><!--/x-->
     <p>At the start of each frame, the render graph compares that counter with the last one it saw. If it has
     changed, the graph waits for the GPU once and asks every owner to rebuild:</p>
     <!--x src/vulkan/render_graph.rs 221-232,242-243--><figure class="code"><pre><code class="language-rust">// Rebuild pipelines only when engine-signaled generation changes (swapchain/MSAA/wireframe)

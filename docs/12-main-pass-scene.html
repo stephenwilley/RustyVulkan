@@ -188,7 +188,7 @@ pub struct SceneObject {
     <p>For each part, the main pass computes model-view and model-view-projection matrices and packs them,
     with the material's UV tiling, into the 144-byte push-constant block of
     <a href="07-pipelines.html#pipeline-layout">Chapter 7</a>:</p>
-    <!--x src/vulkan/main_pass.rs 270-306--><figure class="code"><pre><code class="language-rust">pub fn compute_push_constant_per_obj(
+    <!--x src/vulkan/main_pass.rs 256-292--><figure class="code"><pre><code class="language-rust">pub fn compute_push_constant_per_obj(
     camera: &amp;Camera,
     model_matrix: &amp;Matrix4&lt;f32&gt;,
     uv_tiling: [f32; 2],
@@ -224,7 +224,7 @@ pub struct SceneObject {
     debug_assert_eq!(offset, bytes.len());
 
     bytes
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/main_pass.rs#L270-L306">src/vulkan/main_pass.rs:270-306</a></figcaption></figure><!--/x-->
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/main_pass.rs#L256-L292">src/vulkan/main_pass.rs:256-292</a></figcaption></figure><!--/x-->
     <p>GLSL expects matrices column by column. Transposing and then reading <code>[col][row]</code> with
     <code>row</code> as the outer loop emits each original column in turn, which is that column-major layout
     (a roundabout route to it, given cgmath already stores columns). The block is a fixed <code>[u8; 144]</code> on the stack, so the
@@ -237,7 +237,7 @@ pub struct SceneObject {
     </aside>
 
     <h2>The draw loop</h2>
-    <!--x src/vulkan/main_pass.rs 144-159,189-202--><figure class="code"><pre><code class="language-rust">let mut current_pipeline_id = usize::MAX;
+    <!--x src/vulkan/main_pass.rs 144-159,175-188--><figure class="code"><pre><code class="language-rust">let mut current_pipeline_id = usize::MAX;
 for obj in &amp;ctx.scene.objects {
     if !obj.visible {
         continue;
@@ -267,8 +267,8 @@ for obj in &amp;ctx.scene.objects {
 
         ctx.mesh_manager.meshes[part.mesh_id].record(device, cmd);
     }
-}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/main_pass.rs#L144-L202">src/vulkan/main_pass.rs:144-202</a></figcaption></figure><!--/x-->
-    <p>Objects are drawn in scene order, not sorted, and the pipeline and descriptor sets are rebound only when a
+}</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/main_pass.rs#L144-L188">src/vulkan/main_pass.rs:144-188</a></figcaption></figure><!--/x-->
+    <p>Objects are drawn in scene order, not sorted, and the pipeline and descriptors are rebound only when a
     part's material differs from the previous part's (the binding itself was shown in
     <a href="08-descriptors-materials.html">Chapter 8</a>). Consecutive parts sharing a material therefore cost
     one push and one draw each; the rocks alternate between two materials, so they rebind more often. <code>record</code> binds the mesh's vertex and index

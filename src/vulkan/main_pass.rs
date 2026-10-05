@@ -138,7 +138,7 @@ impl RenderPass for MainPass {
             // The sky does not touch depth.  Drawing it first fills only the background;
             // all subsequent scene geometry naturally paints over the fullscreen triangle.
             if let Some(sky) = ctx.sky_renderer.as_deref() {
-                sky.draw(device, cmd, ctx.camera);
+                sky.draw(ctx.vulkan_base, cmd, ctx.camera);
             }
 
             let mut current_pipeline_id = usize::MAX;
@@ -163,29 +163,15 @@ impl RenderPass for MainPass {
                             vk::PipelineBindPoint::GRAPHICS,
                             material.pipeline.vk_pipeline,
                         );
-                        let set0 = ctx.vulkan_base.set0_descriptor_sets[image_index];
-                        // Stack arrays keep this per-draw path free of allocation.
-                        if material.textures.is_some() {
-                            let sets_to_bind = [set0, material.texture_descriptor_set];
-                            device.cmd_bind_descriptor_sets(
-                                cmd,
-                                vk::PipelineBindPoint::GRAPHICS,
-                                material.pipeline.vk_layout,
-                                0,
-                                &sets_to_bind,
-                                &[],
-                            );
-                        } else {
-                            let sets_to_bind = [set0];
-                            device.cmd_bind_descriptor_sets(
-                                cmd,
-                                vk::PipelineBindPoint::GRAPHICS,
-                                material.pipeline.vk_layout,
-                                0,
-                                &sets_to_bind,
-                                &[],
-                            );
-                        }
+                        device.cmd_bind_descriptor_sets(
+                            cmd,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            material.pipeline.vk_layout,
+                            0,
+                            &[ctx.vulkan_base.set0_descriptor_sets[image_index]],
+                            &[],
+                        );
+                        material.push_textures(ctx.vulkan_base, cmd);
                         current_pipeline_id = part.material_id;
                     }
 

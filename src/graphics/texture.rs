@@ -24,7 +24,7 @@ pub struct Texture {
     pub image: vk::Image,
     /// VMA allocation that backs `image`.
     pub allocation: Allocation,
-    /// 2D view used by material descriptor sets.
+    /// 2D view sampled by materials.
     pub image_view: vk::ImageView,
 }
 

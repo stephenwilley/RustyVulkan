@@ -107,15 +107,15 @@
     <h2>Making the surface</h2>
     <p>As <a href="03-instance-devices.html">Chapter 3</a> showed, the surface is created before a GPU is
     chosen. The <code>ash-window</code> crate does the platform-specific part:</p>
-    <!--x src/vulkan/base/setup.rs 244-252--><figure class="code"><pre><code class="language-rust">/// Creates a Vulkan surface for rendering.
-/// # Arguments
-/// * `entry` - The Ash Entry point.
-/// * `instance` - The Vulkan instance.
-/// * `window` - The winit window.
-/// * `event_loop` - The winit event loop.
-/// # Returns
-/// * `Result&lt;vk::SurfaceKHR, vk::Result&gt;` - The created surface on success, or a Vulkan error on failure.
-fn create_surface(</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L244-L252">src/vulkan/base/setup.rs:244-252</a></figcaption></figure><!--/x-->
+    <!--x src/vulkan/base/setup.rs 266-274--><figure class="code"><pre><code class="language-rust">let surface = unsafe {
+    create_surface(
+        entry,
+        instance,
+        event_loop.display_handle().unwrap().as_raw(),
+        window.window_handle().unwrap().as_raw(),
+        None,
+    )?
+};</code></pre><figcaption><a href="https://github.com/stephenwilley/RustyVulkan/blob/main/src/vulkan/base/setup.rs#L266-L274">src/vulkan/base/setup.rs:266-274</a></figcaption></figure><!--/x-->
     <p><code>display_handle()</code> and <code>window_handle()</code> come from the
     <code>raw-window-handle</code> crate, a common vocabulary that windowing libraries (here winit) and
     graphics libraries (here ash-window) both speak. On macOS, <code>ash-window</code> uses them to find the

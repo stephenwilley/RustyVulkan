@@ -400,10 +400,6 @@ impl GrassRenderer {
         let mid_push = grass_push_constants(camera, time_seconds, 1.0);
         let near_buffers = [self.near_blade_vertices.buffer, self.instances.buffer];
         let offsets = [0, 0];
-        let descriptor_sets = [
-            vb.set0_descriptor_sets[image_index],
-            self.wind_map.descriptor_set,
-        ];
 
         let (near_offset, medium_offset, mid_offset, reed_offset) =
             self.write_indirect_commands(vb.allocator.as_ref().expect("allocator"), image_index);
@@ -420,8 +416,18 @@ impl GrassRenderer {
                 vk::PipelineBindPoint::GRAPHICS,
                 self.near_pipeline.vk_layout,
                 0,
-                &descriptor_sets,
+                &[vb.set0_descriptor_sets[image_index]],
                 &[],
+            );
+            let wind_write = vk::WriteDescriptorSet::default()
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(std::slice::from_ref(&self.wind_map.image_info));
+            vb.push_descriptor.cmd_push_descriptor_set(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.near_pipeline.vk_layout,
+                1,
+                &[wind_write],
             );
             device.cmd_push_constants(
                 cmd,

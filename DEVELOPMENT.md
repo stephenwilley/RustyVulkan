@@ -83,3 +83,13 @@ Further improvements include moving generated shaders to Cargo's `OUT_DIR`
 destroy borrowed handles, and validating on additional drivers and platforms.
 The desktop resume guard prevents repeated initialization; mobile surface-loss
 and suspension handling have not been implemented.
+
+## Deferred frame-boundary refactor
+
+Keep the current `RenderGraph::execute(&mut App)` arrangement for now. A future,
+separate refactor could move application bookkeeping, visibility and uniform
+preparation into an application frame routine and pass the renderer only the
+specific borrowed state it needs. That would remove the `mem::take` workaround
+in the redraw handler and clarify prepare → record → submit. This is shelved:
+it is not needed for correct resource ownership or GPU data layout, and should
+not grow into a general render-graph framework.

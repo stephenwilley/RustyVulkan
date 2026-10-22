@@ -21,6 +21,7 @@
   --aside-soft: #f8f1dc;
   --code-bg: #f6f6f6;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  --tess: url(images/tess-light.svg);
   color-scheme: light;
 }
 
@@ -45,6 +46,7 @@
     --aside-soft: #332a12;
     --code-bg: #1c1c1c;
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    --tess: url(images/tess-dark.svg);
     color-scheme: dark;
   }
 }
@@ -280,7 +282,6 @@ svg .on-accent { fill: var(--bg); }
 .recap {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-top: 4px solid var(--accent);
   border-radius: 8px;
   padding: 0.2rem 1.4rem 0.8rem;
   margin-top: 3rem;
@@ -316,7 +317,7 @@ th { font-family: "Poppins", sans-serif; font-weight: 600; font-size: 0.8rem; }
 /* ---- Cover page --------------------------------------------------------- */
 
 .hero {
-  background: var(--chrome);
+  background: url(images/hero-tess.svg?v=2) center top / max(100%, 960px) auto no-repeat, var(--chrome);
   color: var(--chrome-fg);
   padding: 3rem 16px 0;
   overflow: hidden;
@@ -358,12 +359,17 @@ th { font-family: "Poppins", sans-serif; font-weight: 600; font-size: 0.8rem; }
   height: 100%;
   text-decoration: none;
   color: var(--fg);
-  background: var(--surface);
+  background: var(--tess) var(--tess-x, 0) var(--tess-y, 0) / 960px 480px, var(--surface);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 1rem 1.1rem;
   transition: border-color 0.2s, transform 0.2s;
 }
+/* Each card shows a different patch of the same tessellated mesh. */
+.cards li:nth-child(5n+2) a { --tess-x: -310px; --tess-y: -170px; }
+.cards li:nth-child(5n+3) a { --tess-x: -620px; --tess-y: -40px; }
+.cards li:nth-child(5n+4) a { --tess-x: -150px; --tess-y: -290px; }
+.cards li:nth-child(5n+5) a { --tess-x: -480px; --tess-y: -230px; }
 .cards a:hover { border-color: var(--accent); transform: translateY(-2px); }
 .cards .num { font-family: "Poppins", sans-serif; font-weight: 700; color: var(--accent); font-size: 0.85rem; }
 .cards .title { font-family: "Poppins", sans-serif; font-weight: 600; font-size: 1.05rem; margin: 0.15rem 0 0.35rem; }
